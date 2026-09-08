@@ -7,7 +7,7 @@
  * --refresh it.
  *
  * Input handling is more forgiving than `analyze`:
- *   1. Normalize URL / case via normalizeKalshiInput
+ *   1. Normalize URL / case via normalizeMarketInput
  *   2. Try Octagon's events endpoint directly first (works for any covered
  *      event regardless of Kalshi market liquidity / trade state)
  *   3. Fall back to resolveMarket for series tickers and other forms that
@@ -25,8 +25,8 @@ import { OctagonClient } from '../scan/octagon-client.js';
 import { createOctagonInvoker } from '../scan/invoker.js';
 import { fetchOctagonEventDirect } from '../scan/octagon-events-api.js';
 import type { OctagonEventEntry } from '../scan/octagon-events-api.js';
-import { normalizeKalshiInput, resolveMarket } from './analyze.js';
-import { callKalshiApi } from '../tools/kalshi/api.js';
+import { normalizeMarketInput, resolveMarket } from './analyze.js';
+import { fetchEventBySlug } from '../tools/polymarket/events.js';
 import { formatRawReport } from '../controllers/browse.js';
 import { theme } from '../theme.js';
 import { formatAge } from '../utils/time.js';
@@ -50,18 +50,15 @@ async function pickMarketTickerForInvoker(eventTicker: string, ev: OctagonEventE
   if (outcomes.length > 0 && outcomes[0]?.market_ticker) return outcomes[0].market_ticker;
 
   try {
-    const res = await callKalshiApi('GET', `/events/${eventTicker}`, {
-      params: { with_nested_markets: true },
-    });
-    const event = ((res as Record<string, unknown>).event ?? res) as Record<string, unknown>;
-    const markets = (event.markets as Array<Record<string, unknown>> | undefined) ?? [];
+    const event = await fetchEventBySlug(eventTicker);
+    const markets = event?.markets ?? [];
     if (markets.length > 0) {
-      const open = markets.find((m) => m.status === 'open' || m.status === 'active');
-      const pick = (open ?? markets[0]).ticker as string | undefined;
+      const open = markets.find((m) => m.status === 'active');
+      const pick = (open ?? markets[0])?.ticker;
       if (pick) return pick;
     }
   } catch {
-    // Kalshi auth missing / event missing / network — fall through to the
+    // Event missing / network — fall through to the
     // event_ticker guess. The invoker will produce a clearer downstream
     // error if the guess turns out to be wrong.
   }
@@ -119,7 +116,7 @@ export async function handleReport(args: ParsedArgs): Promise<CLIResponse<Report
       'Usage: report <event_ticker | market_ticker | series_ticker | kalshi_url> [--refresh]',
     );
   }
-  const input = normalizeKalshiInput(rawInput);
+  const input = normalizeMarketInput(rawInput);
   const db = getDb();
 
   // Step 1: try input as an event ticker directly via Octagon. This works

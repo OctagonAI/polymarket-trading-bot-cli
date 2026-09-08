@@ -12,7 +12,7 @@ import { insertEdge } from '../db/edge.js';
 import { insertRiskSnapshot } from '../db/risk.js';
 import { openPosition } from '../db/positions.js';
 import { CircuitBreaker } from '../risk/circuit-breaker.js';
-import { toDollarString, fromDollarString } from '../tools/kalshi/api.js';
+import { roundToTick, parseGammaJsonArray } from '../tools/polymarket/api.js';
 import { getToolRegistry } from '../tools/registry.js';
 import type { OctagonVariant } from '../scan/types.js';
 import type { ParsedArgs } from '../commands/parse-args.js';
@@ -101,81 +101,64 @@ const TEST_PRIVATE_KEY = [
 function setupFetchMock(originalFetch: typeof globalThis.fetch) {
   globalThis.fetch = mock(async (url: string | URL | Request) => {
     const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
-    const match = urlStr.match(/\/trade-api\/v2(\/[^?]*)/);
-    const path = match?.[1] ?? '';
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
-    // Events endpoint (supports any event ticker)
-    if (path.startsWith('/events/')) {
-      const eventTicker = path.split('/events/')[1];
-      return new Response(JSON.stringify({
-        event: {
-          event_ticker: eventTicker,
-          markets: [{
-            ticker: `${eventTicker}-MKT-YES`,
-            event_ticker: eventTicker,
-            status: 'open',
-            last_price: 58,
-            yes_bid: 55,
-            yes_ask: 61,
-            no_bid: 39,
-            no_ask: 45,
-            volume_24h: 1000,
-          }],
-        },
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const makeMarket = (slug: string, eventSlug: string) => ({
+      slug,
+      conditionId: '0x' + 'a'.repeat(64),
+      question: `Market ${slug}`,
+      outcomes: '["Yes", "No"]',
+      outcomePrices: '["0.58", "0.42"]',
+      clobTokenIds: '["1", "2"]',
+      lastTradePrice: 0.58,
+      bestBid: 0.55,
+      bestAsk: 0.61,
+      volume24hr: 1000,
+      volumeNum: 5000,
+      orderPriceMinTickSize: 0.01,
+      orderMinSize: 5,
+      active: true,
+      closed: false,
+      acceptingOrders: true,
+      events: [{ slug: eventSlug }],
+    });
+
+    // Gamma events — the slug filter echoes back a matching event
+    if (urlStr.includes('gamma-api.polymarket.com/events')) {
+      const slug = new URL(urlStr).searchParams.get('slug') ?? 'EV-1';
+      return json([{
+        slug,
+        title: `Event ${slug}`,
+        tags: [{ label: 'politics' }],
+        endDate: '',
+        markets: [makeMarket(`${slug}-MKT-YES`, slug)],
+      }]);
     }
 
-    // Single market endpoint
-    if (path.startsWith('/markets/')) {
-      return new Response(JSON.stringify({
-        market: {
-          ticker: path.split('/markets/')[1],
-          event_ticker: 'EV-1',
-          status: 'open',
-          last_price: 58,
-          yes_bid: 55,
-          yes_ask: 61,
-          no_bid: 39,
-          no_ask: 45,
-          volume_24h: 1000,
-          supports_fractional: false,
-          tick_size: 1,
-        },
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    // Gamma markets
+    if (urlStr.includes('gamma-api.polymarket.com/markets')) {
+      const slug = new URL(urlStr).searchParams.get('slug') ?? 'MKT-YES';
+      return json([makeMarket(slug, 'EV-1')]);
     }
 
-    // Portfolio balance
-    if (path === '/portfolio/balance') {
-      return new Response(JSON.stringify({
-        balance: 100_000,
-        payout: 20_000,
-        reserved_fees: 0,
-        fees: 0,
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    // CLOB order book — bids/asks per outcome token, decimal prices
+    if (urlStr.includes('clob.polymarket.com/book')) {
+      return json({
+        bids: [{ price: 0.55, size: 100 }, { price: 0.54, size: 200 }],
+        asks: [{ price: 0.61, size: 100 }, { price: 0.62, size: 200 }],
+      });
     }
 
-    // Portfolio positions
-    if (path === '/portfolio/positions') {
-      return new Response(JSON.stringify({
-        market_positions: [{ market_exposure: 20_000 }],
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    // Data API portfolio (USDC)
+    if (urlStr.includes('data-api.polymarket.com/value')) {
+      return json([{ user: '0x1', value: 1000 }]);
+    }
+    if (urlStr.includes('data-api.polymarket.com/positions')) {
+      return json([{ slug: 'MKT-OTHER', conditionId: '0xb', size: 100, curPrice: 0.5, currentValue: 200 }]);
     }
 
-    // Orderbook
-    if (path.startsWith('/orderbook')) {
-      return new Response(JSON.stringify({
-        orderbook: { yes: [[55, 100], [54, 200]], no: [[45, 100], [44, 200]] },
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    }
-
-    // Orders
-    if (path === '/portfolio/orders') {
-      return new Response(JSON.stringify({
-        order: { order_id: 'ORD-TEST-1', status: 'resting', ticker: 'MKT-YES' },
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    }
-
-    return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    return json({});
   }) as unknown as typeof fetch;
 }
 
@@ -193,8 +176,8 @@ describe('E2E Integration Tests', () => {
     audit = a.audit;
     auditPath = a.path;
 
-    process.env.POLYMARKET_API_KEY = 'test-key';
-    process.env.POLYMARKET_PRIVATE_KEY = TEST_PRIVATE_KEY;
+    // Reads need no credentials; portfolio reads need a wallet address.
+    process.env.POLYMARKET_WALLET_ADDRESS = '0x' + '1'.repeat(40);
 
     originalFetch = globalThis.fetch;
     setupFetchMock(originalFetch);
@@ -202,8 +185,7 @@ describe('E2E Integration Tests', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    delete process.env.POLYMARKET_API_KEY;
-    delete process.env.POLYMARKET_PRIVATE_KEY;
+    delete process.env.POLYMARKET_WALLET_ADDRESS;
   });
 
   // Test 1: scan --theme runs full cycle
@@ -370,20 +352,30 @@ describe('E2E Integration Tests', () => {
     loop.stop();
   });
 
-  // Test 7: Kalshi client handles fixed-point prices
-  test('Kalshi client handles fixed-point price conversions', () => {
-    // Round-trip test
-    expect(fromDollarString(toDollarString(58))).toBe(58);
+  // Test 7: Polymarket client price + payload handling
+  test('Polymarket client snaps prices to the tick grid', () => {
+    // Penny-tick markets
+    expect(roundToTick(0.5678, 0.01)).toBe(0.57);
+    expect(roundToTick(0.5, 0.01)).toBe(0.5);
 
-    // Edge cases
-    expect(toDollarString(0)).toBe('0.00');
-    expect(toDollarString(99)).toBe('0.99');
-    expect(toDollarString(100)).toBe('1.00');
+    // Sub-penny tick markets keep the extra digit
+    expect(roundToTick(0.5678, 0.001)).toBe(0.568);
 
-    // Additional round-trips
-    expect(fromDollarString(toDollarString(1))).toBe(1);
-    expect(fromDollarString(toDollarString(50))).toBe(50);
-    expect(fromDollarString('0.55')).toBe(55);
+    // Clamped into [0,1] — the CLOB rejects anything outside
+    expect(roundToTick(1.4, 0.01)).toBe(1);
+    expect(roundToTick(-0.2, 0.01)).toBe(0);
+
+    // Must not leave float dust like 0.30000000000000004
+    expect(String(roundToTick(0.1 + 0.2, 0.01))).toBe('0.3');
+  });
+
+  test('Polymarket client parses Gammas JSON-encoded array fields', () => {
+    // Gamma returns these as strings, not arrays
+    expect(parseGammaJsonArray('["Yes", "No"]')).toEqual(['Yes', 'No']);
+    expect(parseGammaJsonArray(['Yes', 'No'])).toEqual(['Yes', 'No']);
+    // Malformed input must not throw — it degrades to empty
+    expect(parseGammaJsonArray('not json')).toEqual([]);
+    expect(parseGammaJsonArray(undefined)).toEqual([]);
   });
 
   // Test 8: Circuit breaker activates on drawdown breach
@@ -480,8 +472,8 @@ describe('E2E Integration Tests', () => {
     const tools = getToolRegistry('gpt-4o');
     const names = tools.map((t) => t.name);
 
-    expect(names).toContain('kalshi_search');
-    expect(names).toContain('kalshi_trade');
+    expect(names).toContain('polymarket_search');
+    expect(names).toContain('polymarket_trade');
     expect(names).toContain('portfolio_overview');
     expect(names).toContain('exchange_status');
     expect(names).toContain('web_fetch');

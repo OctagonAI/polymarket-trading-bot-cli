@@ -5,7 +5,7 @@ import { auditTrail } from '../audit/index.js';
 import { ScanLoop } from '../scan/loop.js';
 import { createOctagonInvoker } from '../scan/invoker.js';
 import { formatScanTable } from './scan-formatters.js';
-import { callKalshiApi } from '../tools/kalshi/api.js';
+import { lookupMarket, fetchMarketOrderbook } from '../tools/polymarket/markets.js';
 import { getBotSetting } from '../utils/bot-config.js';
 import type { ScanResult } from '../scan/loop.js';
 
@@ -118,21 +118,9 @@ interface TickerSnapshot {
   timestamp: string;
 }
 
-function parseDollarField(val: string | number | undefined | null, isCentField = false): number {
-  if (val === undefined || val === null) return 0;
-  const n = typeof val === 'number' ? val : parseFloat(val as string);
-  if (isNaN(n)) return 0;
-  return isCentField ? n / 100 : n;
-}
-
-/** Format a value already in dollars (0.00–1.00) */
+/** Format a decimal price (0-1) as a USDC amount per share. */
 function fmtDollars(val: number): string {
-  return `$${val.toFixed(2)}`;
-}
-
-/** Format a cent integer (1–99) as dollars */
-function fmtCents(val: number): string {
-  return `$${(val / 100).toFixed(2)}`;
+  return `$${val.toFixed(3)}`;
 }
 
 function fmtNum(n: number | string | undefined | null): string {
@@ -143,57 +131,43 @@ function fmtNum(n: number | string | undefined | null): string {
 }
 
 async function fetchTickerSnapshot(ticker: string): Promise<TickerSnapshot> {
-  // Fetch market data
-  const market = await callKalshiApi('GET', `/markets/${ticker}`) as any;
-  const m = market.market ?? market;
+  const m = await lookupMarket(ticker);
+  if (!m) throw new Error(`Market '${ticker}' not found on Polymarket.`);
 
-  const hasDollarYesAsk = m.yes_ask_dollars != null || m.dollar_yes_ask != null;
-  const hasDollarYesBid = m.yes_bid_dollars != null || m.dollar_yes_bid != null;
-  const hasDollarNoAsk = m.no_ask_dollars != null || m.dollar_no_ask != null;
-  const hasDollarNoBid = m.no_bid_dollars != null || m.dollar_no_bid != null;
-  const yesAsk = parseDollarField(m.yes_ask_dollars ?? m.dollar_yes_ask ?? m.yes_ask, !hasDollarYesAsk);
-  const yesBid = parseDollarField(m.yes_bid_dollars ?? m.dollar_yes_bid ?? m.yes_bid, !hasDollarYesBid);
-  const noAsk = parseDollarField(m.no_ask_dollars ?? m.dollar_no_ask ?? m.no_ask, !hasDollarNoAsk);
-  const noBid = parseDollarField(m.no_bid_dollars ?? m.dollar_no_bid ?? m.no_bid, !hasDollarNoBid);
-  const spread = yesAsk - yesBid;
-
-  // Fetch orderbook
+  // Gamma's bestBid/bestAsk are cached and lag the live book, so prefer the CLOB
+  // book for quotes and fall back to Gamma only if the book is empty.
+  let yesBid = m.yes_bid;
+  let yesAsk = m.yes_ask;
   let orderbook: { price: string; quantity: number }[] = [];
+
   try {
-    const ob = await callKalshiApi('GET', `/markets/${ticker}/orderbook`) as any;
-    const book = ob.orderbook ?? ob;
-    const rawEntries = Array.isArray(book.yes) ? book.yes : [];
-    orderbook = rawEntries
-      .filter((entry: unknown): entry is [number, number] =>
-        Array.isArray(entry) && entry.length === 2 &&
-        typeof entry[0] === 'number' && typeof entry[1] === 'number'
-      )
-      .slice(0, 5)
-      .map(([price, qty]: [number, number]) => ({
-        price: fmtCents(price),
-        quantity: qty,
+    const book = await fetchMarketOrderbook(m);
+    if (book) {
+      if (book.bids[0]) yesBid = book.bids[0].price;
+      if (book.asks[0]) yesAsk = book.asks[0].price;
+      orderbook = book.bids.slice(0, 5).map((l) => ({
+        price: fmtDollars(l.price),
+        quantity: l.size,
       }));
+    }
   } catch {
-    // Orderbook not available for all markets
+    // Book not available for every market — fall back to Gamma quotes
   }
 
-  // Resolve last price — dollar string fields are already in dollars; last_price is cents
-  const dollarLastStr = m.last_price_dollars ?? m.dollar_last_price;
-  const parsedDollarLast = dollarLastStr != null ? parseFloat(dollarLastStr) : NaN;
-  const lastPriceDollars = Number.isFinite(parsedDollarLast)
-    ? parsedDollarLast
-    : (m.last_price != null ? m.last_price / 100 : NaN);
+  const noBid = yesAsk > 0 ? 1 - yesAsk : 0;
+  const noAsk = yesBid > 0 ? 1 - yesBid : 0;
+  const spread = yesAsk - yesBid;
 
   return {
-    ticker,
-    lastPrice: Number.isFinite(lastPriceDollars) ? fmtDollars(lastPriceDollars) : '-',
+    ticker: m.ticker,
+    lastPrice: Number.isFinite(m.last_price) ? fmtDollars(m.last_price) : '-',
     yesAsk: fmtDollars(yesAsk),
     yesBid: fmtDollars(yesBid),
     noAsk: fmtDollars(noAsk),
     noBid: fmtDollars(noBid),
     spread: `$${spread.toFixed(4)}`,
-    volume: fmtNum(m.volume_fp ?? m.volume),
-    openInterest: fmtNum(m.open_interest_fp ?? m.open_interest),
+    volume: fmtNum(m.volume),
+    openInterest: fmtNum(m.open_interest),
     orderbook,
     timestamp: new Date().toISOString(),
   };
@@ -210,7 +184,7 @@ function formatTickerDashboard(snap: TickerSnapshot, tick: number): string {
 
   if (snap.orderbook.length > 0) {
     lines.push('');
-    lines.push('  Orderbook (YES, top 5):');
+    lines.push('  Order book (top 5 bids):');
     for (const level of snap.orderbook) {
       lines.push(`    ${level.price}  ×${level.quantity}`);
     }

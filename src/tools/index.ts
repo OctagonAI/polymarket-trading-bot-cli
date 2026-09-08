@@ -2,8 +2,8 @@
 export { getToolRegistry, getTools, buildToolDescriptions } from './registry.js';
 export type { RegisteredTool } from './registry.js';
 
-// Kalshi tools
-export * from './kalshi/index.js';
+// Polymarket tools
+export * from './polymarket/index.js';
 
 // Search
 export { tavilySearch } from './search/index.js';

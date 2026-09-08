@@ -1,4 +1,4 @@
-import { callKalshiApi } from '../tools/kalshi/api.js';
+import { fetchExchangeStatus } from '../tools/polymarket/exchange.js';
 import { PROVIDERS } from '../providers.js';
 import { getDefaultModelForProvider } from '../utils/model.js';
 
@@ -23,14 +23,14 @@ export async function handleStatus(): Promise<string> {
   // 2. Exchange connectivity
   if (hasExchangeKey && hasExchangePem) {
     try {
-      const data = await callKalshiApi('GET', '/exchange/status');
-      const active = (data as any).exchange_active;
-      const trading = (data as any).trading_active;
+      const data = await fetchExchangeStatus();
+      const active = data.exchange_active;
+      const trading = data.trading_active;
       lines.push(active ? '✓ Exchange reachable' : '✗ Exchange not active');
       lines.push(trading ? '✓ Trading enabled' : '⚠ Trading paused');
       if (!active) allGood = false;
     } catch (e: any) {
-      lines.push(`✗ Cannot reach Kalshi API: ${e.message}`);
+      lines.push(`✗ Cannot reach Polymarket API: ${e.message}`);
       allGood = false;
     }
   }

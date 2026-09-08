@@ -23,7 +23,7 @@ type ToolExecutionEvent =
   | ToolDeniedEvent
   | ToolLimitEvent;
 
-const TOOLS_REQUIRING_APPROVAL = ['kalshi_trade'] as const;
+const TOOLS_REQUIRING_APPROVAL = ['polymarket_trade'] as const;
 
 /**
  * Executes tool calls and emits streaming tool lifecycle events.

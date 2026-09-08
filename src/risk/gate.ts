@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { KalshiMarket } from '../tools/kalshi/types.js';
+import type { PolymarketMarket } from '../tools/polymarket/types.js';
 import type { KellyResult } from './kelly.js';
 import { getSpreadCents, getVolume24h } from './kelly.js';
 import { isCorrelated } from './correlation.js';
@@ -20,7 +20,7 @@ export interface RiskGateParams {
   ticker: string;
   eventTicker: string;
   kelly: KellyResult;
-  market: KalshiMarket;
+  market: PolymarketMarket;
   db: Database;
   config?: RiskConfig;
 }
@@ -51,21 +51,21 @@ export function riskGate(params: RiskGateParams): RiskGateResult {
 
   const checks: RiskCheck[] = [];
 
-  // 1. Kelly check — contracts > 0 and dollar amount within position limit
+  // 1. Kelly check — shares > 0 and notional within position limit (USDC)
   // Re-check against maxPositionPct independently (kelly.ts uses its own default which may differ)
-  const kellyMaxDollar = Math.floor(kelly.availableBankroll * maxPositionPct);
-  const kellyWithinLimit = kelly.dollarAmountCents <= kellyMaxDollar;
-  const kellyPassed = kelly.contracts > 0 && kellyWithinLimit;
+  const kellyMaxNotional = kelly.availableBankroll * maxPositionPct;
+  const kellyWithinLimit = kelly.notionalUsdc <= kellyMaxNotional;
+  const kellyPassed = kelly.shares > 0 && kellyWithinLimit;
   checks.push({
     name: 'kelly',
     passed: kellyPassed,
-    reason: kelly.contracts === 0
+    reason: kelly.shares === 0
       ? (kelly.skippedReason
-        ? `Kelly produced 0 contracts: ${kelly.skippedReason}`
-        : `Kelly produced 0 contracts for ${ticker}`)
+        ? `Kelly produced 0 shares: ${kelly.skippedReason}`
+        : `Kelly produced 0 shares for ${ticker}`)
       : !kellyWithinLimit
-        ? `Dollar amount $${(kelly.dollarAmountCents / 100).toFixed(2)} exceeds ${maxPositionPct * 100}% of bankroll $${(kelly.availableBankroll / 100).toFixed(2)}`
-        : `${kelly.contracts} ${kelly.side.toUpperCase()} contracts, $${(kelly.dollarAmountCents / 100).toFixed(2)} within limits`,
+        ? `Notional $${kelly.notionalUsdc.toFixed(2)} exceeds ${maxPositionPct * 100}% of bankroll $${kelly.availableBankroll.toFixed(2)}`
+        : `${kelly.shares} ${kelly.side.toUpperCase()} shares, $${kelly.notionalUsdc.toFixed(2)} within limits`,
   });
 
   // 2. Liquidity check — spread and volume (using dollar-aware spread)

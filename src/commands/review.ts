@@ -1,8 +1,7 @@
-import { callKalshiApi } from '../tools/kalshi/api.js';
-import type { KalshiPosition } from '../tools/kalshi/types.js';
+import { fetchPositions } from '../tools/polymarket/portfolio.js';
+import type { PolymarketPosition } from '../tools/polymarket/types.js';
 import { handleAnalyze } from './analyze.js';
 import type { AnalyzeData } from './analyze.js';
-import { parsePriceField } from '../controllers/browse.js';
 import { formatBoxHeader } from './formatters.js';
 
 export interface PositionReview {
@@ -26,17 +25,12 @@ export interface PositionReview {
 const SELL_THRESHOLD = 0.03; // minimum edge reversal to trigger SELL signal
 
 /**
- * Fetch all live Kalshi positions with non-zero holdings,
+ * Fetch all live Polymarket positions with non-zero holdings,
  * run edge analysis on each, and return HOLD/SELL recommendations.
  */
 export async function reviewPortfolio(): Promise<PositionReview[]> {
-  const data = await callKalshiApi('GET', '/portfolio/positions');
-  const allPositions = (data.market_positions ?? data.positions ?? []) as KalshiPosition[];
-
-  const nonZero = allPositions.filter((p) => {
-    const pos = parseFloat(String(p.position ?? '0'));
-    return pos !== 0;
-  });
+  const allPositions = await fetchPositions();
+  const nonZero = allPositions.filter((p) => p.size !== 0);
 
   if (nonZero.length === 0) return [];
 
@@ -44,19 +38,18 @@ export async function reviewPortfolio(): Promise<PositionReview[]> {
   // Pass preloaded position to avoid N+1 portfolio fetches inside handleAnalyze
   const results = await Promise.allSettled(
     nonZero.map((p) => {
-      const rawPos = parseFloat(String(p.position ?? '0'));
-      const pos = rawPos !== 0
-        ? { direction: (rawPos > 0 ? 'yes' : 'no') as 'yes' | 'no', size: Math.abs(Math.round(rawPos)) }
-        : null;
+      // Polymarket positions are per outcome token, so direction comes from the
+      // outcome label rather than the sign of a signed contract count.
+      const direction: 'yes' | 'no' = p.outcome.toLowerCase() === 'no' ? 'no' : 'yes';
+      const pos = { direction, size: Math.abs(p.size) };
       return handleAnalyze(p.ticker, false, pos);
     })
   );
 
   return results.map((result, i) => {
     const pos = nonZero[i];
-    const rawPos = parseFloat(String(pos.position ?? '0'));
-    const direction: 'yes' | 'no' = rawPos > 0 ? 'yes' : 'no';
-    const size = Math.abs(Math.round(rawPos));
+    const direction: 'yes' | 'no' = pos.outcome.toLowerCase() === 'no' ? 'no' : 'yes';
+    const size = Math.abs(pos.size);
 
     if (result.status === 'rejected') {
       const err = result.reason instanceof Error ? result.reason.message : String(result.reason);
@@ -119,7 +112,7 @@ export async function reviewPortfolio(): Promise<PositionReview[]> {
       ticker: pos.ticker,
       direction,
       size,
-      entryPrice: kelly.entryPriceCents > 0 ? kelly.entryPriceCents : null,
+      entryPrice: kelly.entryPrice > 0 ? kelly.entryPrice : null,
       currentMarketProb: marketProb,
       modelProb,
       edge,

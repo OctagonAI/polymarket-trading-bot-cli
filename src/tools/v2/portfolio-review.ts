@@ -54,6 +54,6 @@ Review all open positions for close (sell) recommendations based on edge reversa
 - Opening new positions (use edge_query or scan_markets)
 
 ## How to Act on Results
-For each position with signal=SELL, use kalshi_trade to execute the close.
+For each position with signal=SELL, use polymarket_trade to execute the close.
 Each trade requires user approval. Present the sell recommendations first, then execute.
 `.trim();

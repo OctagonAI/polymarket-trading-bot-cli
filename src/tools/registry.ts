@@ -1,10 +1,10 @@
 import { StructuredToolInterface } from '@langchain/core/tools';
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { createKalshiSearch, POLYMARKET_SEARCH_DESCRIPTION } from './kalshi/kalshi-search.js';
-import { createKalshiTrade, POLYMARKET_TRADE_DESCRIPTION } from './kalshi/kalshi-trade.js';
-import { getExchangeStatus } from './kalshi/exchange.js';
-import { callKalshiApi } from './kalshi/api.js';
+import { createPolymarketSearch, POLYMARKET_SEARCH_DESCRIPTION } from './polymarket/polymarket-search.js';
+import { createPolymarketTrade, POLYMARKET_TRADE_DESCRIPTION } from './polymarket/polymarket-trade.js';
+import { getExchangeStatus } from './polymarket/exchange.js';
+import { fetchPortfolioValue, fetchPositions } from './polymarket/portfolio.js';
 import { tavilySearch, WEB_SEARCH_DESCRIPTION } from './search/index.js';
 import { webFetchTool, WEB_FETCH_DESCRIPTION } from './fetch/web-fetch.js';
 import { formatToolResult } from './types.js';
@@ -30,33 +30,33 @@ export interface RegisteredTool {
 // Direct portfolio overview tool (balance + positions in one call)
 const portfolioOverviewTool = new DynamicStructuredTool({
   name: 'portfolio_overview',
-  description: 'Get a quick overview of the Kalshi portfolio: balance and open positions.',
+  description: 'Get a quick overview of the Polymarket portfolio: total value and open positions.',
   schema: z.object({}),
   func: async () => {
     const [balanceData, positionsData] = await Promise.all([
-      callKalshiApi('GET', '/portfolio/balance'),
-      callKalshiApi('GET', '/portfolio/positions'),
+      fetchPortfolioValue(),
+      fetchPositions(),
     ]);
     return formatToolResult({ balance: balanceData, positions: positionsData });
   },
 });
 
 const PORTFOLIO_OVERVIEW_DESCRIPTION = `
-Quick portfolio overview tool. Returns current account balance and all open positions in a single call.
+Quick portfolio overview tool. Returns total portfolio value and all open positions in a single call.
 
 ## When to Use
 - User asks "what's my portfolio?" or "show me my balance and positions"
 - Quick portfolio check before or after trading
 
 ## When NOT to Use
-- Detailed fills or order history (use kalshi_search instead)
+- Detailed fills or order history (use polymarket_search instead)
 `.trim();
 
 const EXCHANGE_STATUS_DESCRIPTION = `
-Check whether the Kalshi exchange is currently active and trading is enabled.
+Check whether the Polymarket CLOB is reachable. Polymarket trades 24/7.
 
 ## When to Use
-- "Is Kalshi open?" or "Can I trade right now?"
+- "Is Polymarket up?" or "Can I trade right now?"
 `.trim();
 
 /**
@@ -68,13 +68,13 @@ Check whether the Kalshi exchange is currently active and trading is enabled.
 export function getToolRegistry(model: string): RegisteredTool[] {
   const tools: RegisteredTool[] = [
     {
-      name: 'kalshi_search',
-      tool: createKalshiSearch(model),
+      name: 'polymarket_search',
+      tool: createPolymarketSearch(model),
       description: POLYMARKET_SEARCH_DESCRIPTION,
     },
     {
-      name: 'kalshi_trade',
-      tool: createKalshiTrade(model),
+      name: 'polymarket_trade',
+      tool: createPolymarketTrade(model),
       description: POLYMARKET_TRADE_DESCRIPTION,
     },
     {

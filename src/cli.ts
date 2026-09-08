@@ -33,9 +33,8 @@ import { editorTheme, theme } from './theme.js';
 import { handleSlashCommand, executePendingTrade } from './commands/index.js';
 import type { CommandResult } from './commands/index.js';
 import { formatResponse } from './utils/markdown-table.js';
-import { ensureIndex, onIndexProgress, getRefreshPromise } from './tools/kalshi/search-index.js';
-import { callKalshiApi } from './tools/kalshi/api.js';
-import type { KalshiMarket } from './tools/kalshi/types.js';
+import { ensureIndex, onIndexProgress, getRefreshPromise } from './tools/polymarket/search-index.js';
+import { TRADING_UNAVAILABLE_MESSAGE } from './tools/polymarket/polymarket-trade.js';
 import { SetupWizardController } from './setup/wizard.js';
 import { trackEvent } from './utils/telemetry.js';
 
@@ -59,10 +58,10 @@ function summarizeToolResult(tool: string, args: Record<string, unknown>, result
       }
       if (typeof parsed.data === 'object') {
         const keys = Object.keys(parsed.data).filter((key) => !key.startsWith('_'));
-        if (tool === 'kalshi_search') {
+        if (tool === 'polymarket_search') {
           return keys.length === 1 ? 'Called 1 data source' : `Called ${keys.length} data sources`;
         }
-        if (tool === 'kalshi_trade') {
+        if (tool === 'polymarket_trade') {
           return 'Trade executed';
         }
         if (tool === 'portfolio_overview') {
@@ -815,32 +814,9 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       if (ticker) {
         refreshError();
         renderMainView();
-        // Fetch live prices then show trade prompt
-        void (async () => {
-          let priceInfo = '';
-          try {
-            const res = await callKalshiApi('GET', `/markets/${ticker}`);
-            const mkt = (res.market ?? res) as KalshiMarket;
-            const yesBid = mkt.yes_bid ?? Math.round((parseFloat(mkt.yes_bid_dollars ?? mkt.dollar_yes_bid ?? '0') || 0) * 100);
-            const yesAsk = mkt.yes_ask ?? Math.round((parseFloat(mkt.yes_ask_dollars ?? mkt.dollar_yes_ask ?? '0') || 0) * 100);
-            const noBid = mkt.no_bid ?? (Math.round((parseFloat(mkt.no_bid_dollars ?? mkt.dollar_no_bid ?? '0') || 0) * 100) || (100 - yesAsk));
-            const noAsk = mkt.no_ask ?? (Math.round((parseFloat(mkt.no_ask_dollars ?? mkt.dollar_no_ask ?? '0') || 0) * 100) || (100 - yesBid));
-            priceInfo = `**Current market prices:**\n` +
-              `  YES: ${yesBid}c bid / ${yesAsk}c ask\n` +
-              `  NO:  ${noBid}c bid / ${noAsk}c ask\n\n`;
-          } catch {
-            // Skip price info on error
-          }
-          chatLog.finalizeAnswer(
-            `Trade **${ticker}**\n\n` +
-            priceInfo +
-            `**Examples** (count = number of contracts):\n` +
-            `  /buy ${ticker} 10        ← buy 10 YES contracts at market price\n` +
-            `  /buy ${ticker} 10 no     ← buy 10 NO contracts at market price\n` +
-            `  /buy ${ticker} 10 50     ← buy 10 YES contracts, limit 50c each\n` +
-            `  /sell ${ticker} 10 no    ← sell 10 NO contracts at market price`);
-          tui.requestRender();
-        })();
+        // Trading is deferred until wallet signing lands.
+        chatLog.finalizeAnswer(`Trade **${ticker}**\n\n${TRADING_UNAVAILABLE_MESSAGE}`);
+        tui.requestRender();
         return;
       }
     }

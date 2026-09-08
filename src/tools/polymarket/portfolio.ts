@@ -1,0 +1,92 @@
+import { DynamicStructuredTool } from '@langchain/core/tools';
+import { z } from 'zod';
+import { callPolymarketApi, num } from './api.js';
+import { formatToolResult } from '../types.js';
+import type { PolymarketBalance, PolymarketPosition } from './types.js';
+
+/**
+ * Read-only portfolio access needs only a wallet address — no signing. Note this
+ * is the *proxy* wallet that holds funds, which for most Polymarket users is not
+ * the same as the signing EOA.
+ */
+export function getWalletAddress(): string | undefined {
+  const addr = process.env.POLYMARKET_WALLET_ADDRESS?.trim();
+  return addr && /^0x[0-9a-fA-F]{40}$/.test(addr) ? addr : undefined;
+}
+
+export function requireWalletAddress(): string {
+  const addr = getWalletAddress();
+  if (!addr) {
+    throw new Error(
+      'POLYMARKET_WALLET_ADDRESS not set (expects a 0x… Polygon address). ' +
+        'Set it to your Polymarket proxy wallet to read positions.'
+    );
+  }
+  return addr;
+}
+
+type RawPosition = Record<string, unknown>;
+
+export function normalizePosition(raw: RawPosition): PolymarketPosition {
+  return {
+    ticker: String(raw.slug ?? ''),
+    condition_id: String(raw.conditionId ?? ''),
+    event_ticker: String(raw.eventSlug ?? ''),
+    token_id: String(raw.asset ?? ''),
+    outcome: String(raw.outcome ?? ''),
+    title: String(raw.title ?? ''),
+    size: num(raw.size),
+    avg_price: num(raw.avgPrice),
+    cur_price: num(raw.curPrice),
+    current_value: num(raw.currentValue),
+    initial_value: num(raw.initialValue),
+    cash_pnl: num(raw.cashPnl),
+    percent_pnl: num(raw.percentPnl),
+    realized_pnl: num(raw.realizedPnl),
+    redeemable: raw.redeemable === true,
+  };
+}
+
+export async function fetchPositions(
+  wallet = requireWalletAddress(),
+  opts: { limit?: number; redeemable?: boolean } = {}
+): Promise<PolymarketPosition[]> {
+  const raw = await callPolymarketApi<RawPosition[]>('data', 'GET', '/positions', {
+    params: { user: wallet, limit: opts.limit ?? 100, redeemable: opts.redeemable },
+  });
+  return (Array.isArray(raw) ? raw : []).map(normalizePosition);
+}
+
+/**
+ * Total mark-to-market value of open positions.
+ *
+ * Polymarket has no Kalshi-style /portfolio/balance: free USDC lives on-chain and
+ * is not exposed here, so this reports position value only.
+ */
+export async function fetchPortfolioValue(wallet = requireWalletAddress()): Promise<PolymarketBalance> {
+  const raw = await callPolymarketApi<Array<Record<string, unknown>>>('data', 'GET', '/value', {
+    params: { user: wallet },
+  });
+  const row = Array.isArray(raw) ? raw[0] : undefined;
+  return { portfolio_value: num(row?.value), address: wallet };
+}
+
+export const getPositions = new DynamicStructuredTool({
+  name: 'get_positions',
+  description: 'Get the current Polymarket positions for the configured wallet, with P&L.',
+  schema: z.object({
+    limit: z.number().optional().describe('Max positions to return (default 100)'),
+  }),
+  func: async (input) => {
+    const positions = await fetchPositions(undefined, { limit: input.limit });
+    return formatToolResult({ positions });
+  },
+});
+
+export const getBalance = new DynamicStructuredTool({
+  name: 'get_balance',
+  description:
+    'Get total Polymarket portfolio value (mark-to-market of open positions) for the configured wallet. Free USDC balance is on-chain and not included.',
+  schema: z.object({}),
+  func: async () => formatToolResult({ balance: await fetchPortfolioValue() }),
+});

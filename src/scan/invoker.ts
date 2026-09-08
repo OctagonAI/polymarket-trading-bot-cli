@@ -1,54 +1,20 @@
-import { callKalshiApi, KalshiApiError } from '../tools/kalshi/api.js';
+import { lookupMarket } from '../tools/polymarket/markets.js';
 import { logger } from '../utils/logger.js';
 import type { OctagonInvoker, OctagonVariant } from './types.js';
 
 /**
- * Slugify a title for Kalshi website URL paths.
+ * Build the Polymarket event URL Octagon resolves reports against.
+ *
+ * Much simpler than the Kalshi equivalent, which had to look up the series title
+ * to synthesise a URL slug: a Polymarket event slug IS the URL path.
  */
-function slugify(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-}
-
-/** Cache series slug lookups to avoid redundant API calls */
-const seriesSlugCache = new Map<string, string>(); // series_ticker → slug
-
-/**
- * Build a Kalshi market URL that Octagon can resolve.
- * Kalshi website URLs use the format: /markets/{series_ticker}/{series_title_slug}/{event_ticker}
- * Octagon needs this exact format — it cannot follow client-side redirects.
- */
-async function buildKalshiMarketUrl(ticker: string): Promise<string> {
-  let market: unknown;
-  try {
-    market = await callKalshiApi('GET', `/markets/${ticker}`);
-  } catch (err) {
-    if (err instanceof KalshiApiError && err.statusCode === 404) {
-      throw new Error(`Market ticker '${ticker}' not found on Kalshi. Use kalshi_search to find valid tickers.`);
-    }
-    throw err;
+async function buildPolymarketMarketUrl(ticker: string): Promise<string> {
+  const market = await lookupMarket(ticker);
+  if (!market) {
+    throw new Error(`Market '${ticker}' not found on Polymarket. Use polymarket_search to find valid slugs.`);
   }
-  const data = ((market as any).market ?? market) as Record<string, unknown>;
-  const eventTicker = data.event_ticker as string | undefined;
-  if (!eventTicker) throw new Error(`No event_ticker found for market ${ticker}`);
-
-  // Get series info (series_ticker + title for slug)
-  const eventRes = await callKalshiApi('GET', `/events/${eventTicker}`);
-  const ev = ((eventRes as any).event ?? eventRes) as Record<string, unknown>;
-  const seriesTicker = ev.series_ticker as string | undefined;
-  if (!seriesTicker) throw new Error(`No series_ticker found for event ${eventTicker}`);
-
-  // Check slug cache
-  let slug = seriesSlugCache.get(seriesTicker);
-  if (!slug) {
-    const seriesRes = await callKalshiApi('GET', `/series/${seriesTicker}`);
-    const ser = ((seriesRes as any).series ?? seriesRes) as Record<string, unknown>;
-    const seriesTitle = ser.title as string | undefined;
-    if (!seriesTitle) throw new Error(`No title found for series ${seriesTicker}`);
-    slug = slugify(seriesTitle);
-    seriesSlugCache.set(seriesTicker, slug);
-  }
-
-  return `https://kalshi.com/markets/${seriesTicker.toLowerCase()}/${slug}/${eventTicker.toLowerCase()}`;
+  const eventSlug = market.event_ticker || market.ticker;
+  return `https://polymarket.com/event/${eventSlug.toLowerCase()}`;
 }
 
 /**
@@ -114,7 +80,7 @@ export async function callOctagon(input: string, variant: OctagonVariant): Promi
   // Octagon requires a full Kalshi URL — resolve tickers to URLs
   const marketUrl = input.startsWith('https://kalshi.com/')
     ? input
-    : await buildKalshiMarketUrl(input);
+    : await buildPolymarketMarketUrl(input);
 
   // Refresh reports can take several minutes to generate; cache is fast
   const timeoutMs = variant === 'cache' ? 60_000 : 600_000;

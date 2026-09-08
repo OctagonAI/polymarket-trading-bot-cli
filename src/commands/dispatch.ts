@@ -11,19 +11,18 @@ import { handleStatus } from './status.js';
 import { handleThemes, formatThemesHuman } from './themes.js';
 import { handleWatch } from './watch.js';
 import { handleBacktest, formatBacktestHuman } from './backtest.js';
-import { callKalshiApi } from '../tools/kalshi/api.js';
+import { fetchPositions, fetchPortfolioValue } from '../tools/polymarket/portfolio.js';
+import { TRADING_UNAVAILABLE_MESSAGE } from '../tools/polymarket/polymarket-trade.js';
 import {
   formatBalance,
   formatPositions,
-  formatOrders,
 } from './formatters.js';
-import type { KalshiOrder, KalshiPosition } from '../tools/kalshi/types.js';
-import { buildHelp, validateTradeArgs } from './help.js';
-import { fetchMarketQuote } from './helpers.js';
-import { ensureIndex, forceRefreshIndex } from '../tools/kalshi/search-index.js';
+import type { PolymarketPosition } from '../tools/polymarket/types.js';
+import { buildHelp } from './help.js';
+import { ensureIndex, forceRefreshIndex } from '../tools/polymarket/search-index.js';
 import { searchEventIndex } from '../db/event-index.js';
 import { scanEdges, formatEdgeScanHuman } from './search-edge.js';
-import type { KalshiBalanceResponse } from './formatters.js';
+
 import { ExitCode, exitCodeFromError } from '../utils/errors.js';
 import { trackEvent } from '../utils/telemetry.js';
 import { handleSimilar, formatSimilarHuman } from './similar.js';
@@ -294,12 +293,8 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       const subview = resolved.subview ?? args.positionalArgs[0] ?? 'overview';
 
       if (subview === 'positions') {
-        const data = await callKalshiApi('GET', '/portfolio/positions');
-        const allPositions = (data.market_positions ?? data.positions ?? []) as KalshiPosition[];
-        const positions = allPositions.filter((p) => {
-          const pos = parseFloat(String(p.position ?? '0'));
-          return pos !== 0;
-        });
+        const allPositions = await fetchPositions();
+        const positions = allPositions.filter((p) => p.size !== 0);
         if (json) {
           console.log(JSON.stringify(wrapSuccess('portfolio:positions', { positions })));
         } else {
@@ -308,19 +303,19 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
         return;
       }
 
+      // Resting orders require the trading integration, which is not built yet.
       if (subview === 'orders') {
-        const data = await callKalshiApi('GET', '/portfolio/orders', { params: { status: 'resting' } });
-        const orders = (data.orders ?? []) as KalshiOrder[];
         if (json) {
-          console.log(JSON.stringify(wrapSuccess('portfolio:orders', { orders })));
+          console.log(JSON.stringify(wrapError('portfolio:orders', 'NOT_AVAILABLE', TRADING_UNAVAILABLE_MESSAGE)));
         } else {
-          console.log(formatOrders(orders));
+          console.error(TRADING_UNAVAILABLE_MESSAGE);
         }
+        process.exit(ExitCode.USER_ERROR);
         return;
       }
 
       if (subview === 'balance') {
-        const data = await callKalshiApi('GET', '/portfolio/balance') as unknown as KalshiBalanceResponse;
+        const data = await fetchPortfolioValue();
         if (json) {
           console.log(JSON.stringify(wrapSuccess('portfolio:balance', data)));
         } else {
@@ -591,105 +586,16 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       return;
     }
 
-    // ─── buy / sell ────────────────────────────────────────────────────
-    if (subcommand === 'buy' || subcommand === 'sell') {
-      const [ticker, countStr, priceStr] = args.positionalArgs;
-      if (!ticker || !countStr) {
-        const usage = `Usage: ${subcommand} <ticker> <count> [price_in_cents] [--side yes|no]`;
-        const errResp = wrapError(subcommand, 'MISSING_ARGS', usage);
-        if (json) {
-          console.log(JSON.stringify(errResp));
-          process.exit(ExitCode.USER_ERROR);
-        } else {
-          console.error(usage);
-          process.exit(ExitCode.USER_ERROR);
-        }
-        return;
-      }
-      const validated = validateTradeArgs(countStr, priceStr);
-      if ('error' in validated) {
-        const errResp = wrapError(subcommand, 'INVALID_ARGS', validated.error);
-        if (json) {
-          console.log(JSON.stringify(errResp));
-          process.exit(ExitCode.USER_ERROR);
-        } else {
-          console.error(validated.error);
-          process.exit(ExitCode.USER_ERROR);
-        }
-        return;
-      }
-      let effectivePrice = validated.price;
-      // When no price given, fetch best quote to simulate a market order
-      // (Kalshi API requires a price field even for market-like orders)
-      const tradeSide = args.side ?? 'yes';
-      if (effectivePrice === undefined) {
-        const quoteResult = await fetchMarketQuote(ticker.toUpperCase(), subcommand as 'buy' | 'sell', tradeSide);
-        if ('error' in quoteResult) {
-          if (json) {
-            console.log(JSON.stringify(wrapError(subcommand, 'NO_QUOTE', quoteResult.error)));
-            process.exit(ExitCode.EXTERNAL_ERROR);
-          } else {
-            console.error(quoteResult.error);
-            process.exit(ExitCode.EXTERNAL_ERROR);
-          }
-          return;
-        }
-        effectivePrice = quoteResult.cents;
-      }
-      const body: Record<string, unknown> = {
-        ticker: ticker.toUpperCase(),
-        action: subcommand,
-        side: tradeSide,
-        type: 'limit',
-        count: validated.count,
-        ...(tradeSide === 'no'
-          ? { no_price: effectivePrice }
-          : { yes_price: effectivePrice }),
-      };
-      const data = await callKalshiApi('POST', '/portfolio/orders', { body });
+    // ─── buy / sell / cancel ───────────────────────────────────────────
+    // Order placement needs EIP-712 wallet signing and on-chain allowances; that
+    // is a later phase. Fail loudly rather than pretending to trade.
+    if (subcommand === 'buy' || subcommand === 'sell' || subcommand === 'cancel') {
       if (json) {
-        console.log(JSON.stringify(wrapSuccess(subcommand, data)));
+        console.log(JSON.stringify(wrapError(subcommand, 'NOT_AVAILABLE', TRADING_UNAVAILABLE_MESSAGE)));
       } else {
-        const order = data.order as Record<string, unknown> | undefined;
-        console.log(order ? `Order placed. ID: ${order.order_id} | Status: ${order.status}` : `Order submitted.`);
+        console.error(TRADING_UNAVAILABLE_MESSAGE);
       }
-      return;
-    }
-
-    // ─── cancel ────────────────────────────────────────────────────────
-    if (subcommand === 'cancel') {
-      const orderId = args.positionalArgs[0];
-      if (!orderId) {
-        const errResp = wrapError('cancel', 'MISSING_ARGS', 'Usage: cancel <order_id>');
-        if (json) {
-          console.log(JSON.stringify(errResp));
-          process.exit(ExitCode.USER_ERROR);
-        } else {
-          console.error('Usage: cancel <order_id>');
-          process.exit(ExitCode.USER_ERROR);
-        }
-        return;
-      }
-      try {
-        await callKalshiApi('DELETE', `/portfolio/orders/${orderId}`);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const hint = msg.includes('404') ? ' (order not found or already filled)' : '';
-        const code = exitCodeFromError(err);
-        if (json) {
-          console.log(JSON.stringify(wrapError('cancel', 'CANCEL_FAILED', msg + hint)));
-          process.exit(code);
-        } else {
-          console.error(`Cancel failed: ${msg}${hint}`);
-          process.exit(code);
-        }
-        return;
-      }
-      if (json) {
-        console.log(JSON.stringify(wrapSuccess('cancel', { orderId, canceled: true })));
-      } else {
-        console.log(`Order ${orderId} canceled.`);
-      }
+      process.exit(ExitCode.USER_ERROR);
       return;
     }
 

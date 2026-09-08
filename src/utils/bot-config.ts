@@ -5,6 +5,8 @@ import { appPath } from './paths.js';
 export interface BotConfig {
   scan: { interval: number; theme: string };
   risk: {
+    /** Trading bankroll in USDC. Polymarket exposes no cash balance, so sizing needs this. */
+    bankroll_usdc: number;
     kelly_multiplier: number;
     min_edge_threshold: number;
     max_position_pct: number;
@@ -26,7 +28,7 @@ export interface BotConfig {
 
 const DEFAULTS: BotConfig = {
   scan: { interval: 60, theme: 'top50' },
-  risk: { kelly_multiplier: 0.5, min_edge_threshold: 0.05, max_position_pct: 0.10, max_spread_cents: 5, min_volume_24h: 500, liquidity_haircut: 0.50, liquidity_spread_threshold: 3, liquidity_volume_threshold: 1000, max_drawdown: 0.20, max_positions: 10, max_per_category: 3, daily_loss_limit: 200 },
+  risk: { bankroll_usdc: 0, kelly_multiplier: 0.5, min_edge_threshold: 0.05, max_position_pct: 0.10, max_spread_cents: 5, min_volume_24h: 500, liquidity_haircut: 0.50, liquidity_spread_threshold: 3, liquidity_volume_threshold: 1000, max_drawdown: 0.20, max_positions: 10, max_per_category: 3, daily_loss_limit: 200 },
   octagon: { daily_credit_ceiling: 100, price_move_threshold: 0.05 },
   alerts: { min_edge: 0.05, channels: ['terminal'] },
   watch: { min_interval_minutes: 15, ticker_interval_seconds: 5 },

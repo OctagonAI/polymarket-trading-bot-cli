@@ -4,7 +4,7 @@ import { ApiKeyInputComponent, createProviderSelector } from '../components/inde
 import { VimSelectList } from '../components/select-list.js';
 import { selectListTheme, theme } from '../theme.js';
 import { checkApiKeyExists, saveApiKeyToEnv, ENV_PATH } from '../utils/env.js';
-import { callKalshiApi } from '../tools/kalshi/api.js';
+import { fetchExchangeStatus } from '../tools/polymarket/exchange.js';
 import { loadBotConfig, saveBotConfig } from '../utils/bot-config.js';
 import { appPath } from '../utils/paths.js';
 import type { SelectItem } from '@mariozechner/pi-tui';
@@ -511,7 +511,7 @@ export class SetupWizardController {
 
     // Test Kalshi
     try {
-      await callKalshiApi('GET', '/exchange/status');
+      await fetchExchangeStatus();
       this.testResults[0] = { name: 'Kalshi API', status: 'ok', message: 'Connected' };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

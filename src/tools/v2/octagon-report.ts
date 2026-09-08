@@ -9,9 +9,9 @@ import { formatToolResult } from '../types.js';
 
 export const octagonReportTool = new DynamicStructuredTool({
   name: 'octagon_report',
-  description: 'Fetch a full Octagon AI research report for a Kalshi market. Accepts a ticker or a full Kalshi market URL.',
+  description: 'Fetch a full Octagon AI research report for a Polymarket market. Accepts a slug or a full Polymarket URL.',
   schema: z.object({
-    ticker: z.string().describe('Market ticker (e.g. KXBTC-26MAR-B80000) or full Kalshi URL (e.g. https://kalshi.com/markets/kxcpiyoy/inflation/kxcpiyoy-26mar)'),
+    ticker: z.string().describe('Market or event slug (e.g. world-cup-winner) or full Polymarket URL (e.g. https://polymarket.com/event/world-cup-winner)'),
     forceRefresh: z.boolean().optional().describe('Force a fresh API call instead of using cache'),
   }),
   func: async ({ ticker, forceRefresh }) => {
@@ -85,25 +85,25 @@ export const octagonReportTool = new DynamicStructuredTool({
 });
 
 export const OCTAGON_REPORT_DESCRIPTION = `
-Fetch a full Octagon AI research report for a Kalshi market. Returns model probability, price drivers, catalysts, and sources.
+Fetch a full Octagon AI research report for a Polymarket market. Returns model probability, price drivers, catalysts, and sources.
 
 ## When to Use
 - User asks for a deep dive, analysis, or research on any market
 - User asks about edge, mispricing, or probability estimates
 - Any time you want model fair value vs market price
-- Use alongside kalshi_search for comprehensive analysis
+- Use alongside polymarket_search for comprehensive analysis
 
 ## Input
-- IMPORTANT: NEVER guess or construct tickers yourself — only use exact tickers returned by kalshi_search results
-- kalshi_search already auto-fetches an Octagon report for the top result — check if the data you need is already in the kalshi_search response before calling this tool separately
-- PREFERRED: Pass a full Kalshi URL (e.g. https://kalshi.com/markets/kxcpiyoy/inflation/kxcpiyoy-26mar) — this is what Octagon expects
+- IMPORTANT: NEVER guess or construct tickers yourself — only use exact tickers returned by polymarket_search results
+- polymarket_search already auto-fetches an Octagon report for the top result — check if the data you need is already in the polymarket_search response before calling this tool separately
+- PREFERRED: Pass a full Polymarket URL (e.g. https://polymarket.com/event/world-cup-winner) — this is what Octagon expects
 - Also accepts a market ticker (e.g. KXBTC-26MAR-B80000) — will be resolved to a URL automatically
-- If you got market data from kalshi_search, construct the URL as: https://kalshi.com/markets/SERIES/EVENT/TICKER (all lowercase) using the series_ticker, event_ticker, and ticker fields
+- If you got market data from polymarket_search, construct the URL as: https://polymarket.com/event/EVENT_SLUG using the event_ticker field
 
 ## When NOT to Use
 - For quick edge data already in the database (use edge_query)
-- For market prices or orderbook data only (use kalshi_search)
-- When kalshi_search already returned an octagon_report in its response — don't call again
+- For market prices or orderbook data only (use polymarket_search)
+- When polymarket_search already returned an octagon_report in its response — don't call again
 
 ## Notes
 - Returns cached reports when available (< 24h old)

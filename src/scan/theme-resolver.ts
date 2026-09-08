@@ -1,36 +1,52 @@
 import type { Database } from 'bun:sqlite';
 import type { AuditTrail } from '../audit/trail.js';
-import { callKalshiApi, fetchAllPages } from '../tools/kalshi/api.js';
-import type { KalshiEvent, KalshiMarket, KalshiSeries } from '../tools/kalshi/types.js';
-import { ensureIndex, getRefreshPromise } from '../tools/kalshi/search-index.js';
+import { fetchAllMarkets } from '../tools/polymarket/markets.js';
+import { ensureIndex, getRefreshPromise } from '../tools/polymarket/search-index.js';
 import { upsertEvent, deactivateExpired } from '../db/events.js';
 import { getThemeTickers } from '../db/themes.js';
 
-/** Maps lowercase theme IDs → exact Kalshi category labels */
+/**
+ * Maps lowercase theme IDs to Polymarket tag labels, matched against the
+ * `category` and `tags` columns of the local event index.
+ *
+ * Polymarket has no fixed category taxonomy the way Kalshi did — it has free-form
+ * tags — so these are best-effort groupings. Phase 3 replaces this with Octagon's
+ * derived `meta_category`.
+ */
 export const CATEGORY_MAP: Record<string, string> = {
-  'climate': 'Climate and Weather',
-  'companies': 'Companies',
+  'climate': 'Climate',
+  'companies': 'Business',
   'crypto': 'Crypto',
-  'economics': 'Economics',
+  'economics': 'Economy',
   'elections': 'Elections',
-  'entertainment': 'Entertainment',
-  'financials': 'Financials',
+  'entertainment': 'Pop Culture',
+  'financials': 'Business',
   'health': 'Health',
   'mentions': 'Mentions',
   'politics': 'Politics',
-  'science': 'Science and Technology',
-  'social': 'Social',
+  'science': 'Science',
+  'social': 'Pop Culture',
   'sports': 'Sports',
   'transportation': 'Transportation',
-  'world': 'World',
+  'world': 'Geopolitics',
 };
 
 /**
- * Fetch all series from Kalshi and build a map of category → sorted subcategory tags.
- * Each series has a `tags` field; we collect unique tags per category.
+ * Build a map of category → sorted subcategory tags from the local event index.
+ * Gamma has no endpoint that returns the tag taxonomy, so it is derived from the
+ * tags already stored on indexed events.
  */
 export async function fetchSubcategories(): Promise<Record<string, string[]>> {
-  const allSeries = await fetchAllPages<KalshiSeries>('/series', {}, 'series', 50);
+  const { getDb } = await import('../db/index.js');
+  await ensureIndex();
+  const pending = getRefreshPromise();
+  if (pending) await pending;
+
+  const rows = getDb()
+    .query(`SELECT category, tags FROM event_index WHERE tags IS NOT NULL AND tags != ''`)
+    .all() as Array<{ category: string | null; tags: string | null }>;
+
+  const allSeries = rows.map((r) => ({ category: r.category ?? '', tags: (r.tags ?? '').split(',').filter(Boolean) }));
   const catTags: Record<string, Set<string>> = {};
 
   for (const s of allSeries) {
@@ -92,12 +108,7 @@ export class ThemeResolver {
   }
 
   private async resolveTop50(): Promise<string[]> {
-    const markets = await fetchAllPages<KalshiMarket>(
-      '/markets',
-      { status: 'open', limit: 200 },
-      'markets',
-      3
-    );
+    const markets = await fetchAllMarkets({ closed: false, order: 'volume24hr', ascending: false }, 3);
 
     // Sort by volume_24h descending
     markets.sort((a, b) => (b.volume_24h ?? 0) - (a.volume_24h ?? 0));
@@ -117,8 +128,8 @@ export class ThemeResolver {
 
   private async resolveCategory(themeName: string): Promise<string[]> {
     const categoryLabel = CATEGORY_MAP[themeName];
-    // Kalshi /events API does not support server-side category filtering,
-    // so query the local SQLite index instead of fetching all open events
+    // Gamma has no server-side category filter, so query the local SQLite index
+    // instead of paging every open event
     await ensureIndex();
     // If ensureIndex kicked off a background refresh (first run / empty index),
     // await it so we don't query an unpopulated event_index table
@@ -136,41 +147,28 @@ export class ThemeResolver {
     const categoryLabel = CATEGORY_MAP[catKey];
     if (!categoryLabel) return [];
 
-    // Find series in this category with matching tag
-    const allSeries = await fetchAllPages<KalshiSeries>('/series', { category: categoryLabel }, 'series', 50);
-    const matchingSeries = new Set<string>();
-    for (const s of allSeries) {
-      if (s.category !== categoryLabel) continue;
-      const hasTag = (s.tags ?? []).some((t) => {
+    await ensureIndex();
+    const pending = getRefreshPromise();
+    if (pending) await pending;
+
+    // Tags are stored comma-joined on the index row; match either the raw label
+    // or its kebab-cased form so "pop-culture" and "Pop Culture" both resolve.
+    const rows = this.db
+      .query(`SELECT event_ticker, tags FROM event_index WHERE category = ?`)
+      .all(categoryLabel) as Array<{ event_ticker: string; tags: string | null }>;
+
+    const seen = new Set<string>();
+    const eventTickers: string[] = [];
+    for (const row of rows) {
+      const tags = (row.tags ?? '').split(',').filter(Boolean);
+      const hasTag = tags.some((t) => {
         const tagLower = t.toLowerCase();
         const tagKebab = tagLower.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
         return tagLower === subTag || tagKebab === subTag;
       });
-      if (hasTag) matchingSeries.add(s.ticker);
-    }
-
-    if (matchingSeries.size === 0) return [];
-
-    // Fetch open events for matching series in parallel (server-side filtered)
-    const results = await Promise.all(
-      [...matchingSeries].map((seriesTicker) =>
-        fetchAllPages<KalshiEvent>(
-          '/events',
-          { status: 'open', series_ticker: seriesTicker },
-          'events',
-          50
-        )
-      )
-    );
-
-    const seen = new Set<string>();
-    const eventTickers: string[] = [];
-    for (const events of results) {
-      for (const e of events) {
-        if (!seen.has(e.event_ticker)) {
-          seen.add(e.event_ticker);
-          eventTickers.push(e.event_ticker);
-        }
+      if (hasTag && !seen.has(row.event_ticker)) {
+        seen.add(row.event_ticker);
+        eventTickers.push(row.event_ticker);
       }
     }
 

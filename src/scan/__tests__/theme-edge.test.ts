@@ -7,7 +7,7 @@ import { ThemeResolver } from '../theme-resolver.js';
 import { OctagonClient } from '../octagon-client.js';
 import { upsertEvent, getActiveEvents } from '../../db/events.js';
 import { getLatestEdge } from '../../db/edge.js';
-import * as kalshiApi from '../../tools/kalshi/api.js';
+import * as polyEvents from '../../tools/polymarket/events.js';
 import type { OctagonReport, OctagonVariant } from '../types.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -106,21 +106,29 @@ describe('EdgeComputer', () => {
       const marketTicker = 'MKT-YES';
       const eventTicker = 'EV-1';
 
-      // Mock callKalshiApi to avoid needing real API keys
-      const spy = spyOn(kalshiApi, 'callKalshiApi').mockResolvedValue({
-        event: {
+      // Mock the Gamma event fetch; prices are decimal probabilities
+      const spy = spyOn(polyEvents, 'fetchEventBySlug').mockResolvedValue({
+        event_ticker: eventTicker,
+        title: 'Test event',
+        sub_title: '',
+        mutually_exclusive: false,
+        category: 'politics',
+        tags: [],
+        close_time: '',
+        strike_date: '',
+        volume: 10000,
+        volume_24h: 1000,
+        liquidity: 5000,
+        markets: [{
+          ticker: marketTicker,
           event_ticker: eventTicker,
-          markets: [{
-            ticker: marketTicker,
-            event_ticker: eventTicker,
-            status: 'open',
-            last_price: 58,
-            yes_bid: 55,
-            yes_ask: 61,
-            volume_24h: 1000,
-          }],
-        },
-      });
+          status: 'active',
+          last_price: 0.58,
+          yes_bid: 0.55,
+          yes_ask: 0.61,
+          volume_24h: 1000,
+        }],
+      } as never);
 
       // Mock OctagonClient
       const mockInvoker = async (_ticker: string, _variant: OctagonVariant) => {

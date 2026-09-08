@@ -5,12 +5,12 @@ import { auditTrail } from '../audit/index.js';
 import { OctagonClient } from '../scan/octagon-client.js';
 import { EdgeComputer } from '../scan/edge-computer.js';
 import { createOctagonInvoker } from '../scan/invoker.js';
-import { callKalshiApi } from '../tools/kalshi/api.js';
+import { fetchEvents } from '../tools/polymarket/events.js';
 import { callOctagon } from '../scan/invoker.js';
-import { ensureIndex, onIndexProgress, getRefreshPromise } from '../tools/kalshi/search-index.js';
+import { ensureIndex, onIndexProgress, getRefreshPromise } from '../tools/polymarket/search-index.js';
 import { getEventsFromIndex, getTopEventsByVolume, getIndexAge } from '../db/event-index.js';
 import { resolveMarket } from '../commands/analyze.js';
-import type { KalshiEvent, KalshiMarket } from '../tools/kalshi/types.js';
+import type { PolymarketEvent, PolymarketMarket } from '../tools/polymarket/types.js';
 import { trackEvent } from '../utils/telemetry.js';
 
 /** Maps lowercase theme IDs to exact Kalshi category labels (inlined to avoid heavy theme-resolver import) */
@@ -33,55 +33,29 @@ const CATEGORY_MAP: Record<string, string> = {
 };
 
 /** Minimal market shape needed by parseMarketProb and isMarketActive */
+/** Prices on a MarketRow are decimal probabilities in [0,1]. */
 export interface MarketRow {
-  last_price_dollars?: string | null;
-  dollar_last_price?: string | null;
   last_price?: number | null;
-  yes_bid_dollars?: string | null;
-  dollar_yes_bid?: string | null;
-  yes_ask_dollars?: string | null;
-  dollar_yes_ask?: string | null;
   yes_bid?: number | null;
   yes_ask?: number | null;
-  response_price_units?: string | null;
   status?: string | null;
   result?: string | null;
   volume_24h?: number | string | null;
-}
-
-/** Parse a dollar or cent price field into a decimal probability (0-1).
- *  Checks both new (yes_bid_dollars) and legacy (dollar_yes_bid) API field names. */
-export function parsePriceField(newDollar: string | undefined | null, legacyDollar: string | undefined | null, centVal: number | undefined | null): number {
-  if (newDollar != null) {
-    const d = parseFloat(String(newDollar).trim());
-    if (Number.isFinite(d)) return d;
-  }
-  if (legacyDollar != null) {
-    const d = parseFloat(String(legacyDollar).trim());
-    if (Number.isFinite(d)) return d;
-  }
-  if (centVal != null && Number.isFinite(centVal)) return centVal / 100;
-  return NaN;
 }
 
 /** Parse a market probability from last traded price.
  *  Returns null if no last_price is available — callers should display "—" or skip the market.
  *  Does NOT fall back to bid/ask mid, which misrepresents where the market is actually trading. */
 export function parseMarketProb(m: MarketRow): number | null {
-  // Check all three API field name variants: last_price_dollars (new), dollar_last_price (legacy), last_price (cents)
-  const dollarStr = m.last_price_dollars ?? m.dollar_last_price;
-  if (dollarStr != null) {
-    const d = parseFloat(String(dollarStr));
-    if (Number.isFinite(d) && d > 0) return d;
-  }
-  if (m.last_price != null && m.last_price > 0) return m.last_price / 100;
+  // Already a decimal probability — no cents conversion.
+  if (m.last_price != null && m.last_price > 0) return m.last_price;
   return null;
 }
 
 /** Check if a market is actively tradeable: open/active, not resolved, and has at least one trade */
 export function isMarketActive(m: MarketRow): boolean {
   // Must be in a tradeable state
-  if (m.status !== 'open' && m.status !== 'active') return false;
+  if (m.status !== 'active' && m.status !== 'open') return false;
   // Must not be resolved
   if (m.result && m.result !== '') return false;
   // Must have recent trading activity (volume_24h > 0)
@@ -93,13 +67,10 @@ export function isMarketActive(m: MarketRow): boolean {
   // Must have at least one actual trade (last_price > 0)
   // If last_price is absent (old index row), fall through and allow it
   const lastPrice = m.last_price ?? 0;
-  const dollarStr = m.last_price_dollars ?? m.dollar_last_price;
-  const parsedDollar = dollarStr != null ? parseFloat(String(dollarStr)) : NaN;
-  const lastPriceDollar = Number.isFinite(parsedDollar) ? parsedDollar : 0;
-  if (lastPrice === 0 && lastPriceDollar === 0) {
-    // Transition fallback: if all last_price fields are missing entirely (not zero),
-    // allow the market through so old index rows still appear
-    if (m.last_price == null && dollarStr == null) return true;
+  if (lastPrice === 0) {
+    // If last_price is missing entirely (not zero), allow the market through so
+    // older index rows still appear.
+    if (m.last_price == null) return true;
     return false;
   }
   return true;
@@ -320,7 +291,7 @@ export class BrowseController {
 
   private async resolveAndShowReport(ticker: string, token: number): Promise<void> {
     try {
-      const market = await resolveMarket(ticker.toUpperCase());
+      const market = await resolveMarket(ticker);
       if (token !== this.loadToken) return;
 
       const db = getDb();
@@ -460,7 +431,7 @@ export class BrowseController {
   private async loadEvents(theme: string, token?: number): Promise<void> {
     try {
       const db = getDb();
-      let kalshiEvents: KalshiEvent[];
+      let kalshiEvents: PolymarketEvent[];
 
       const indexAge = getIndexAge(db);
       const indexEmpty = indexAge === Infinity;
@@ -478,14 +449,11 @@ export class BrowseController {
         if (kalshiEvents.length === 0) {
           this.progressMessageValue = 'Fetching top markets...';
           this.emitChange();
-          const data = await callKalshiApi('GET', '/events', {
-            params: { status: 'open', with_nested_markets: true, limit: 100 },
-          });
-          kalshiEvents = (data.events ?? []) as KalshiEvent[];
-          kalshiEvents.sort((a, b) => {
-            const volA = (a.markets ?? []).reduce((sum: number, m: any) => sum + (parseFloat(m.volume_fp) || 0), 0);
-            const volB = (b.markets ?? []).reduce((sum: number, m: any) => sum + (parseFloat(m.volume_fp) || 0), 0);
-            return volB - volA;
+          kalshiEvents = await fetchEvents({
+            closed: false,
+            limit: 100,
+            order: 'volume24hr',
+            ascending: false,
           });
           kalshiEvents = kalshiEvents.slice(0, 30);
         }
@@ -560,7 +528,7 @@ export class BrowseController {
   }
 
   /** Convert Kalshi events (with nested markets) to BrowseEventRows */
-  private kalshiEventsToRows(events: KalshiEvent[], db: ReturnType<typeof getDb>): BrowseEventRow[] {
+  private kalshiEventsToRows(events: PolymarketEvent[], db: ReturnType<typeof getDb>): BrowseEventRow[] {
     const rows: BrowseEventRow[] = [];
     for (const ev of events) {
       const markets = (ev.markets ?? []).filter((m) => isMarketActive(m));
@@ -575,7 +543,7 @@ export class BrowseController {
     return rows;
   }
 
-  private toMarketRow(m: KalshiMarket, db: ReturnType<typeof getDb>): BrowseMarketRow {
+  private toMarketRow(m: PolymarketMarket, db: ReturnType<typeof getDb>): BrowseMarketRow {
     const marketProb = parseMarketProb(m);
     let modelProb: number | null = null;
     let edge: number | null = null;
@@ -608,11 +576,16 @@ export class BrowseController {
       const edgeComputer = new EdgeComputer(db, auditTrail);
 
       // Fetch current market data
-      const marketRes = await callKalshiApi('GET', `/markets/${ticker}`);
+      const market = await resolveMarket(ticker);
       // Bail if session changed
       if (sessionToken !== undefined && sessionToken !== this.loadToken) return;
 
-      const market = (marketRes.market ?? marketRes) as KalshiMarket;
+      if (!market) {
+        this.lastErrorValue = `Market ${ticker} not found on Polymarket.`;
+        this.pendingReports.delete(eventTicker);
+        this.emitChange();
+        return;
+      }
       const marketProb = parseMarketProb(market);
       if (marketProb === null) {
         this.lastErrorValue = `No last traded price for ${ticker} — market may be untradeable.`;
@@ -788,7 +761,7 @@ export class BrowseController {
     db: ReturnType<typeof getDb>,
     searchTerm: string,
     categoryLabel: string | null,
-  ): Promise<KalshiEvent[]> {
+  ): Promise<PolymarketEvent[]> {
     try {
       await ensureIndex();
       let rows: any[] = [];

@@ -1,4 +1,4 @@
-import type { KalshiMarket, KalshiPosition, KalshiOrder } from '../tools/kalshi/types.js';
+import type { PolymarketMarket, PolymarketPosition } from '../tools/polymarket/types.js';
 
 // ─── Box header helper ───────────────────────────────────────────────────────
 
@@ -19,19 +19,19 @@ export function formatBoxHeader(title: string): string[] {
 }
 
 /** Actual Kalshi /portfolio/balance response shape */
-export interface KalshiBalanceResponse {
-  balance: number;
+/**
+ * Polymarket has no Kalshi-style balance endpoint: free USDC lives on-chain and
+ * is not exposed by the Data API, so only position value is reported.
+ */
+export interface PolymarketBalanceResponse {
   portfolio_value: number;
-  updated_ts?: number;
-  // Legacy fields (may be present in some API versions)
-  payout?: number;
-  reserved_fees?: number;
-  fees?: number;
+  address?: string;
 }
 
 // ─── Value parsers ────────────────────────────────────────────────────────────
-// Kalshi API returns prices as "_dollars" string fields (e.g. "0.5600")
-// or as integer cents in older API versions. Handle both.
+// Polymarket prices are decimal probabilities in [0,1] (USDC per share). There
+// is no cents/dollars dual encoding to reconcile — the Kalshi client needed that,
+// this one does not.
 
 function parseDollars(val: string | number | undefined | null): number | undefined {
   if (val === undefined || val === null) return undefined;
@@ -52,23 +52,23 @@ function fmtDollars(val: string | number | undefined | null): string {
   return `$${n.toFixed(2)}`;
 }
 
-/** Format a price field that may be integer cents OR a dollars string */
+/**
+ * Format a decimal price (0-1) the way Polymarket displays it: cents, with a
+ * decimal only when the market's sub-cent tick actually uses one.
+ */
 function fmtPrice(val: number | string | undefined | null): string {
-  if (val === undefined || val === null) return '-';
-  if (typeof val === 'string') {
-    const n = parseFloat(val);
-    if (isNaN(n)) return '-';
-    // If the string looks like "0.5600" (dollars format), show as-is
-    return `$${n.toFixed(2)}`;
-  }
-  // Integer cents (old API format): divide by 100
-  return `$${(val / 100).toFixed(2)}`;
+  const n = parseDollars(val);
+  if (n === undefined) return '-';
+  const cents = n * 100;
+  return Number.isInteger(Math.round(cents * 10) / 10) && Math.abs(cents - Math.round(cents)) < 1e-9
+    ? `${Math.round(cents)}\u00A2`
+    : `${cents.toFixed(1)}\u00A2`;
 }
 
-/** Format a dollar amount from cents (integer) */
-function fmtCents(cents: number | undefined | null): string {
-  if (cents === undefined || cents === null) return '-';
-  return `$${(cents / 100).toFixed(2)}`;
+/** Format a USDC amount. */
+function fmtUsd(val: number | undefined | null): string {
+  if (val === undefined || val === null || !Number.isFinite(val)) return '-';
+  return `$${val.toFixed(2)}`;
 }
 
 /** Format a number with commas, safely handling null/undefined */
@@ -92,90 +92,41 @@ function fmtDate(iso: string | undefined): string {
 
 // ─── Access helpers (handle both _dollars and raw field names) ────────────────
 
-function mktYesAsk(m: any): string | number | undefined {
-  return m.yes_ask_dollars ?? m.dollar_yes_ask ?? m.yes_ask;
-}
-function mktNoAsk(m: any): string | number | undefined {
-  return m.no_ask_dollars ?? m.dollar_no_ask ?? m.no_ask;
-}
-function mktYesBid(m: any): string | number | undefined {
-  return m.yes_bid_dollars ?? m.dollar_yes_bid ?? m.yes_bid;
-}
-function mktNoBid(m: any): string | number | undefined {
-  return m.no_bid_dollars ?? m.dollar_no_bid ?? m.no_bid;
-}
-function mktLastPrice(m: any): string | number | undefined {
-  return m.last_price_dollars ?? m.dollar_last_price ?? m.last_price;
-}
-function mktVolume(m: any): string | number | undefined {
-  return m.volume_fp ?? m.volume;
-}
-function mktOpenInterest(m: any): string | number | undefined {
-  return m.open_interest_fp ?? m.open_interest;
-}
+function mktYesAsk(m: any): number | undefined { return m.yes_ask; }
+function mktNoAsk(m: any): number | undefined { return m.no_ask; }
+function mktYesBid(m: any): number | undefined { return m.yes_bid; }
+function mktNoBid(m: any): number | undefined { return m.no_bid; }
+function mktLastPrice(m: any): number | undefined { return m.last_price; }
+function mktVolume(m: any): number | undefined { return m.volume; }
+function mktOpenInterest(m: any): number | undefined { return m.open_interest; }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
-export function formatBalance(data: KalshiBalanceResponse): string {
+export function formatBalance(data: PolymarketBalanceResponse): string {
   const lines: string[] = [];
-  lines.push('**Account Balance**');
+  lines.push('**Portfolio Value**');
   lines.push('');
-  lines.push(`Balance:         ${fmtCents(data.balance)}`);
-  lines.push(`Portfolio Value: ${fmtCents(data.portfolio_value ?? 0)}`);
-  if (data.payout !== undefined) lines.push(`Payout:          ${fmtCents(data.payout)}`);
-  if (data.reserved_fees !== undefined) lines.push(`Reserved Fees:   ${fmtCents(data.reserved_fees)}`);
-  if (data.fees !== undefined) lines.push(`Total Fees:      ${fmtCents(data.fees)}`);
+  lines.push(`Position Value:  ${fmtUsd(data.portfolio_value)}`);
+  if (data.address) lines.push(`Wallet:          ${data.address}`);
+  lines.push('');
+  lines.push('Free USDC balance is held on-chain and is not reported here.');
   return lines.join('\n');
 }
 
 export function formatPositions(positions: any[]): string {
   if (!positions.length) return 'No open positions.';
 
-  const rows = positions.map((p) => {
-    // position_fp is the net position (number of contracts)
-    const pos = parsePosition(p.position_fp ?? p.position);
-    const posStr = pos === undefined ? '-' : pos > 0 ? `+${pos}` : String(pos);
-    const pnl = p.realized_pnl_dollars ?? (p.realized_pnl !== undefined ? (p.realized_pnl / 100).toFixed(2) : undefined);
-    const exposure = p.market_exposure_dollars ?? (p.market_exposure !== undefined ? (p.market_exposure / 100).toFixed(2) : undefined);
+  const rows = positions.map((p) => [
+    p.ticker,
+    p.outcome ?? '-',
+    fmtNum(p.size),
+    fmtPrice(p.avg_price),
+    fmtPrice(p.cur_price),
+    fmtUsd(p.current_value),
+    fmtUsd(p.cash_pnl),
+  ]);
 
-    return [
-      p.ticker,
-      posStr,
-      fmtDollars(pnl),
-      fmtDollars(exposure),
-      String(p.resting_orders_count ?? 0),
-    ];
-  });
-
-  return formatTable(
-    ['Ticker', 'Position', 'Realized P&L', 'Exposure', 'Orders'],
-    rows
-  );
-}
-
-export function formatOrders(orders: KalshiOrder[]): string {
-  if (!orders.length) return 'No orders found.';
-
-  const rows = orders.map((o) => {
-    const price = o.yes_price_dollars
-      ? fmtDollars(o.yes_price_dollars)
-      : o.yes_price != null ? fmtCents(o.yes_price) : '-';
-    const remaining = o.remaining_count_fp ?? o.remaining_count ?? '-';
-    const initial = o.initial_count_fp ?? o.contracts_count ?? '-';
-    return [
-      o.ticker,
-      `${o.action}/${o.side}`,
-      price,
-      `${remaining}/${initial}`,
-      o.status,
-      (o.order_id ?? '').slice(0, 8) + '…',
-    ];
-  });
-
-  return formatTable(
-    ['Ticker', 'Action/Side', 'Price', 'Remaining', 'Status', 'Order ID'],
-    rows
-  );
+  return formatTable(['Market', 'Outcome', 'Shares', 'Avg', 'Now', 'Value', 'P&L'], rows);
 }
 
 export function formatMarkets(markets: any[]): string {
@@ -216,27 +167,6 @@ export function formatExchangeStatus(data: Record<string, unknown>): string {
   const active = data.exchange_active ? '✓ Exchange Active' : '✗ Exchange Inactive';
   const trading = data.trading_active ? '✓ Trading Active' : '✗ Trading Paused';
   return `${active}\n${trading}`;
-}
-
-export function formatOrderConfirmation(
-  ticker: string,
-  action: 'buy' | 'sell',
-  side: 'yes' | 'no',
-  count: number,
-  price: number | undefined
-): string {
-  const priceStr = price !== undefined ? `$${(price / 100).toFixed(2)}` : 'market price';
-  const estCost = price !== undefined ? `$${((price / 100) * count).toFixed(2)}` : 'variable';
-  const lines = [
-    '**Order Preview**',
-    '',
-    `Ticker:  ${ticker}`,
-    `Action:  ${action.toUpperCase()} ${side.toUpperCase()}`,
-    `Count:   ${count} contract${count !== 1 ? 's' : ''}`,
-    `Price:   ${priceStr}`,
-    `Est. Cost: ${estCost}`,
-  ];
-  return lines.join('\n');
 }
 
 export function formatEvents(events: any[]): string {
