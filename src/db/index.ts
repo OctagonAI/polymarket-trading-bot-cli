@@ -2,12 +2,10 @@ import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { migrate } from './schema.js';
-import { appPath } from '../utils/paths.js';
+import { DB_PATH } from '../utils/paths.js';
 import { prefetchOctagonEvents } from '../scan/octagon-prefetch.js';
 
 let _db: Database | null = null;
-
-const DEFAULT_DB_PATH = appPath('kalshi-bot.db');
 
 /**
  * Get the database singleton. Lazy-initializes on first call.
@@ -16,7 +14,7 @@ const DEFAULT_DB_PATH = appPath('kalshi-bot.db');
 export function getDb(path?: string): Database {
   if (_db) return _db;
 
-  const dbPath = path ?? DEFAULT_DB_PATH;
+  const dbPath = path ?? DB_PATH;
 
   if (dbPath !== ':memory:') {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -28,7 +26,7 @@ export function getDb(path?: string): Database {
   migrate(_db);
 
   // Fire-and-forget: prefetch Octagon events in background (only for the real runtime DB)
-  if (dbPath === DEFAULT_DB_PATH) {
+  if (dbPath === DB_PATH) {
     const db = _db;
     prefetchOctagonEvents(db).catch(() => {});
   }

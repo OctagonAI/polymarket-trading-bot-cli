@@ -1,10 +1,10 @@
 // ─── Shared help content for both TUI slash commands and CLI batch mode ─────
 
-/** Context determines prefix style: slash commands use "/", CLI uses "kalshi" */
+/** Context determines prefix style: slash commands use "/", CLI uses "polymarket" */
 type HelpContext = 'slash' | 'cli';
 
 function prefix(ctx: HelpContext): string {
-  return ctx === 'slash' ? '/' : 'kalshi ';
+  return ctx === 'slash' ? '/' : 'polymarket ';
 }
 
 function buildTopics(ctx: HelpContext): Record<string, string> {
@@ -60,7 +60,7 @@ ${p}analyze KX-A KX-B KX-C                 Edge readout across 2-100 tickers
 ${p}analyze --tickers KX-A,KX-B,KX-C       Same, comma-separated
 ${p}analyze KX-A KX-B KX-C --json          For pipelines / scripting
 
-The batch mode hits POST /kalshi/markets/edge in one call and returns
+The batch mode hits POST /markets/edge in one call and returns
 model_probability, market_probability, edge_pp, expected_return per ticker.
 Use single-ticker mode when you need the full deep-analysis pipeline
 (drivers, catalysts, Kelly sizing, risk gate).${ctx === 'cli' ? `
@@ -122,27 +122,27 @@ ${p}backtest --min-volume 10              Per-contract volume gate (default 1)
 ${p}backtest --min-price 5 --max-price 95 Tradeable price band 0-100 (defaults: 5 / 95)
 ${p}backtest --universe api              Systematic Octagon-API universe (default; reproducible across machines)
 ${p}backtest --universe local            Legacy local octagon_reports universe (offline, NON-SYSTEMATIC)
-${p}backtest --fees taker                Apply Kalshi taker fee (0.07·p·(1−p) per entry); default 'none' = gross
+${p}backtest --fees taker                Apply Taker fee (0.07·p·(1−p) per entry); default 'none' = gross
 ${p}backtest --fees maker                Maker execution (free entry)
 ${p}backtest --export results.csv         Per-market detail CSV
 ${p}backtest --json                       Machine-readable output
 
 Looks back N days, compares what the model said then to where the market is now.
-Resolved markets: scored against Kalshi settlement (0 or 100).
-Unresolved markets: mark-to-market vs current Kalshi trading price.
+Resolved markets: scored against settlement (0 or 100).
+Unresolved markets: mark-to-market vs current market price.
 Per-contract entry: mp/kp come from the per-contract outcome_probabilities on the
 Octagon snapshot (no event-level fallback). Volume gate requires per-contract
 volume from the snapshot; signals without it are dropped (the legacy fallback
-to Kalshi lifetime volume was a look-ahead and has been removed).
+to lifetime volume was a look-ahead and has been removed).
 ROI is capital-weighted: sum(pnl) / sum(capital) across edge signals, where capital
 is kp/100 for YES edges and (100-kp)/100 for NO edges (matches Supabase methodology).`,
 
-    'clear-cache': `**${ctx === 'cli' ? '' : 'kalshi '}clear-cache** — Delete local cache
+    'clear-cache': `**${ctx === 'cli' ? '' : 'polymarket '}clear-cache** — Delete local cache
 
-${ctx === 'cli' ? `${p}` : 'kalshi '}clear-cache                Delete the local SQLite database (~/.kalshi-bot/kalshi-bot.db)
+${ctx === 'cli' ? `${p}` : 'polymarket '}clear-cache                Delete the local SQLite database (~/.polymarket-bot/polymarket-bot.db)
                                A fresh database will be created on next command.
 
-Use this when the local cache is corrupted or you want to start fresh.${ctx !== 'cli' ? '\nRun from terminal: kalshi clear-cache' : ''}`,
+Use this when the local cache is corrupted or you want to start fresh.${ctx !== 'cli' ? '\nRun from terminal: polymarket clear-cache' : ''}`,
 
     init: `**${p}init** — Re-run setup wizard
 
@@ -156,7 +156,7 @@ ${p}help <command>             Show detailed help for a command`,
 
     scripting: `**Scripting & Parallel Use** — for agents, pipelines, and parallel invocations
 
-The \`bunx kalshi-trading-bot-cli@latest …\` form is convenient for one-off use
+The \`bunx polymarket-trading-bot-cli@latest …\` form is convenient for one-off use
 but has two gotchas under scripting:
 
   1. Bun's install chatter ("Resolving dependencies", "Saved lockfile") leaks
@@ -167,18 +167,18 @@ but has two gotchas under scripting:
 
 **Recommended for scripts and agents:**
 
-  bun add -g kalshi-trading-bot-cli           # install once; emits no chatter on subsequent runs
-  parallel -j 30 'kalshi analyze {} --json' ::: TICKER1 TICKER2 …
+  bun add -g polymarket-trading-bot-cli           # install once; emits no chatter on subsequent runs
+  parallel -j 30 'polymarket analyze {} --json' ::: TICKER1 TICKER2 …
 
 **If you must use bunx:**
 
-  bunx --silent kalshi-trading-bot-cli@latest analyze KX-A --json
+  bunx --silent polymarket-trading-bot-cli@latest analyze KX-A --json
                 ^^^^^^^^ suppresses install chatter; keeps our stdout clean
 
 For parallel bunx, pre-warm the cache serially before fanning out:
 
-  bunx --silent kalshi-trading-bot-cli@latest --version        # one-shot, warms cache
-  parallel -j 30 'bunx --silent kalshi-trading-bot-cli@latest analyze {} --json' ::: …
+  bunx --silent polymarket-trading-bot-cli@latest --version        # one-shot, warms cache
+  parallel -j 30 'bunx --silent polymarket-trading-bot-cli@latest analyze {} --json' ::: …
 
 See README → Scripting & Parallel Use for the full picture.`,
 
@@ -191,7 +191,7 @@ ${p}similar -q "..." --category crypto --min-volume 10000 --close-before 2026-08
 
 Flags:
   --top-k <n>             Number of neighbors (default 25, max 100)
-  --category <name>       Restrict to a Kalshi category
+  --category <name>       Restrict to a category
   --min-volume <n>        Floor on 24h volume
   --close-before <iso>    Only markets closing before this timestamp
   --json                  JSON output
@@ -254,13 +254,13 @@ Output ranks pairs ascending by correlation — most-uncorrelated first.`,
 ${p}report <event_ticker>           Cached report body (most recent)
 ${p}report <market_ticker>          Resolves to the parent event automatically
 ${p}report <series_ticker>          Resolves to the latest event in the series
-${p}report <kalshi_url>             Accepts a full kalshi.com URL too
+${p}report <polymarket_url>             Accepts a full polymarket.com URL too
 ${p}report <ticker> --refresh       Force a fresh pull from Octagon (costs 3 credits)
 
 The full deep-research markdown body — same content the OctagonAI web app shows.
 Lookup is more lenient than \`analyze\`: tries Octagon's event endpoint first
-before falling back to the Kalshi resolver chain, so series tickers and
-events without open Kalshi markets still work.
+before falling back to the resolver chain, so series tickers and
+events without open markets still work.
 
 Flags:
   --refresh    Force a fresh report instead of returning the cached one${ctx === 'cli' ? `
@@ -316,11 +316,11 @@ Flags:
   --limit <n>           Page size (default 50)
   --json                JSON envelope output
 
-Each event is a multi-market Kalshi question (e.g. "Who will Trump nominate as Fed Chair?")
+Each event is a multi-market question (e.g. "Who will Trump nominate as Fed Chair?")
 with one binary sub-market per outcome (Kevin Warsh, Judy Shelton, ...).
 Octagon supplies a model_probability per outcome so you can rank contracts by edge.`,
 
-    series: `**${p}series** — Series-level rollups over the Kalshi universe
+    series: `**${p}series** — Series-level rollups over the market universe
 
 ${p}series                          List series with 24h vol, market count, dominant category
 ${p}series list --min-volume 10000  Liquidity filter
@@ -339,11 +339,11 @@ Flags:
   --series <prefix>      Filter list by series-ticker prefix (e.g. KXBTC)
   --json                 JSON output
 
-A series is the Kalshi grouping above individual markets — KXBTCD is the BTC
+A series is the grouping above individual markets — KXBTCD is the BTC
 strike ladder, with hundreds of sub-markets like KXBTCD-26DEC31-T100000.
 Series list is now a single server-side call (was 25 paginated calls).`,
 
-    catalysts: `**${p}catalysts** — Upcoming Kalshi market closes grouped by week
+    catalysts: `**${p}catalysts** — Upcoming market closes grouped by week
 
 ${p}catalysts upcoming                       Next 30 days
 ${p}catalysts upcoming --days 7              Next week
@@ -357,7 +357,7 @@ Flags:
   --limit <n>          Top-N markets per week (default 8)
   --json               JSON output
 
-Use for catalyst-calendar planning: see which weeks have major Kalshi
+Use for catalyst-calendar planning: see which weeks have major
 resolutions cluster up so you can position before catalyst risk.`,
 
     themes: `**${p}themes** — Editorial narrative registry (curated theme buckets)
@@ -378,7 +378,7 @@ ${p}themes overlap                        Cross-theme dedupe report
 
 Editorial themes are narrative buckets you curate (e.g. "AI Race Milestones",
 "Iran Escalation") — distinct from Octagon's ML clusters. Each theme maps to a
-list of Kalshi series and an optional monthly search-volume estimate.
+list of series and an optional monthly search-volume estimate.
 
 Flags:
   --label <desc>        Set description on create
@@ -386,7 +386,7 @@ Flags:
   --tickers <csv>       Comma-separated series on create
   --json                JSON output
 
-Legacy: ${p}search themes still lists Kalshi category labels (the pre-registry view).`,
+Legacy: ${p}search themes still lists category labels (the pre-registry view).`,
 
     basket: `**${p}basket** — Build, backtest, and size diversified baskets
 
@@ -453,18 +453,18 @@ Recipes:
 function buildOverview(ctx: HelpContext): string {
   const p = prefix(ctx);
   if (ctx === 'cli') {
-    return `**Kalshi Trading Bot CLI — CLI Commands**
+    return `**Polymarket Trading Bot CLI — CLI Commands**
 
 Quick start:
-  kalshi search crypto          Find markets by keyword or theme
-  kalshi analyze <ticker>       Deep analysis + trade recommendation
-  kalshi watch --theme crypto   Continuous scan across a theme
+  polymarket search crypto          Find markets by keyword or theme
+  polymarket analyze <ticker>       Deep analysis + trade recommendation
+  polymarket watch --theme crypto   Continuous scan across a theme
 
 Discovery:
   search [theme|ticker|query]   Find markets (Octagon when key set, else local)
   search --sort-by volume_24h   Top-N by liquidity
   search --aggregate-by series  Roll up results to series level
-  search themes                 (Legacy) Kalshi category labels
+  search themes                 (Legacy) Category labels
   search edge [--min-edge N]    Edge ranking (Octagon when key set, else local)
   similar <ticker>              Semantic neighbors (embedding distance)
   similar -q "free text"        Semantic search by natural-language query
@@ -530,10 +530,10 @@ Flags: --json, --refresh, --performance, --dry-run, --verbose
 Backtest flags: --days, --max-age, --resolved, --unresolved, --category, --min-edge,
                 --min-volume, --min-price, --max-price, --export,
                 --universe api|local (default api), --fees none|taker|maker (default none)
-Run "kalshi help <command>" for detailed usage.`;
+Run "polymarket help <command>" for detailed usage.`;
   }
 
-  return `**Kalshi Trading Bot CLI — Commands**
+  return `**Polymarket Trading Bot CLI — Commands**
 
 Quick start:
   /search crypto          Find markets by keyword or theme
@@ -544,7 +544,7 @@ Discovery:
   /search [theme|ticker|query]   Find markets (Octagon when key set, else local)
   /search --sort-by volume_24h   Top-N by liquidity
   /search --aggregate-by series  Roll up results to series level
-  /search themes                 (Legacy) Kalshi category labels
+  /search themes                 (Legacy) Category labels
   /search edge [--min-edge N]    Edge ranking (Octagon when key set, else local)
   /similar <ticker>              Semantic neighbors (embedding distance)
   /similar -q "free text"        Semantic search by natural-language query
@@ -600,8 +600,8 @@ Account:
 System:
   /model                         Change LLM model/provider
   /setup                         Re-run setup wizard
-  init                           Launch with setup wizard (run: kalshi init)
-  clear-cache                    Delete local cache (run: kalshi clear-cache)
+  init                           Launch with setup wizard (run: polymarket init)
+  clear-cache                    Delete local cache (run: polymarket clear-cache)
   /help [command]                Show help for a command
   /quit                          Quit
 

@@ -28,7 +28,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-// Other suites in the project unset KALSHI_PRIVATE_KEY in their afterEach
+// Other suites in the project unset POLYMARKET_PRIVATE_KEY in their afterEach
 // (see hardening.test.ts). Some report paths flow into the Octagon invoker,
 // which signs Kalshi requests — so the report suite must restore credentials
 // in its own beforeEach to stay order-independent.
@@ -67,15 +67,15 @@ describe('handleReport', () => {
   let originalFetch: typeof globalThis.fetch;
   beforeEach(() => {
     process.env.OCTAGON_API_KEY = 'sk_test';
-    process.env.KALSHI_API_KEY = 'test-key';
-    process.env.KALSHI_PRIVATE_KEY = TEST_PRIVATE_KEY;
+    process.env.POLYMARKET_API_KEY = 'test-key';
+    process.env.POLYMARKET_PRIVATE_KEY = TEST_PRIVATE_KEY;
     originalFetch = globalThis.fetch;
   });
   afterEach(() => {
     globalThis.fetch = originalFetch;
     delete process.env.OCTAGON_API_KEY;
-    delete process.env.KALSHI_API_KEY;
-    delete process.env.KALSHI_PRIVATE_KEY;
+    delete process.env.POLYMARKET_API_KEY;
+    delete process.env.POLYMARKET_PRIVATE_KEY;
   });
 
   test('missing ticker → MISSING_TICKER', async () => {

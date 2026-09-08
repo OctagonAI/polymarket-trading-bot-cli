@@ -193,8 +193,8 @@ describe('E2E Integration Tests', () => {
     audit = a.audit;
     auditPath = a.path;
 
-    process.env.KALSHI_API_KEY = 'test-key';
-    process.env.KALSHI_PRIVATE_KEY = TEST_PRIVATE_KEY;
+    process.env.POLYMARKET_API_KEY = 'test-key';
+    process.env.POLYMARKET_PRIVATE_KEY = TEST_PRIVATE_KEY;
 
     originalFetch = globalThis.fetch;
     setupFetchMock(originalFetch);
@@ -202,8 +202,8 @@ describe('E2E Integration Tests', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    delete process.env.KALSHI_API_KEY;
-    delete process.env.KALSHI_PRIVATE_KEY;
+    delete process.env.POLYMARKET_API_KEY;
+    delete process.env.POLYMARKET_PRIVATE_KEY;
   });
 
   // Test 1: scan --theme runs full cycle

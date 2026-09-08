@@ -1,8 +1,8 @@
 import { StructuredToolInterface } from '@langchain/core/tools';
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { createKalshiSearch, KALSHI_SEARCH_DESCRIPTION } from './kalshi/kalshi-search.js';
-import { createKalshiTrade, KALSHI_TRADE_DESCRIPTION } from './kalshi/kalshi-trade.js';
+import { createKalshiSearch, POLYMARKET_SEARCH_DESCRIPTION } from './kalshi/kalshi-search.js';
+import { createKalshiTrade, POLYMARKET_TRADE_DESCRIPTION } from './kalshi/kalshi-trade.js';
 import { getExchangeStatus } from './kalshi/exchange.js';
 import { callKalshiApi } from './kalshi/api.js';
 import { tavilySearch, WEB_SEARCH_DESCRIPTION } from './search/index.js';
@@ -70,12 +70,12 @@ export function getToolRegistry(model: string): RegisteredTool[] {
     {
       name: 'kalshi_search',
       tool: createKalshiSearch(model),
-      description: KALSHI_SEARCH_DESCRIPTION,
+      description: POLYMARKET_SEARCH_DESCRIPTION,
     },
     {
       name: 'kalshi_trade',
       tool: createKalshiTrade(model),
-      description: KALSHI_TRADE_DESCRIPTION,
+      description: POLYMARKET_TRADE_DESCRIPTION,
     },
     {
       name: 'portfolio_overview',

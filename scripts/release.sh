@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Release script for Kalshi Deep Trading Bot
+# Release script for Polymarket Deep Trading Bot
 # Usage: bash scripts/release.sh [version]
 # If no version is provided, defaults to today's date as YYYY.M.D
 
@@ -103,4 +103,4 @@ echo -e "$BODY" | gh release create "$TAG" \
   --notes-file -
 
 echo ""
-echo "Released ${TAG}: https://github.com/OctagonAI/kalshi-trading-bot-cli/releases/tag/${TAG}"
+echo "Released ${TAG}: https://github.com/OctagonAI/polymarket-trading-bot-cli/releases/tag/${TAG}"

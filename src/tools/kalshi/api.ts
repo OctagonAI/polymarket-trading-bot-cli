@@ -9,22 +9,22 @@ const PROD_BASE_URL = 'https://api.elections.kalshi.com/trade-api/v2';
 const DEMO_BASE_URL = 'https://demo-api.kalshi.co/trade-api/v2';
 
 function getBaseUrl(): string {
-  return process.env.KALSHI_USE_DEMO === 'true' ? DEMO_BASE_URL : PROD_BASE_URL;
+  return process.env.POLYMARKET_USE_DEMO === 'true' ? DEMO_BASE_URL : PROD_BASE_URL;
 }
 
 function getPrivateKey(): string {
-  if (process.env.KALSHI_PRIVATE_KEY) {
-    return process.env.KALSHI_PRIVATE_KEY;
+  if (process.env.POLYMARKET_PRIVATE_KEY) {
+    return process.env.POLYMARKET_PRIVATE_KEY;
   }
-  if (process.env.KALSHI_PRIVATE_KEY_FILE) {
-    return readFileSync(process.env.KALSHI_PRIVATE_KEY_FILE, 'utf-8');
+  if (process.env.POLYMARKET_PRIVATE_KEY_FILE) {
+    return readFileSync(process.env.POLYMARKET_PRIVATE_KEY_FILE, 'utf-8');
   }
-  throw new Error('Kalshi private key not configured. Set KALSHI_PRIVATE_KEY or KALSHI_PRIVATE_KEY_FILE.');
+  throw new Error('Kalshi private key not configured. Set POLYMARKET_PRIVATE_KEY or POLYMARKET_PRIVATE_KEY_FILE.');
 }
 
 function getApiKey(): string {
-  const key = process.env.KALSHI_API_KEY;
-  if (!key) throw new Error('KALSHI_API_KEY not set');
+  const key = process.env.POLYMARKET_API_KEY;
+  if (!key) throw new Error('POLYMARKET_API_KEY not set');
   return key;
 }
 

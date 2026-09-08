@@ -10,7 +10,7 @@
  * All endpoints are stateless from the CLI's perspective — no SQLite caching.
  */
 
-const KALSHI_API_BASE = 'https://api.octagonai.co/v1/prediction-markets/kalshi';
+const POLYMARKET_API_BASE = 'https://api.octagonai.co/v1/prediction-markets/kalshi';
 const TIMEOUT_MS = 60_000;
 
 function buildQuery(params?: object): string {
@@ -37,7 +37,7 @@ async function kalshiApi<T>(
     throw new Error('OCTAGON_API_KEY not set. Get one at https://app.octagonai.co');
   }
 
-  const url = `${KALSHI_API_BASE}${path}${method === 'GET' ? buildQuery(opts?.params) : ''}`;
+  const url = `${POLYMARKET_API_BASE}${path}${method === 'GET' ? buildQuery(opts?.params) : ''}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 

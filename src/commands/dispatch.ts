@@ -59,7 +59,7 @@ function resolveAlias(subcommand: Subcommand, positionalArgs: string[]): Resolve
       return { canonical: 'portfolio', subview: 'status' };
 
     // `themes` is now the editorial-themes registry (curated narrative buckets).
-    // Legacy "kalshi search themes" (Kalshi category labels) is still reachable
+    // Legacy "polymarket search themes" (Kalshi category labels) is still reachable
     // via `search themes`.
 
     // basket sub-routing (build/backtest/size/candles) — exposed for telemetry granularity
@@ -102,7 +102,7 @@ function modeFlagsFor(canonical: Subcommand, args: ParsedArgs): Record<string, s
  *
  * Heuristic: --json + non-TTY stdout + BUN_INSTALL_CACHE_DIR set (bunx sets
  * this; `bun add -g` installs don't). Silenced after first emit by touching
- * a sentinel file under ~/.kalshi-bot/.
+ * a sentinel file under ~/.polymarket-bot/.
  */
 async function maybeEmitBunxHint(args: ParsedArgs): Promise<void> {
   if (!args.json) return;
@@ -115,10 +115,10 @@ async function maybeEmitBunxHint(args: ParsedArgs): Promise<void> {
     const sentinel = appPath('.bunx-hint-shown');
     if (existsSync(sentinel)) return;
     process.stderr.write(
-      '[kalshi] Tip: for clean JSON output and parallel-safe scripting, install once with\n' +
-      '[kalshi]   bun add -g kalshi-trading-bot-cli\n' +
-      '[kalshi] then call `kalshi …` directly. Or use `bunx --silent` to suppress install\n' +
-      '[kalshi] chatter from this invocation. See README → Scripting & Parallel Use.\n',
+      '[polymarket] Tip: for clean JSON output and parallel-safe scripting, install once with\n' +
+      '[polymarket]   bun add -g polymarket-trading-bot-cli\n' +
+      '[polymarket] then call `polymarket …` directly. Or use `bunx --silent` to suppress install\n' +
+      '[polymarket] chatter from this invocation. See README → Scripting & Parallel Use.\n',
     );
     const dir = appPath('.');
     mkdirSync(dir, { recursive: true });

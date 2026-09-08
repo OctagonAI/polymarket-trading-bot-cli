@@ -17,7 +17,7 @@ const TRADING_TOOLS: StructuredToolInterface[] = [
 
 const TRADING_TOOL_MAP = new Map(TRADING_TOOLS.map((t) => [t.name, t]));
 
-export const KALSHI_TRADE_DESCRIPTION = `
+export const POLYMARKET_TRADE_DESCRIPTION = `
 Execute trading actions on Kalshi prediction markets. Routes natural language trade instructions to the correct API endpoints.
 
 ## When to Use
@@ -58,7 +58,7 @@ const KalshiTradeInputSchema = z.object({
 export function createKalshiTrade(model: string): DynamicStructuredTool {
   return new DynamicStructuredTool({
     name: 'kalshi_trade',
-    description: KALSHI_TRADE_DESCRIPTION,
+    description: POLYMARKET_TRADE_DESCRIPTION,
     schema: KalshiTradeInputSchema,
     func: async (input, _runManager, config?: RunnableConfig) => {
       const onProgress = config?.metadata?.onProgress as ((msg: string) => void) | undefined;

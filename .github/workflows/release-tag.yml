@@ -6,6 +6,10 @@ on:
 
 jobs:
   tag:
+    # Disabled during the Polymarket port: the renamed package needs npm Trusted
+    # Publishing configured (OIDC trust is per-package) before a version bump may
+    # land on main. Re-enable with repository variable RELEASE_ENABLED=true.
+    if: vars.RELEASE_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write

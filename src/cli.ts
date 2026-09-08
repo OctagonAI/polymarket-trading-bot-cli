@@ -207,8 +207,8 @@ export async function runCli(options?: { forceSetup?: boolean }) {
 
   // Pre-warm the event index on startup (non-blocking, only if credentials exist)
   let indexStatusMessage: string | null = null;
-  const hasKalshiCreds = checkApiKeyExists('KALSHI_API_KEY') &&
-    (checkApiKeyExists('KALSHI_PRIVATE_KEY_FILE') || checkApiKeyExists('KALSHI_PRIVATE_KEY'));
+  const hasExchangeCreds = checkApiKeyExists('POLYMARKET_API_KEY') &&
+    (checkApiKeyExists('POLYMARKET_PRIVATE_KEY_FILE') || checkApiKeyExists('POLYMARKET_PRIVATE_KEY'));
   const unsubIndexProgress = onIndexProgress((info) => {
     if (info.phase === 'fetching_events') {
       indexStatusMessage = `Indexing markets... ${info.fetchedItems} fetched (page ${info.page}/${info.maxPages})`;
@@ -258,7 +258,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     })();
   };
 
-  if (hasKalshiCreds) initPostCredentials();
+  if (hasExchangeCreds) initPostCredentials();
 
 
   const agentRunner = new AgentRunnerController(
@@ -1015,8 +1015,8 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     editor.addToHistory(msg);
   }
 
-  // Auto-launch setup wizard if credentials are missing or `kalshi init` was used
-  if (!hasKalshiCreds || options?.forceSetup) {
+  // Auto-launch setup wizard if credentials are missing or `polymarket init` was used
+  if (!hasExchangeCreds || options?.forceSetup) {
     setupWizard.start();
   }
 

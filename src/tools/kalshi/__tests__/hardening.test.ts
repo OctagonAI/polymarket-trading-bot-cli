@@ -9,8 +9,8 @@ let originalFetch: typeof globalThis.fetch;
 let originalSetTimeout: typeof globalThis.setTimeout;
 
 beforeEach(() => {
-  process.env.KALSHI_API_KEY = 'test-key';
-  process.env.KALSHI_PRIVATE_KEY = [
+  process.env.POLYMARKET_API_KEY = 'test-key';
+  process.env.POLYMARKET_PRIVATE_KEY = [
     '-----BEGIN PRIVATE KEY-----',
     'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCRFVyyjP3KGX63',
     '0/qa6kWsCdNJTbKMBaqTaYzCVKYWr3fA4UcA3Wx9+mXwYQ0+jULQP9Y1qWBpWTmb',
@@ -61,8 +61,8 @@ afterEach(() => {
   globalThis.setTimeout = originalSetTimeout;
   auditLogSpy.mockRestore();
   dlqAppendSpy.mockRestore();
-  delete process.env.KALSHI_API_KEY;
-  delete process.env.KALSHI_PRIVATE_KEY;
+  delete process.env.POLYMARKET_API_KEY;
+  delete process.env.POLYMARKET_PRIVATE_KEY;
 });
 
 describe('Dollar conversion', () => {

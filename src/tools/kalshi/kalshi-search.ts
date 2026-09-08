@@ -17,7 +17,7 @@ import { getBalance, getPositions, getFills, getSettlements, getOrders, getOrder
 import { getHistoricalMarkets, getHistoricalMarket, getHistoricalCandlesticks, getHistoricalFills, getHistoricalOrders } from './historical.js';
 import { getExchangeStatus, getExchangeSchedule } from './exchange.js';
 
-export const KALSHI_SEARCH_DESCRIPTION = `
+export const POLYMARKET_SEARCH_DESCRIPTION = `
 Intelligent meta-tool for Kalshi prediction market research. Takes a natural language query and automatically routes to appropriate Kalshi data sources.
 
 ## When to Use
@@ -51,7 +51,7 @@ function formatSubToolName(name: string): string {
     .join(' ');
 }
 
-const KALSHI_READ_TOOLS: StructuredToolInterface[] = [
+const POLYMARKET_READ_TOOLS: StructuredToolInterface[] = [
   getMarkets,
   getMarket,
   getMarketOrderbook,
@@ -74,7 +74,7 @@ const KALSHI_READ_TOOLS: StructuredToolInterface[] = [
   getExchangeSchedule,
 ];
 
-const KALSHI_TOOL_MAP = new Map(KALSHI_READ_TOOLS.map((t) => [t.name, t]));
+const POLYMARKET_TOOL_MAP = new Map(POLYMARKET_READ_TOOLS.map((t) => [t.name, t]));
 
 function buildRouterPrompt(): string {
   return `You are a Kalshi prediction market data routing assistant.
@@ -141,7 +141,7 @@ async function executeToolCalls(toolCalls: ToolCall[]): Promise<SubToolResult[]>
   return Promise.all(
     toolCalls.map(async (tc) => {
       try {
-        const tool = KALSHI_TOOL_MAP.get(tc.name);
+        const tool = POLYMARKET_TOOL_MAP.get(tc.name);
         if (!tool) throw new Error(`Tool '${tc.name}' not found`);
         const rawResult = await tool.invoke(tc.args);
         const result = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
@@ -343,7 +343,7 @@ const KalshiSearchInputSchema = z.object({
 export function createKalshiSearch(model: string): DynamicStructuredTool {
   return new DynamicStructuredTool({
     name: 'kalshi_search',
-    description: KALSHI_SEARCH_DESCRIPTION,
+    description: POLYMARKET_SEARCH_DESCRIPTION,
     schema: KalshiSearchInputSchema,
     func: async (input, _runManager, config?: RunnableConfig) => {
       const onProgress = config?.metadata?.onProgress as ((msg: string) => void) | undefined;
@@ -366,7 +366,7 @@ export function createKalshiSearch(model: string): DynamicStructuredTool {
         const { response } = await callLlm(prompt, {
           model,
           systemPrompt,
-          tools: KALSHI_READ_TOOLS,
+          tools: POLYMARKET_READ_TOOLS,
           toolChoice: isFirst ? 'required' : 'auto',
         });
         const aiMessage = response as AIMessage;

@@ -45,8 +45,8 @@ describe('ScanLoop', () => {
     auditPath = a.path;
 
     // Set required env vars for Kalshi API auth
-    process.env.KALSHI_API_KEY = 'test-key';
-    process.env.KALSHI_PRIVATE_KEY = [
+    process.env.POLYMARKET_API_KEY = 'test-key';
+    process.env.POLYMARKET_PRIVATE_KEY = [
       '-----BEGIN PRIVATE KEY-----',
       'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCRFVyyjP3KGX63',
       '0/qa6kWsCdNJTbKMBaqTaYzCVKYWr3fA4UcA3Wx9+mXwYQ0+jULQP9Y1qWBpWTmb',
@@ -133,8 +133,8 @@ describe('ScanLoop', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     loop.stop();
-    delete process.env.KALSHI_API_KEY;
-    delete process.env.KALSHI_PRIVATE_KEY;
+    delete process.env.POLYMARKET_API_KEY;
+    delete process.env.POLYMARKET_PRIVATE_KEY;
   });
 
   test('runs one full scan cycle', async () => {

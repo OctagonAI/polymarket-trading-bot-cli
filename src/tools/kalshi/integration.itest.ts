@@ -521,7 +521,7 @@ describe('Kalshi Integration Tests', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // 7. KALSHI_SEARCH ROUTER (multi-step agentic)
+  // 7. POLYMARKET_SEARCH ROUTER (multi-step agentic)
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe('kalshi_search Router', () => {

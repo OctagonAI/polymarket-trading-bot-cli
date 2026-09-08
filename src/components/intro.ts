@@ -11,8 +11,8 @@ export class IntroComponent extends Container {
   constructor(model: string) {
     super();
 
-    const isDemo = process.env.KALSHI_USE_DEMO === 'true';
-    const welcomeText = isDemo ? 'Kalshi Trading Bot CLI  [DEMO MODE]' : 'Kalshi Trading Bot CLI';
+    const isDemo = process.env.POLYMARKET_USE_DEMO === 'true';
+    const welcomeText = isDemo ? 'Polymarket Trading Bot CLI  [DEMO MODE]' : 'Polymarket Trading Bot CLI';
     const versionText = ` v${packageJson.version}`;
     const fullText = welcomeText + versionText;
     const padding = Math.max(0, Math.floor((INTRO_WIDTH - fullText.length - 2) / 2));

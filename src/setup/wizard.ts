@@ -104,7 +104,7 @@ export class SetupWizardController {
   getTitle(): string {
     switch (this.wizardState) {
       case 'welcome':
-        return 'Welcome to Kalshi Trading Bot CLI';
+        return 'Welcome to Polymarket Trading Bot CLI';
       case 'kalshi_api_key':
         return 'Step 1/5: Kalshi API Key';
       case 'kalshi_private_key':
@@ -208,7 +208,7 @@ export class SetupWizardController {
         lines.push(`    daily_loss_limit    = $200   ${theme.muted('e.g. kalshi config risk.daily_loss_limit 100')}`);
         lines.push(`    max_positions       = 10     ${theme.muted('e.g. kalshi config risk.max_positions 5')}`);
         lines.push('');
-        lines.push(theme.muted('  Run "kalshi config" to see all settings.'));
+        lines.push(theme.muted('  Run "polymarket config" to see all settings.'));
       }
       return lines;
     }
@@ -221,7 +221,7 @@ export class SetupWizardController {
       case 'kalshi_api_key': {
         if (!this.currentInput) {
           const input = new ApiKeyInputComponent(true);
-          input.onSubmit = (value) => this.handleApiKeySubmit('KALSHI_API_KEY', value, 'kalshi_private_key');
+          input.onSubmit = (value) => this.handleApiKeySubmit('POLYMARKET_API_KEY', value, 'kalshi_private_key');
           input.onCancel = () => this.cancel();
           this.currentInput = input;
         }
@@ -372,7 +372,7 @@ export class SetupWizardController {
         this.onChange();
         return;
       }
-      this.stageEnv('KALSHI_PRIVATE_KEY_FILE', expanded);
+      this.stageEnv('POLYMARKET_PRIVATE_KEY_FILE', expanded);
     } else {
       // Raw PEM content pasted — the single-line input strips newlines,
       // so reconstruct PEM structure: header, base64 body in 64-char lines, footer
@@ -397,17 +397,17 @@ export class SetupWizardController {
       }
       // Encode newlines for .env compatibility — dotenv expands \n in double-quoted values
       const encoded = `"${pem.replace(/\n/g, '\\n')}"`;
-      this.collectedKeys['KALSHI_PRIVATE_KEY'] = encoded;
+      this.collectedKeys['POLYMARKET_PRIVATE_KEY'] = encoded;
       // Store actual PEM (with real newlines) in process.env so API clients can use it directly
-      if (!(('KALSHI_PRIVATE_KEY') in this.originalEnvValues)) {
-        this.originalEnvValues['KALSHI_PRIVATE_KEY'] = process.env['KALSHI_PRIVATE_KEY'];
+      if (!(('POLYMARKET_PRIVATE_KEY') in this.originalEnvValues)) {
+        this.originalEnvValues['POLYMARKET_PRIVATE_KEY'] = process.env['POLYMARKET_PRIVATE_KEY'];
       }
-      process.env['KALSHI_PRIVATE_KEY'] = pem;
+      process.env['POLYMARKET_PRIVATE_KEY'] = pem;
     }
 
-    // Only set KALSHI_USE_DEMO default if not already configured
-    if (!process.env.KALSHI_USE_DEMO) {
-      this.stageEnv('KALSHI_USE_DEMO', 'false');
+    // Only set POLYMARKET_USE_DEMO default if not already configured
+    if (!process.env.POLYMARKET_USE_DEMO) {
+      this.stageEnv('POLYMARKET_USE_DEMO', 'false');
     }
     this.transition('octagon_api_key');
   }

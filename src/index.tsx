@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Side-effect import: env.ts performs the dotenv load against the canonical
-// ENV_PATH (~/.kalshi-bot/.env or CWD .env). Must run before any other module
+// ENV_PATH (~/.polymarket-bot/.env or CWD .env). Must run before any other module
 // reads process.env.
 import './utils/env.js';
 import { runCli } from './cli.js';

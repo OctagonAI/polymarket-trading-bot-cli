@@ -13,15 +13,15 @@ export async function handleStatus(): Promise<string> {
   lines.push('Checking setup...');
   lines.push('');
 
-  // 1. Kalshi API key
-  const hasKalshiKey = !!process.env.KALSHI_API_KEY;
-  const hasKalshiPem = !!(process.env.KALSHI_PRIVATE_KEY_FILE || process.env.KALSHI_PRIVATE_KEY);
-  lines.push(hasKalshiKey ? '✓ KALSHI_API_KEY set' : '✗ KALSHI_API_KEY missing');
-  lines.push(hasKalshiPem ? '✓ Kalshi private key configured' : '✗ Kalshi private key missing (set KALSHI_PRIVATE_KEY_FILE or KALSHI_PRIVATE_KEY)');
-  if (!hasKalshiKey || !hasKalshiPem) allGood = false;
+  // 1. Exchange API key
+  const hasExchangeKey = !!process.env.POLYMARKET_API_KEY;
+  const hasExchangePem = !!(process.env.POLYMARKET_PRIVATE_KEY_FILE || process.env.POLYMARKET_PRIVATE_KEY);
+  lines.push(hasExchangeKey ? '✓ POLYMARKET_API_KEY set' : '✗ POLYMARKET_API_KEY missing');
+  lines.push(hasExchangePem ? '✓ Exchange private key configured' : '✗ Exchange private key missing (set POLYMARKET_PRIVATE_KEY_FILE or POLYMARKET_PRIVATE_KEY)');
+  if (!hasExchangeKey || !hasExchangePem) allGood = false;
 
   // 2. Exchange connectivity
-  if (hasKalshiKey && hasKalshiPem) {
+  if (hasExchangeKey && hasExchangePem) {
     try {
       const data = await callKalshiApi('GET', '/exchange/status');
       const active = (data as any).exchange_active;
@@ -59,8 +59,8 @@ export async function handleStatus(): Promise<string> {
   lines.push(hasTavily ? '✓ TAVILY_API_KEY set (web search enabled)' : '  TAVILY_API_KEY not set (web search disabled — optional)');
 
   // 6. Demo mode
-  if (process.env.KALSHI_USE_DEMO === 'true') {
-    lines.push('⚠ KALSHI_USE_DEMO=true — using demo environment (no real money)');
+  if (process.env.POLYMARKET_USE_DEMO === 'true') {
+    lines.push('⚠ POLYMARKET_USE_DEMO=true — using demo environment (no real money)');
   }
 
   lines.push('');
