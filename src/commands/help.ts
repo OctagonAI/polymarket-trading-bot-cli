@@ -1,4 +1,5 @@
 // ─── Shared help content for both TUI slash commands and CLI batch mode ─────
+import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 
 /** Context determines prefix style: slash commands use "/", CLI uses "polymarket" */
 type HelpContext = 'slash' | 'cli';
@@ -56,9 +57,9 @@ ${p}analyze <ticker>                       Full analysis: edge, drivers, catalys
 ${p}analyze <ticker> ${ctx === 'cli' ? '--' : ''}refresh             Force fresh Octagon report
 
 Batch mode (one Octagon round-trip instead of N):
-${p}analyze KX-A KX-B KX-C                 Edge readout across 2-100 tickers
-${p}analyze --tickers KX-A,KX-B,KX-C       Same, comma-separated
-${p}analyze KX-A KX-B KX-C --json          For pipelines / scripting
+${p}analyze slug-a slug-b slug-c                 Edge readout across 2-100 tickers
+${p}analyze --tickers slug-a,slug-b,slug-c       Same, comma-separated
+${p}analyze slug-a slug-b slug-c --json          For pipelines / scripting
 
 The batch mode hits POST /markets/edge in one call and returns
 model_probability, market_probability, edge_pp, expected_return per ticker.
@@ -87,22 +88,22 @@ Theme mode runs recurring Octagon scans and displays an edge table.`}`,
 
     buy: `**${p}buy** — Buy contracts
 
-${p}buy <ticker> <count> [price${ctx === 'cli' ? '_in_cents' : ''}] [yes|no]${ctx === 'slash' ? '   Buy contracts (price in cents)' : ''}
+${p}buy <ticker> <count> [price${ctx === 'cli' ? '_in_cents' : ''}] [yes|no]${ctx === 'slash' ? '   Buy contracts (price 0-1)' : ''}
 
 Example${ctx === 'cli' ? 's' : ''}:
-  ${p}buy KXBTC-26MAR14-T50049 10 ${ctx === 'cli' ? '          Buy at best ask (10 YES contracts)' : '56'}
-  ${p}buy KXBTC-26MAR14-T50049 10 ${ctx === 'cli' ? '56        Limit order at $0.56' : '56 no   Buy NO contracts'}
-${ctx === 'cli' ? `  ${p}buy KXBTC-26MAR14-T50049 10 56 no   Limit order for NO contracts at $0.56` : ''}
+  ${p}buy bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '          Buy at best ask (10 YES shares)' : '56'}
+  ${p}buy bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '0.56      Limit order at $0.56/share' : '0.56 no  Buy NO shares'}
+${ctx === 'cli' ? `  ${p}buy bitcoin-above-100k-2026 10 0.56 no  Limit order for NO shares at $0.56` : ''}
 Side defaults to YES if omitted.`,
 
     sell: `**${p}sell** — Sell contracts
 
-${p}sell <ticker> <count> [price${ctx === 'cli' ? '_in_cents' : ''}] [yes|no]${ctx === 'slash' ? '  Sell contracts (price in cents)' : ''}
+${p}sell <ticker> <count> [price${ctx === 'cli' ? '_in_cents' : ''}] [yes|no]${ctx === 'slash' ? '  Sell contracts (price 0-1)' : ''}
 
 Example${ctx === 'cli' ? 's' : ''}:
-  ${p}sell KXBTC-26MAR14-T50049 10 ${ctx === 'cli' ? '         Sell at best ask (10 YES contracts)' : '72'}
-  ${p}sell KXBTC-26MAR14-T50049 10 ${ctx === 'cli' ? '72       Limit order at $0.72' : '72 no   Sell NO contracts'}
-${ctx === 'cli' ? `  ${p}sell KXBTC-26MAR14-T50049 10 72 no  Limit order for NO contracts at $0.72` : ''}
+  ${p}sell bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '         Sell at best ask (10 YES shares)' : '72'}
+  ${p}sell bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '0.72      Limit order at $0.72/share' : '0.72 no  Sell NO shares'}
+${ctx === 'cli' ? `  ${p}sell bitcoin-above-100k-2026 10 0.72 no  Limit order for NO shares at $0.72` : ''}
 Side defaults to YES if omitted.`,
 
     cancel: `**${p}cancel** — Cancel a resting order
@@ -172,7 +173,7 @@ but has two gotchas under scripting:
 
 **If you must use bunx:**
 
-  bunx --silent polymarket-trading-bot-cli@latest analyze KX-A --json
+  bunx --silent polymarket-trading-bot-cli@latest analyze bitcoin-above-100k-2026 --json
                 ^^^^^^^^ suppresses install chatter; keeps our stdout clean
 
 For parallel bunx, pre-warm the cache serially before fanning out:
@@ -234,10 +235,10 @@ Flags:
     correlate: `**${p}correlate** — Pairwise correlation matrix over close-price candles
 
 ${p}correlate <ticker1> <ticker2> [...]   Pearson correlation across 2-100 tickers
-${p}correlate --tickers KX-A,KX-B,KX-C    Same, comma-separated
-${p}correlate KX-A KX-B --window-days 90  90-day lookback
-${p}correlate KX-A KX-B --sides yes,no    Side-aware: corr(YES_A, NO_B) flips sign
-${p}correlate KX-A KX-B --cells           Per-cell detail (overlap_count + reason)
+${p}correlate --tickers slug-a,slug-b,slug-c    Same, comma-separated
+${p}correlate slug-a slug-b --window-days 90  90-day lookback
+${p}correlate slug-a slug-b --sides yes,no    Side-aware: corr(YES_A, NO_B) flips sign
+${p}correlate slug-a slug-b --cells           Per-cell detail (overlap_count + reason)
 
 Flags:
   --window-days <n>             Lookback (1-730, default 30; auto interval picks 1d if >=90)
@@ -308,7 +309,7 @@ ${p}events                              List events sorted by total_volume
 ${p}events --category Politics          Filter by series_category
 ${p}events --min-volume 10000           Volume floor
 ${p}events --limit 25                   Page size (default 50)
-${p}events KXFEDCHAIRNOM-29             Drill into one event: outcome probabilities + per-contract edge
+${p}events fed-chair-nominee-2029             Drill into one event: outcome probabilities + per-contract edge
 
 Flags:
   --category <name>     Filter by series_category (case-insensitive substring)
@@ -325,10 +326,10 @@ Octagon supplies a model_probability per outcome so you can rank contracts by ed
 ${p}series                          List series with 24h vol, market count, dominant category
 ${p}series list --min-volume 10000  Liquidity filter
 ${p}series list --category Crypto   Filter by category
-${p}series KXBTCD                   Drill in: all sub-markets sorted by volume
+${p}series bitcoin-daily                   Drill in: all sub-markets sorted by volume
 ${p}series search "bitcoin"         Keyword search → rolled up by series
-${p}series candles KXBTCD --timeframe 3m   Series NAV = equal-weight basket of top sub-markets
-${p}series events KXIPO              List events in a series (e.g. KXIPO → KXIPO-26)
+${p}series candles bitcoin-daily --timeframe 3m   Series NAV = equal-weight basket of top sub-markets
+${p}series events ipo              List events in a series (e.g. ipo → ipo-2026)
 
 Flags:
   --min-volume <n>       Floor on 24h volume per series
@@ -336,11 +337,11 @@ Flags:
   --limit <n>            Page size (default 50)
   --timeframe <1w|1m|3m|6m|1y>  Candle window (default 1y; for "series candles")
   --top-k <n>            Sub-markets to include in series NAV basket (default 20)
-  --series <prefix>      Filter list by series-ticker prefix (e.g. KXBTC)
+  --series <prefix>      Filter list by series-ticker prefix (e.g. bitcoin)
   --json                 JSON output
 
-A series is the grouping above individual markets — KXBTCD is the BTC
-strike ladder, with hundreds of sub-markets like KXBTCD-26DEC31-T100000.
+A series is the grouping above individual markets — bitcoin-daily is the BTC
+strike ladder, with hundreds of sub-markets like bitcoin-daily-26DEC31-T100000.
 Series list is now a single server-side call (was 25 paginated calls).`,
 
     catalysts: `**${p}catalysts** — Upcoming market closes grouped by week
@@ -367,10 +368,10 @@ ${p}themes import                         Seed from data/themes_seo.json (25 sta
 ${p}themes import <path>                  Import from a custom JSON file
 ${p}themes export <path>                  Export current registry
 ${p}themes show "Iran Escalation"         Drill into one theme
-${p}themes create "My Theme" --tickers KXA,KXB --label "..." [--min-volume N]
+${p}themes create "My Theme" --tickers slug-a,slug-b --label "..." [--min-volume N]
 ${p}themes delete "My Theme"
-${p}themes add-series "My Theme" KXBTCD,KXETHD
-${p}themes remove-series "My Theme" KXBTCD
+${p}themes add-series "My Theme" bitcoin-daily,ethereum-daily
+${p}themes remove-series "My Theme" bitcoin-daily
 ${p}themes set-search-volume "My Theme" 100000
 ${p}themes report                         Dashboard: 25-theme grid with SEO + liquidity
 ${p}themes audit                          Flag dead themes (high SEO + zero volume)
@@ -391,13 +392,13 @@ Legacy: ${p}search themes still lists category labels (the pre-registry view).`,
     basket: `**${p}basket** — Build, backtest, and size diversified baskets
 
 ${p}basket build [universe filters] [-n N] [--max-per-cluster M] [--max-corr X] [--bankroll $ --kelly K --probs ...]
-${p}basket backtest --tickers KX-A,KX-B --weights 0.6,0.4 --timeframe 1y
-${p}basket candles  --tickers KX-A,KX-B --timeframe 6m
-${p}basket size     --bankroll 1000 --kelly 0.25 --probs KX-A:0.62,KX-B:0.55 [--side yes|no]
+${p}basket backtest --tickers slug-a,slug-b --weights 0.6,0.4 --timeframe 1y
+${p}basket candles  --tickers slug-a,slug-b --timeframe 6m
+${p}basket size     --bankroll 1000 --kelly 0.25 --probs slug-a:0.62,slug-b:0.55 [--side yes|no]
 
 Validate flags:
-  --tickers KX-A,KX-B           Validate explicit tickers (equal-stake split)
-  --probs KX-A:yes:170,KX-B:no:160  Per-leg ticker:side:stake
+  --tickers slug-a,slug-b           Validate explicit tickers (equal-stake split)
+  --probs slug-a:yes:170,slug-b:no:160  Per-leg ticker:side:stake
   --theme <name>                Resolve from editorial registry
   --bankroll <usd>              Used to compute max_leg_pct + warnings
   --window-days <n>             Correlation lookback (default 30)
@@ -411,7 +412,7 @@ Build flags (universe + diversification):
   --label <csv>                 Restrict cluster labels (substring match, comma-separated)
   -q "<text>"                   Anchor candidate pool by free-text intent (semantic)
   --ticker <ticker>             Anchor candidate pool by ticker (semantic)
-  --tickers KX-A,KX-B           Explicit candidate pool (universe.market_tickers)
+  --tickers slug-a,slug-b           Explicit candidate pool (universe.market_tickers)
   --theme <name>                Resolve theme registry → explicit candidate pool
   --auto-probs                  Auto-fetch model probabilities (markets/edge)
                                 and use Kelly sizing
@@ -424,8 +425,8 @@ Build flags (universe + diversification):
 Sizing flags (build & size):
   --bankroll <usd>              Required for Kelly sizing
   --kelly <fraction>            Kelly multiplier 0-1 (default 0.25)
-  --probs KX-A:0.62,KX-B:0.55   Model probabilities per ticker (manual)
-  --auto-probs --tickers KX-A,KX-B   Auto-fetch via POST /markets/edge
+  --probs slug-a:0.62,slug-b:0.55   Model probabilities per ticker (manual)
+  --auto-probs --tickers slug-a,slug-b   Auto-fetch via POST /markets/edge
   --auto-probs --theme <name>   Resolve theme + auto-fetch probabilities
   --side <yes|no>               Default leg side for "basket size" (default yes)
 
@@ -441,13 +442,42 @@ Common:
 Recipes:
   ${p}basket build --category crypto --min-volume 10000 -n 8 --max-per-cluster 2 --max-corr 0.6
   ${p}basket build --label fed,cpi,fomc,gdp,jobs -n 5 --max-per-cluster 1 --max-corr 0.4
-  ${p}basket build --tickers KX-A,KX-B,KX-C -n 2 --max-corr 0.5   # explicit candidate pool
+  ${p}basket build --tickers slug-a,slug-b,slug-c -n 2 --max-corr 0.5   # explicit candidate pool
   ${p}basket build --theme "Iran Escalation" -n 3 --max-per-cluster 1 --auto-probs --bankroll 1000
-  ${p}basket backtest --tickers KX-A,KX-B,KX-C --weights 0.4,0.4,0.2 --timeframe 1y
+  ${p}basket backtest --tickers slug-a,slug-b,slug-c --weights 0.4,0.4,0.2 --timeframe 1y
   ${p}basket size --auto-probs --theme "Iran Escalation" --bankroll 1000 --kelly 0.25
   ${p}basket validate --theme "Iran Escalation" --bankroll 1000      # sanity-check before placing
-  ${p}basket validate --tickers KX-A,KX-B --bankroll 1000 --max-corr 0.5`,
+  ${p}basket validate --tickers slug-a,slug-b --bankroll 1000 --max-corr 0.5`,
   };
+}
+
+/**
+ * Drop command lines for anything currently gated (Octagon-backed commands the
+ * Polymarket client cannot serve, plus order placement), then drop any section
+ * heading left with nothing under it. Keeps the overview honest without having
+ * to hand-maintain a second copy of the command list.
+ */
+function stripGatedLines(text: string): string {
+  const gated = (name: string) =>
+    isDeferredCommand(name) || name === 'buy' || name === 'sell' || name === 'cancel';
+
+  const kept = text.split('\n').filter((line) => {
+    const m = line.match(/^\s{2}\/?([a-z-]+)/);
+    return !(m && gated(m[1]!));
+  });
+
+  // Collapse headings that no longer have any commands beneath them.
+  const out: string[] = [];
+  for (let i = 0; i < kept.length; i++) {
+    const line = kept[i]!;
+    const isHeading = /^[A-Z][A-Za-z &/]*:$/.test(line.trim());
+    if (isHeading) {
+      const next = kept.slice(i + 1).find((l) => l.trim() !== '');
+      if (!next || /^[A-Z][A-Za-z &/]*:$/.test(next.trim())) continue;
+    }
+    out.push(line);
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
 function buildOverview(ctx: HelpContext): string {
@@ -505,7 +535,7 @@ Portfolio construction:
 Analysis & Trading:
   analyze <ticker>              Full report: edge, drivers, Kelly sizing
   analyze <ticker> --refresh    Force fresh Octagon report
-  buy <ticker> <n> [price] [yes|no]   Buy contracts (price in cents)
+  buy <ticker> <n> [price] [yes|no]   Buy contracts (price 0-1)
   sell <ticker> <n> [price] [yes|no]  Sell contracts
   cancel <order_id>                   Cancel a resting order
 
@@ -586,7 +616,7 @@ Analysis:
   /backtest                      Model accuracy scorecard + live edge scanner
   /analyze <ticker>              Full report: edge, drivers, Kelly sizing
   /analyze <ticker> refresh      Force fresh Octagon report
-  /buy <ticker> <n> [price] [yes|no]   Buy contracts (price in cents)
+  /buy <ticker> <n> [price] [yes|no]   Buy contracts (price 0-1)
   /sell <ticker> <n> [price] [yes|no]  Sell contracts
   /review                              Review positions for close signals
   /cancel <order_id>                   Cancel a resting order
@@ -606,7 +636,7 @@ System:
   /quit                          Quit
 
 Tips:
-  Type natural language — e.g. "analyze KXBTC", "show my portfolio"
+  Type natural language — e.g. "analyze world-cup-winner", "show my portfolio"
   Press Esc to cancel a running query`;
 }
 
@@ -614,6 +644,12 @@ export function buildHelp(ctx: HelpContext, topic?: string): { text: string } | 
   const topics = buildTopics(ctx);
 
   if (topic && topics[topic]) {
+    // Deferred commands keep their reference docs, but lead with the reason
+    // they cannot run — otherwise the topic reads as if it works.
+    if (isDeferredCommand(topic) && !octagonSupports(COMMAND_FEATURE[topic]!)) {
+      const notice = octagonUnavailableMessage(COMMAND_FEATURE[topic]!, topic);
+      return { text: `${notice}\n\nReference (for when it lands):\n\n${topics[topic]}` };
+    }
     return { text: topics[topic] };
   }
 
@@ -621,7 +657,7 @@ export function buildHelp(ctx: HelpContext, topic?: string): { text: string } | 
     return { error: `Unknown help topic: "${topic}". Available: ${Object.keys(topics).join(', ')}` };
   }
 
-  return { text: buildOverview(ctx) };
+  return { text: stripGatedLines(buildOverview(ctx)) };
 }
 
 /** Shared trade argument validation for both dispatch and slash handlers. */

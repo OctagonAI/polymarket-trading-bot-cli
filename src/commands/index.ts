@@ -27,6 +27,7 @@ import { handleAnalyze, formatAnalyzeHuman } from './analyze.js';
 import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
 import { reviewPortfolio, formatReviewHuman } from './review.js';
 import { buildHelp } from './help.js';
+import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 import { trackEvent } from '../utils/telemetry.js';
 import { parseArgs } from './parse-args.js';
 import { handleSimilar, formatSimilarHuman } from './similar.js';
@@ -84,6 +85,15 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
     slashMeta.remote = !!process.env.OCTAGON_API_KEY;
   }
   trackEvent('slash_command', slashMeta);
+
+  // Octagon-backed commands that cannot serve Polymarket yet. Gated here so the
+  // TUI reports the same thing the CLI does instead of rendering Kalshi rows.
+  if (command && isDeferredCommand(command)) {
+    const feature = COMMAND_FEATURE[command]!;
+    if (!octagonSupports(feature)) {
+      return { output: octagonUnavailableMessage(feature, `/${command}`) };
+    }
+  }
 
   switch (command) {
     case 'help': {

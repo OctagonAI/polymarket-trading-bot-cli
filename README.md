@@ -2,6 +2,19 @@
 
 AI-powered Polymarket trading CLI that finds edge and executes trades.
 
+> **⏳ Port in progress.** This CLI began as a port of the Kalshi trading bot. Market data,
+> search, analysis, watch and portfolio reads run natively against Polymarket
+> (Gamma / CLOB / Data APIs) and need no credentials. Two groups of commands are
+> gated and say so when you run them:
+>
+> - **Awaiting an Octagon repoint** — `similar`, `events`, `series`, `trust`, `report`.
+>   Octagon supports Polymarket on its venue-generic API; this client still calls the
+>   Kalshi-scoped routes.
+> - **No Polymarket equivalent on Octagon** — `clusters`, `peers`, `correlate`, `basket`.
+>
+> **Order placement is not implemented yet** — `buy`, `sell` and `cancel` return a clear
+> error. Polymarket orders need EIP-712 wallet signing and on-chain USDC/CTF allowances.
+
 Runs deep fundamental research on every market — independent probability estimates, ranked price drivers, catalyst calendars — then computes edge as the spread between model price and the live order book. Signals are sized using half-Kelly and filtered through a 5-gate risk engine before a dollar is risked.
 
 Integrates with the [Octagon Research API](https://app.octagonai.co) for AI-generated probability estimates that power the edge detection engine.
@@ -118,28 +131,28 @@ Type help for commands, or just ask a question.
 |---------|-------------|
 | `search [theme\|ticker\|query]` | Find markets by keyword or theme (Octagon-backed when key set) |
 | `search edge [--min-edge N]` | Scan all markets by model edge (Octagon `markets-with-edge`) |
-| `similar <ticker\|"query">` | Semantic neighbors via Octagon embeddings |
-| `clusters [--label X]` | Browse thematic clusters of the market universe |
-| `clusters <id>` | List markets inside a cluster |
-| `clusters --behavioral` | Behavioral clusters by 30-day return vectors |
-| `clusters --ranked` | Rank clusters by historical basket return |
-| `peers <ticker>` | Markets in the same cluster as a ticker |
-| `correlate <t1> <t2> [...]` | Pairwise Pearson correlation matrix |
-| `basket build` | Diversified basket with cluster + correlation caps |
-| `basket backtest` | NAV summary: total return, Sharpe, max drawdown, win rate |
-| `basket size` | Fractional Kelly sizing for picked legs |
-| `basket candles` | OHLC bars for a weighted basket NAV |
-| `basket validate` | One-call portfolio diagnostics (clusters, correlations, calendar clashes, warnings) |
-| `basket size --auto-probs` | Auto-fetch model probabilities via `markets/edge` and Kelly-size |
-| `basket backtest --theme <name>` | Resolve an editorial theme to a NAV basket and backtest it |
-| `series events <ticker>` | List events inside a series |
-| `events` / `events <ticker>` | Octagon events list + outcome ladder per event |
-| `series` / `series <ticker>` | Series rollup (24h vol, market count) |
-| `series candles <ticker>` | Series-level NAV (basket of top sub-markets) |
+| `similar <ticker\|"query">` | Semantic neighbors via Octagon embeddings — **⏳ not yet available for Polymarket** |
+| `clusters [--label X]` | Browse thematic clusters of the market universe — **⏳ not yet available for Polymarket** |
+| `clusters <id>` | List markets inside a cluster — **⏳ not yet available for Polymarket** |
+| `clusters --behavioral` | Behavioral clusters by 30-day return vectors — **⏳ not yet available for Polymarket** |
+| `clusters --ranked` | Rank clusters by historical basket return — **⏳ not yet available for Polymarket** |
+| `peers <ticker>` | Markets in the same cluster as a ticker — **⏳ not yet available for Polymarket** |
+| `correlate <t1> <t2> [...]` | Pairwise Pearson correlation matrix — **⏳ not yet available for Polymarket** |
+| `basket build` | Diversified basket with cluster + correlation caps — **⏳ not yet available for Polymarket** |
+| `basket backtest` | NAV summary: total return, Sharpe, max drawdown, win rate — **⏳ not yet available for Polymarket** |
+| `basket size` | Fractional Kelly sizing for picked legs — **⏳ not yet available for Polymarket** |
+| `basket candles` | OHLC bars for a weighted basket NAV — **⏳ not yet available for Polymarket** |
+| `basket validate` | One-call portfolio diagnostics (clusters, correlations, calendar clashes, warnings) — **⏳ not yet available for Polymarket** |
+| `basket size --auto-probs` | Auto-fetch model probabilities via `markets/edge` and Kelly-size — **⏳ not yet available for Polymarket** |
+| `basket backtest --theme <name>` | Resolve an editorial theme to a NAV basket and backtest it — **⏳ not yet available for Polymarket** |
+| `series events <ticker>` | List events inside a series — **⏳ not yet available for Polymarket** |
+| `events` / `events <ticker>` | Octagon events list + outcome ladder per event — **⏳ not yet available for Polymarket** |
+| `series` / `series <ticker>` | Series rollup (24h vol, market count) — **⏳ not yet available for Polymarket** |
+| `series candles <ticker>` | Series-level NAV (basket of top sub-markets) — **⏳ not yet available for Polymarket** |
 | `catalysts upcoming --days N` | Markets closing in the next N days, grouped by week |
-| `trust <event_ticker>` | Trader Trust scorecard — per-market integrity scores (table view) |
-| `trust <event> --market <market>` | Single-market Trader Trust detail card (use `--verbose` for evidence) |
-| `report <ticker>` | Full Octagon markdown report for an event (accepts event/market/series/URL). `--refresh` forces a fresh pull. |
+| `trust <event_ticker>` | Trader Trust scorecard — per-market integrity scores (table view) — **⏳ not yet available for Polymarket** |
+| `trust <event> --market <market>` | Single-market Trader Trust detail card (use `--verbose` for evidence) — **⏳ not yet available for Polymarket** |
+| `report <ticker>` | Full Octagon markdown report for an event (accepts event/market/series/URL). `--refresh` forces a fresh pull. — **⏳ not yet available for Polymarket** |
 | `themes` (registry) | Editorial narrative buckets — list/show/import/create/delete/add-series |
 | `themes report` | 25-theme dashboard with SEO + liquidity |
 | `themes audit` | Flag dead themes (high SEO + zero volume) |
@@ -147,9 +160,9 @@ Type help for commands, or just ask a question.
 | `analyze <ticker>` | Deep analysis: edge, drivers, Kelly sizing |
 | `watch <ticker>` | Live price and orderbook feed |
 | `watch --theme <theme>` | Continuous theme scan |
-| `buy <ticker> <count> [price] [yes\|no]` | Buy contracts |
-| `sell <ticker> <count> [price] [yes\|no]` | Sell contracts |
-| `cancel <order_id>` | Cancel a resting order |
+| `buy <ticker> <count> [price] [yes\|no]` | Buy contracts — **⏳ trading not implemented yet** |
+| `sell <ticker> <count> [price] [yes\|no]` | Sell contracts — **⏳ trading not implemented yet** |
+| `cancel <order_id>` | Cancel a resting order — **⏳ trading not implemented yet** |
 | `backtest` | Model accuracy scorecard + live edge scanner |
 | `portfolio` | Positions, P&L, risk snapshot |
 | `setup` | Re-run setup wizard (inside TUI) |

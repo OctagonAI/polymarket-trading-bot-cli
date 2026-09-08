@@ -35,6 +35,7 @@ import type { CommandResult } from './commands/index.js';
 import { formatResponse } from './utils/markdown-table.js';
 import { ensureIndex, onIndexProgress, getRefreshPromise } from './tools/polymarket/search-index.js';
 import { TRADING_UNAVAILABLE_MESSAGE } from './tools/polymarket/polymarket-trade.js';
+import { isDeferredCommand } from './scan/octagon-capabilities.js';
 import { SetupWizardController } from './setup/wizard.js';
 import { trackEvent } from './utils/telemetry.js';
 
@@ -491,7 +492,9 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     { name: 'model', description: 'Change LLM model/provider', getArgumentCompletions: usageHint('<provider:model>', 'e.g. anthropic:sonnet') },
     { name: 'setup', description: 'Re-run the setup wizard to configure API keys' },
     { name: 'quit', description: 'Quit CLI session' },
-  ];
+    // Commands gated by octagon-capabilities are hidden from autocomplete but
+    // still reachable by typing, where they explain why they are unavailable.
+  ].filter((c) => !isDeferredCommand(c.name));
   editor.setAutocompleteProvider(new CombinedAutocompleteProvider(slashCommands));
 
   tui.addChild(root);

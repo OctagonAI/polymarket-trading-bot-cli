@@ -19,6 +19,7 @@ import {
 } from './formatters.js';
 import type { PolymarketPosition } from '../tools/polymarket/types.js';
 import { buildHelp } from './help.js';
+import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 import { ensureIndex, forceRefreshIndex } from '../tools/polymarket/search-index.js';
 import { searchEventIndex } from '../db/event-index.js';
 import { scanEdges, formatEdgeScanHuman } from './search-edge.js';
@@ -162,6 +163,22 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       return;
     }
 
+    // ─── Octagon-backed commands that cannot serve Polymarket yet ─────
+    // Gated rather than left to return Kalshi rows under a Polymarket banner.
+    if (isDeferredCommand(resolved.canonical)) {
+      const feature = COMMAND_FEATURE[resolved.canonical]!;
+      if (!octagonSupports(feature)) {
+        const msg = octagonUnavailableMessage(feature, resolved.canonical);
+        if (json) {
+          console.log(JSON.stringify(wrapError(resolved.canonical, 'NOT_AVAILABLE', msg)));
+        } else {
+          console.error(msg);
+        }
+        process.exit(ExitCode.USER_ERROR);
+        return;
+      }
+    }
+
     // ─── search ────────────────────────────────────────────────────────
     if (resolved.canonical === 'search') {
       const sub = resolved.subview ?? args.positionalArgs[0];
@@ -218,8 +235,10 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       }
       const query = args.positionalArgs.join(' ');
 
-      // Octagon-powered server-side search: broader universe, full-text + structured filters.
-      if (process.env.OCTAGON_API_KEY) {
+      // Octagon server-side search is skipped until the client is repointed:
+      // its Kalshi-scoped route returns Kalshi markets regardless of the query.
+      // The local Gamma-backed index below is venue-correct.
+      if (process.env.OCTAGON_API_KEY && octagonSupports('market-search')) {
         // --aggregate-by series → route to series rollup
         if (args.aggregateBy === 'series') {
           const { handleSeries, formatSeriesHuman } = await import('./series.js');
