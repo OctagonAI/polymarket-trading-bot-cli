@@ -118,14 +118,21 @@ export async function forceRefreshIndex(): Promise<void> {
 }
 
 /**
- * Ensure the local event index is fresh. If stale or empty, triggers a refresh.
- * Always returns immediately (never blocks).
+ * Ensure the local event index is usable.
+ *
+ *  - fresh (< 2h): return immediately
+ *  - stale: kick off a background refresh and serve the stale rows now
+ *  - empty (never refreshed): AWAIT the refresh, because returning immediately
+ *    means the caller searches an empty table and reports "no results" on the
+ *    very first run
  */
 export async function ensureIndex(): Promise<void> {
   const db = getDb();
   const age = getIndexAge(db);
 
   if (age < INDEX_STALE_MS) return;
+
+  const isEmpty = age === Infinity;
 
   if (!_refreshPromise) {
     _refreshPromise = refreshIndex()
@@ -136,4 +143,6 @@ export async function ensureIndex(): Promise<void> {
         _refreshPromise = null;
       });
   }
+
+  if (isEmpty) await _refreshPromise;
 }

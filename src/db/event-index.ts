@@ -159,8 +159,10 @@ export function clearAndPopulateIndex(
 ): void {
   const now = Date.now();
 
+  // OR REPLACE because Gamma pages with limit/offset over a volume-ordered set:
+  // rows shift between requests, so the same event can arrive on two pages.
   const insert = db.prepare(`
-    INSERT INTO event_index (event_ticker, series_ticker, title, category, strike_date, sub_title, tags, markets_json, indexed_at)
+    INSERT OR REPLACE INTO event_index (event_ticker, series_ticker, title, category, strike_date, sub_title, tags, markets_json, indexed_at)
     VALUES ($event_ticker, $series_ticker, $title, $category, $strike_date, $sub_title, $tags, $markets_json, $indexed_at)
   `);
 

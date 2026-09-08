@@ -225,6 +225,9 @@ export async function callPolymarketApi<T = unknown>(
 /**
  * Page through a Gamma collection. Gamma uses limit/offset and returns a bare
  * array, ending when a short page comes back.
+ *
+ * Offset paging over a volume-ordered set is not stable — rows move between
+ * requests — so callers must treat the result as possibly containing duplicates.
  */
 export async function fetchAllGammaPages<T>(
   path: string,
