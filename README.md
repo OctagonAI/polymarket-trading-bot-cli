@@ -14,8 +14,8 @@ AI-powered Polymarket trading CLI that finds edge and executes trades.
 >
 > **Order placement is not implemented yet** — `buy`, `sell` and `cancel` return a clear
 > error. Polymarket orders need EIP-712 wallet signing and on-chain USDC/CTF allowances.
-> `portfolio` is gated with them: every view it offers reads an account, and configuring
-> that wallet is part of the same trading setup. Use `status` to check your setup.
+> `portfolio` is gated with them: every view it offers reads an account, and the wallet
+> that requires is part of the same trading setup. Use `status` to check your setup.
 
 Runs deep fundamental research on every market — independent probability estimates, ranked price drivers, catalyst calendars — then computes edge as the spread between model price and the live order book. Signals are sized using half-Kelly and filtered through a 5-gate risk engine before a dollar is risked.
 
@@ -165,7 +165,7 @@ Type help for commands, or just ask a question.
 | `sell <ticker> <count> [price] [yes\|no]` | Sell contracts — **⏳ trading not implemented yet** |
 | `cancel <order_id>` | Cancel a resting order — **⏳ trading not implemented yet** |
 | `backtest` | Model accuracy scorecard + live edge scanner |
-| `portfolio` | Positions, P&L, risk snapshot — **⏳ needs a configured wallet; ships with trading** |
+| `portfolio` | Positions, P&L, risk snapshot — **⏳ ships with trading support** |
 | `setup` | Re-run setup wizard (inside TUI) |
 | `init` | Launch setup wizard from CLI (`polymarket init`) |
 | `clear-cache` | Delete local cache and rebuild (`polymarket clear-cache`) |
@@ -512,7 +512,6 @@ Polymarket market data is public, so there is no exchange key to set — reads w
 
 | Variable | Description |
 |----------|-------------|
-| `POLYMARKET_WALLET_ADDRESS` | Your Polygon address (`0x…`), read-only. Reserved for `portfolio`, which is not enabled yet |
 | `POLYMARKET_USE_STAGING` | `true` to target Polymarket's staging hosts (unverified) |
 | `POLYMARKET_GAMMA_URL` / `POLYMARKET_CLOB_URL` / `POLYMARKET_DATA_URL` | Override an individual service base URL |
 | `ANTHROPIC_API_KEY` | Anthropic (Claude) |
@@ -549,9 +548,7 @@ polymarket config risk.kelly_multiplier 0.3    # Set a value
 
 ## Architecture
 
-![Polymarket Trading Flow](assets/polymarket-flow-light.png)
-
-The CLI talks to two external services: the Polymarket exchange API (market data, order placement, portfolio) and the Octagon research API (AI probability estimates, price drivers). Results are cached in a local SQLite database to minimize API calls and credit usage.
+The CLI talks to two external services: the Polymarket exchange API (market data; order placement and portfolio reads are not enabled yet) and the Octagon research API (AI probability estimates, price drivers). Results are cached in a local SQLite database to minimize API calls and credit usage.
 
 ### LLM Providers
 

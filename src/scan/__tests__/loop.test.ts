@@ -44,7 +44,8 @@ describe('ScanLoop', () => {
     audit = a.audit;
     auditPath = a.path;
 
-    // Reads need no credentials on Polymarket, but portfolio reads need a wallet.
+    // Set, but deliberately inert: getWalletAddress ignores it until the wallet
+    // phase. Kept here so this test fails loudly if that ever silently changes.
     process.env.POLYMARKET_WALLET_ADDRESS = '0x' + '1'.repeat(40);
 
     // Seed theme with one event ticker
@@ -119,16 +120,28 @@ describe('ScanLoop', () => {
     expect(rows[0].ticker).toBe('MKT-YES');
   });
 
-  test('creates risk_snapshots with bankroll data', async () => {
+  test('risk_snapshots record no account data while the wallet path is disabled', async () => {
     await loop.runOnce({ theme: 'test-theme' });
 
     const snapshot = getLatestSnapshot(db);
     expect(snapshot).not.toBeNull();
-    // Values are USDC from the Data API. cash_balance comes from the configured
-    // `risk.bankroll_usdc` (0 here) because Polymarket exposes no cash balance.
-    expect(snapshot!.portfolio_value).toBe(1000);
-    expect(snapshot!.open_exposure).toBe(200);
+    // The wallet is off until the trading phase, so the Data API is never read
+    // even though POLYMARKET_WALLET_ADDRESS is set above.
+    expect(snapshot!.portfolio_value).toBe(0);
+    expect(snapshot!.open_exposure).toBe(0);
     expect(snapshot!.cash_balance).toBe(0);
+  });
+
+  test('drawdown stays 0 so the risk gate cannot trip on a phantom loss', async () => {
+    // portfolio_value is mark-to-market position value with no cash term, so if
+    // the wallet were live, closing positions would read as a ~100% drawdown and
+    // fail every later analyze. With the wallet off the high-water mark stays 0
+    // and the drawdown branch is never taken. Guards the regression directly.
+    await loop.runOnce({ theme: 'test-theme' });
+
+    const snapshot = getLatestSnapshot(db);
+    expect(snapshot!.drawdown_current).toBe(0);
+    expect(snapshot!.drawdown_max).toBe(0);
   });
 
   test('audit trail has SCAN_START and SCAN_COMPLETE', async () => {

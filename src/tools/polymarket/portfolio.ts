@@ -8,18 +8,38 @@ import type { PolymarketBalance, PolymarketPosition } from './types.js';
  * Read-only portfolio access needs only a wallet address — no signing. Note this
  * is the *proxy* wallet that holds funds, which for most Polymarket users is not
  * the same as the signing EOA.
+ *
+ * DELIBERATELY DISABLED until the wallet/trading phase.
+ *
+ * Reading the env var here would re-enable the whole account path — not just the
+ * `portfolio` command, which is gated, but `fetchLiveBankroll`, which the scan
+ * loop calls on every pass. That feeds `CircuitBreaker.snapshot`, where
+ * `drawdown = (highWaterMark - portfolioValue) / highWaterMark` is computed from
+ * mark-to-market position value with no cash term, because Polymarket exposes no
+ * free-USDC balance. Closing positions then reads as a ~100% drawdown while
+ * capital is intact, `drawdown_max` keeps it as a running maximum, and every
+ * later `analyze` fails its drawdown gate.
+ *
+ * Returning undefined unconditionally makes `portfolioValue` always 0, so the
+ * high-water mark stays 0 and the drawdown branch is never taken. Defining
+ * drawdown properly is part of the wallet work; until then this is off rather
+ * than latent, and POLYMARKET_WALLET_ADDRESS is not advertised anywhere.
+ *
+ * To re-enable, restore the read:
+ *
+ *   const addr = process.env.POLYMARKET_WALLET_ADDRESS?.trim();
+ *   return addr && /^0x[0-9a-fA-F]{40}$/.test(addr) ? addr : undefined;
  */
 export function getWalletAddress(): string | undefined {
-  const addr = process.env.POLYMARKET_WALLET_ADDRESS?.trim();
-  return addr && /^0x[0-9a-fA-F]{40}$/.test(addr) ? addr : undefined;
+  return undefined;
 }
 
 export function requireWalletAddress(): string {
   const addr = getWalletAddress();
   if (!addr) {
     throw new Error(
-      'POLYMARKET_WALLET_ADDRESS not set (expects a 0x… Polygon address). ' +
-        'Set it to your Polymarket proxy wallet to read positions.'
+      'Portfolio reads are not available yet: they need a configured wallet, ' +
+        'which arrives with trading support.'
     );
   }
   return addr;

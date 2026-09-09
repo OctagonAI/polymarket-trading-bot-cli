@@ -21,16 +21,15 @@ let mockPositions: Array<{ current_value: number }> = [];
 const spies: Array<{ mockRestore: () => void }> = [];
 
 const TEST_WALLET = '0x' + '1'.repeat(40);
-let prevWallet: string | undefined;
 
 function installApiMock() {
-  // fetchLiveBankroll skips the Data API entirely when no wallet is configured,
-  // so a wallet must be present for the mocked reads to be reached.
-  prevWallet = process.env.POLYMARKET_WALLET_ADDRESS;
-  process.env.POLYMARKET_WALLET_ADDRESS = TEST_WALLET;
-
+  // getWalletAddress returns undefined in production until the wallet phase, and
+  // fetchLiveBankroll skips the Data API entirely without one. These tests cover
+  // the sizing maths for when it is re-enabled, so the wallet is stubbed in
+  // rather than set via the env var, which is no longer read.
   const realGetBotSetting = botConfig.getBotSetting;
   spies.push(
+    spyOn(polyPortfolio, 'getWalletAddress').mockImplementation(() => TEST_WALLET),
     spyOn(polyPortfolio, 'fetchPortfolioValue').mockImplementation(
       async () => ({ portfolio_value: mockBankrollUsdc, address: TEST_WALLET }),
     ),
@@ -45,8 +44,6 @@ function installApiMock() {
 
 function restoreApiMock() {
   for (const spy of spies.splice(0)) spy.mockRestore();
-  if (prevWallet === undefined) delete process.env.POLYMARKET_WALLET_ADDRESS;
-  else process.env.POLYMARKET_WALLET_ADDRESS = prevWallet;
 }
 
 // --- Helpers ---
