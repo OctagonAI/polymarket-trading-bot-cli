@@ -67,14 +67,43 @@ export function normalizePosition(raw: RawPosition): PolymarketPosition {
   };
 }
 
+/** Data API page size cap for /positions. */
+const POSITIONS_PAGE_SIZE = 100;
+/** Guard against an unbounded loop if the API ever stops shortening pages. */
+const POSITIONS_MAX_PAGES = 20;
+
+/**
+ * Fetch a wallet's positions, paging until a short page comes back.
+ *
+ * The Data API caps a page at 100 and takes an `offset`; a single unpaged call
+ * silently truncates any wallet holding more than that, which understates
+ * `openExposure` in Kelly sizing and drops positions from portfolio reviews.
+ *
+ * An explicit `opts.limit` is honoured as a single-page maximum, for callers
+ * that genuinely want just the first N.
+ */
 export async function fetchPositions(
   wallet = requireWalletAddress(),
   opts: { limit?: number; redeemable?: boolean } = {}
 ): Promise<PolymarketPosition[]> {
-  const raw = await callPolymarketApi<RawPosition[]>('data', 'GET', '/positions', {
-    params: { user: wallet, limit: opts.limit ?? 100, redeemable: opts.redeemable },
-  });
-  return (Array.isArray(raw) ? raw : []).map(normalizePosition);
+  const fetchPage = async (limit: number, offset: number) => {
+    const raw = await callPolymarketApi<RawPosition[]>('data', 'GET', '/positions', {
+      params: { user: wallet, limit, offset, redeemable: opts.redeemable },
+    });
+    return Array.isArray(raw) ? raw : [];
+  };
+
+  if (opts.limit !== undefined) {
+    return (await fetchPage(opts.limit, 0)).map(normalizePosition);
+  }
+
+  const all: RawPosition[] = [];
+  for (let page = 0; page < POSITIONS_MAX_PAGES; page++) {
+    const batch = await fetchPage(POSITIONS_PAGE_SIZE, page * POSITIONS_PAGE_SIZE);
+    all.push(...batch);
+    if (batch.length < POSITIONS_PAGE_SIZE) break;
+  }
+  return all.map(normalizePosition);
 }
 
 /**
