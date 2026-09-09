@@ -1,12 +1,6 @@
-import { fetchPositions, fetchPortfolioValue } from '../tools/polymarket/portfolio.js';
 import { fetchExchangeStatus } from '../tools/polymarket/exchange.js';
 import { TRADING_UNAVAILABLE_MESSAGE } from '../tools/polymarket/polymarket-trade.js';
-import type { PolymarketPosition } from '../tools/polymarket/types.js';
-import {
-  formatBalance,
-  formatPositions,
-  formatExchangeStatus,
-} from './formatters.js';
+import { formatExchangeStatus } from './formatters.js';
 import { handleThemes, formatThemesHuman } from './themes.js';
 import type { ParsedArgs, Subcommand } from './parse-args.js';
 
@@ -24,8 +18,6 @@ function defaultArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
 }
 import { handleBacktest, formatBacktestHuman } from './backtest.js';
 import { handleAnalyze, formatAnalyzeHuman } from './analyze.js';
-import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
-import { reviewPortfolio, formatReviewHuman } from './review.js';
 import { buildHelp } from './help.js';
 import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 import { trackEvent } from '../utils/telemetry.js';
@@ -316,34 +308,22 @@ export async function executePendingTrade(_trade: NonNullable<CommandResult['pen
 
 // ─── Portfolio subview handler ──────────────────────────────────────────────
 
+/**
+ * `/status` is the only account-adjacent view still available: it checks setup
+ * and CLOB reachability, neither of which needs a wallet. Positions, balance and
+ * resting orders all read an account, and configuring that wallet is part of the
+ * trading setup that does not exist yet.
+ */
 async function handlePortfolioSlash(subview?: string): Promise<CommandResult> {
   const view = subview?.toLowerCase() ?? 'overview';
-
+  if (view !== 'status') {
+    return { output: TRADING_UNAVAILABLE_MESSAGE };
+  }
   try {
-    if (view === 'positions') {
-      const allPositions = await fetchPositions();
-      return { output: formatPositions(allPositions.filter((p) => p.size !== 0)) };
-    }
-
-    // Resting orders require the trading integration, which is not built yet.
-    if (view === 'orders') {
-      return { output: TRADING_UNAVAILABLE_MESSAGE };
-    }
-
-    if (view === 'balance') {
-      return { output: formatBalance(await fetchPortfolioValue()) };
-    }
-
-    if (view === 'status') {
-      const data = await fetchExchangeStatus();
-      return { output: formatExchangeStatus(data as unknown as Record<string, unknown>) };
-    }
-
-    // Default: full portfolio overview
-    const resp = await handlePortfolio(defaultArgs({ subcommand: 'portfolio' }));
-    return { output: formatPortfolioHuman(resp.data) };
+    const data = await fetchExchangeStatus();
+    return { output: formatExchangeStatus(data as unknown as Record<string, unknown>) };
   } catch (err) {
-    return { output: `Portfolio error: ${err instanceof Error ? err.message : String(err)}` };
+    return { output: `Status error: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
@@ -398,13 +378,9 @@ function handleTradeCommand(action: 'buy' | 'sell', args: string[]): CommandResu
   return { output: TRADING_UNAVAILABLE_MESSAGE };
 }
 
+/** Reads open positions, so it needs the wallet trading setup provides. */
 async function handleReviewCommand(): Promise<CommandResult> {
-  try {
-    const reviews = await reviewPortfolio();
-    return { output: formatReviewHuman(reviews) };
-  } catch (err) {
-    return { output: `Review failed: ${err instanceof Error ? err.message : String(err)}` };
-  }
+  return { output: TRADING_UNAVAILABLE_MESSAGE };
 }
 
 async function handleCancel(_orderId: string | undefined): Promise<CommandResult> {

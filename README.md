@@ -3,7 +3,7 @@
 AI-powered Polymarket trading CLI that finds edge and executes trades.
 
 > **⏳ Port in progress.** This CLI began as a port of the Kalshi trading bot. Market data,
-> search, analysis, watch and portfolio reads run natively against Polymarket
+> search, analysis and watch run natively against Polymarket
 > (Gamma / CLOB / Data APIs) and need no credentials. Octagon research — `search`,
 > `search edge`, `similar`, `events`, `trust`, `report` — runs against Octagon's
 > venue-generic API with `venue=polymarket`.
@@ -14,6 +14,8 @@ AI-powered Polymarket trading CLI that finds edge and executes trades.
 >
 > **Order placement is not implemented yet** — `buy`, `sell` and `cancel` return a clear
 > error. Polymarket orders need EIP-712 wallet signing and on-chain USDC/CTF allowances.
+> `portfolio` is gated with them: every view it offers reads an account, and configuring
+> that wallet is part of the same trading setup. Use `status` to check your setup.
 
 Runs deep fundamental research on every market — independent probability estimates, ranked price drivers, catalyst calendars — then computes edge as the spread between model price and the live order book. Signals are sized using half-Kelly and filtered through a 5-gate risk engine before a dollar is risked.
 
@@ -112,15 +114,17 @@ Type help for commands, or just ask a question.
   Recommended: 3 shares YES at $0.58
   Risk gates: ✓ Kelly  ✓ Liquidity  ✓ Correlation  ✓ Concentration  ✓ Drawdown
 
-> portfolio
+> trust fed-decision-in-september-762
 
-  Slug                              Side  Shares  Entry   Now    P&L
-  bitcoin-above-95k-by-april-30     YES        3  $0.58   $0.61  +$0.09
+  Trader Trust scorecard — Fed Decision in September?
+  Event quality  72/100  Healthy  ·  5/5 markets scored
 
-  Position value: $1.83 · Positions: 1
+  Market                    Quality  Liquidity  Move  Resol.  Fair  Spread
+  no-change                     78         81    64      95   53¢      1¢
+  25-bps-decrease               74         77     —      95   44¢      1¢
 ```
 
-<sub>`buy` is shown in the command table below but is not implemented yet — see the port status note at the top.</sub>
+<sub>`buy` and `portfolio` appear in the command table below but are not enabled yet — see the port status note at the top.</sub>
 
 ## Commands
 
@@ -161,7 +165,7 @@ Type help for commands, or just ask a question.
 | `sell <ticker> <count> [price] [yes\|no]` | Sell contracts — **⏳ trading not implemented yet** |
 | `cancel <order_id>` | Cancel a resting order — **⏳ trading not implemented yet** |
 | `backtest` | Model accuracy scorecard + live edge scanner |
-| `portfolio` | Positions, P&L, risk snapshot |
+| `portfolio` | Positions, P&L, risk snapshot — **⏳ needs a configured wallet; ships with trading** |
 | `setup` | Re-run setup wizard (inside TUI) |
 | `init` | Launch setup wizard from CLI (`polymarket init`) |
 | `clear-cache` | Delete local cache and rebuild (`polymarket clear-cache`) |
@@ -173,7 +177,7 @@ Type help for commands, or just ask a question.
 |------|-------------|
 | `--json` | JSON output for scripts and agents |
 | `--refresh` | Force fresh Octagon report (analyze, report) |
-| `--performance` | Include win rate, Sharpe, Brier scores (portfolio) |
+| `--performance` | Include win rate, Sharpe, Brier scores (backtest) |
 | `--dry-run` | Scan without persisting edges (watch) |
 | `--verbose` | Verbose output |
 | `--min-edge <n>` | Minimum edge threshold in pp (backtest default 0.5) |
@@ -421,8 +425,7 @@ polymarket clusters --ranked --timeframe 1y --min-return 0.2 --json
 polymarket correlate KX-A KX-B KX-C --window-days 90 --json
 polymarket basket build --category crypto -n 8 --max-per-cluster 2 --max-corr 0.6 --json
 polymarket analyze bitcoin-above-95k-by-april-30 --json
-polymarket buy bitcoin-above-95k-by-april-30 3 0.58 --json
-polymarket portfolio --json
+polymarket status --json
 ```
 
 ### JSON Response Format
@@ -464,12 +467,10 @@ ANALYSIS=$(polymarket analyze bitcoin-above-95k-by-april-30 --json)
 EDGE=$(echo "$ANALYSIS" | jq '.data.edge')
 
 # 3. Trade if edge is high enough
+#    (buy is not implemented yet — this is the shape it will take)
 if (( $(echo "$EDGE > 0.05" | bc -l) )); then
   polymarket buy bitcoin-above-95k-by-april-30 3 0.58 --json
 fi
-
-# 4. Check portfolio
-polymarket portfolio --json
 ```
 
 ### Server-side basket construction
@@ -511,7 +512,7 @@ Polymarket market data is public, so there is no exchange key to set — reads w
 
 | Variable | Description |
 |----------|-------------|
-| `POLYMARKET_WALLET_ADDRESS` | Your Polygon address (`0x…`), read-only — required by `portfolio` |
+| `POLYMARKET_WALLET_ADDRESS` | Your Polygon address (`0x…`), read-only. Reserved for `portfolio`, which is not enabled yet |
 | `POLYMARKET_USE_STAGING` | `true` to target Polymarket's staging hosts (unverified) |
 | `POLYMARKET_GAMMA_URL` / `POLYMARKET_CLOB_URL` / `POLYMARKET_DATA_URL` | Override an individual service base URL |
 | `ANTHROPIC_API_KEY` | Anthropic (Claude) |

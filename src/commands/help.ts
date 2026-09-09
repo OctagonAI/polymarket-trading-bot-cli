@@ -1,5 +1,6 @@
 // ─── Shared help content for both TUI slash commands and CLI batch mode ─────
 import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
+import { isTradingCommand, TRADING_UNAVAILABLE_MESSAGE } from '../tools/polymarket/polymarket-trade.js';
 
 /** Context determines prefix style: slash commands use "/", CLI uses "polymarket" */
 type HelpContext = 'slash' | 'cli';
@@ -468,8 +469,7 @@ Recipes:
  * to hand-maintain a second copy of the command list.
  */
 function stripGatedLines(text: string): string {
-  const gated = (name: string) =>
-    isDeferredCommand(name) || name === 'buy' || name === 'sell' || name === 'cancel';
+  const gated = (name: string) => isDeferredCommand(name) || isTradingCommand(name);
 
   const kept = text.split('\n').filter((line) => {
     const m = line.match(/^\s{2}\/?([a-z-]+)/);
@@ -561,6 +561,7 @@ Account:
   portfolio balance             Account balance
 
 System:
+  status                        Check setup: connectivity, API keys
   init                          Launch with setup wizard (configure API keys)
   clear-cache                   Delete local SQLite cache and start fresh
   setup                         Re-run setup wizard
@@ -638,6 +639,7 @@ Account:
   /portfolio balance             Account balance
 
 System:
+  /status                        Check setup: connectivity, API keys
   /model                         Change LLM model/provider
   /setup                         Re-run setup wizard
   init                           Launch with setup wizard (run: polymarket init)
@@ -659,6 +661,9 @@ export function buildHelp(ctx: HelpContext, topic?: string): { text: string } | 
     if (isDeferredCommand(topic) && !octagonSupports(COMMAND_FEATURE[topic]!)) {
       const notice = octagonUnavailableMessage(COMMAND_FEATURE[topic]!, topic);
       return { text: `${notice}\n\nReference (for when it lands):\n\n${topics[topic]}` };
+    }
+    if (isTradingCommand(topic)) {
+      return { text: `${TRADING_UNAVAILABLE_MESSAGE}\n\nReference (for when it lands):\n\n${topics[topic]}` };
     }
     return { text: topics[topic] };
   }

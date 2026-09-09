@@ -15,7 +15,25 @@ import { formatToolResult } from '../types.js';
 export const TRADING_UNAVAILABLE_MESSAGE =
   'Trading is not available yet in the Polymarket CLI. Order placement requires ' +
   'EIP-712 wallet signing and on-chain USDC/CTF allowances, which land in a later ' +
-  'release. Market data, research, and portfolio reads all work today.';
+  'release. Market data and research work today.';
+
+/**
+ * Commands hidden until wallet/trading support lands.
+ *
+ * `portfolio` is here alongside the order commands because everything it reads —
+ * positions, portfolio value, resting orders — hangs off a configured wallet,
+ * and configuring that wallet is part of the trading setup that does not exist
+ * yet. Without one the command can only report an empty portfolio, so listing it
+ * promises an account view the CLI cannot produce.
+ *
+ * Kept separate from octagon-capabilities.ts: those commands are gated by what
+ * Octagon can answer, these by what this CLI can do.
+ */
+export const TRADING_COMMANDS = ['buy', 'sell', 'cancel', 'portfolio'] as const;
+
+export function isTradingCommand(name: string): boolean {
+  return (TRADING_COMMANDS as readonly string[]).includes(name);
+}
 
 export const POLYMARKET_TRADE_DESCRIPTION = `
 Trade execution for Polymarket. NOT YET AVAILABLE — this tool always returns an error.

@@ -3,6 +3,7 @@ import packageJson from '../../package.json';
 import { theme } from '../theme.js';
 import { getModelDisplayName } from '../utils/model.js';
 import { isDeferredCommand } from '../scan/octagon-capabilities.js';
+import { isTradingCommand } from '../tools/polymarket/polymarket-trade.js';
 
 const INTRO_WIDTH = 60;
 
@@ -99,7 +100,7 @@ export class IntroComponent extends Container {
       const bare = name.split(' ')[0]!.replace(/^\//, '');
       if (isDeferredCommand(bare)) continue;
       // Order placement is not implemented yet — don't advertise it.
-      if (bare === 'buy' || bare === 'sell' || bare === 'cancel') continue;
+      if (isTradingCommand(bare)) continue;
       this.addChild(new Text(cmd(name) + desc, 0, 0));
     }
     this.addChild(new Spacer(1));

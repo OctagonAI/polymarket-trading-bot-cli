@@ -12,7 +12,7 @@ import { handleThemes, formatThemesHuman } from './themes.js';
 import { handleWatch } from './watch.js';
 import { handleBacktest, formatBacktestHuman } from './backtest.js';
 import { fetchPositions, fetchPortfolioValue } from '../tools/polymarket/portfolio.js';
-import { TRADING_UNAVAILABLE_MESSAGE } from '../tools/polymarket/polymarket-trade.js';
+import { TRADING_UNAVAILABLE_MESSAGE, isTradingCommand } from '../tools/polymarket/polymarket-trade.js';
 import {
   formatBalance,
   formatPositions,
@@ -160,6 +160,21 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
         console.error(msg);
         process.exit(ExitCode.USER_ERROR);
       }
+      return;
+    }
+
+    // ─── Commands that need wallet/trading support ────────────────────
+    // Order placement and every account read depend on a configured wallet,
+    // which is part of trading setup that does not exist yet. `status` is the
+    // exception: it resolves to a portfolio subview for historical reasons but
+    // only checks setup and CLOB reachability, neither of which needs a wallet.
+    if (isTradingCommand(resolved.canonical) && resolved.subview !== 'status') {
+      if (json) {
+        console.log(JSON.stringify(wrapError(resolved.canonical, 'NOT_AVAILABLE', TRADING_UNAVAILABLE_MESSAGE)));
+      } else {
+        console.error(TRADING_UNAVAILABLE_MESSAGE);
+      }
+      process.exit(ExitCode.USER_ERROR);
       return;
     }
 
@@ -605,18 +620,6 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       return;
     }
 
-    // ─── buy / sell / cancel ───────────────────────────────────────────
-    // Order placement needs EIP-712 wallet signing and on-chain allowances; that
-    // is a later phase. Fail loudly rather than pretending to trade.
-    if (subcommand === 'buy' || subcommand === 'sell' || subcommand === 'cancel') {
-      if (json) {
-        console.log(JSON.stringify(wrapError(subcommand, 'NOT_AVAILABLE', TRADING_UNAVAILABLE_MESSAGE)));
-      } else {
-        console.error(TRADING_UNAVAILABLE_MESSAGE);
-      }
-      process.exit(ExitCode.USER_ERROR);
-      return;
-    }
 
     // ─── help ──────────────────────────────────────────────────────────
     if (subcommand === 'help') {
