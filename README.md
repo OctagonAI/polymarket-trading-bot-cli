@@ -1,21 +1,16 @@
 # Polymarket Trading Bot CLI
 
-AI-powered Polymarket trading CLI that finds edge and executes trades.
+AI-powered Polymarket research CLI that finds edge across prediction markets.
 
-> **⏳ Port in progress.** This CLI began as a port of the Kalshi trading bot. Market data,
-> search, analysis and watch run natively against Polymarket
-> (Gamma / CLOB / Data APIs) and need no credentials. Octagon research — `search`,
-> `search edge`, `similar`, `events`, `trust`, `report` — runs against Octagon's
-> venue-generic API with `venue=polymarket`.
->
-> Still gated, because Octagon serves them for Kalshi only and there is no
-> venue-generic equivalent to call: `clusters`, `peers`, `correlate`, `basket`,
-> `series`. They say so when you run them.
+> **⏳ Read-only for now.** Market data, search, analysis and watch run natively
+> against Polymarket (Gamma / CLOB / Data APIs) and need no credentials. Octagon
+> powers the research commands — `search`, `search edge`, `similar`, `events`,
+> `trust`, `report`.
 >
 > **Order placement is not implemented yet** — `buy`, `sell` and `cancel` return a clear
 > error. Polymarket orders need EIP-712 wallet signing and on-chain USDC/CTF allowances.
 > `portfolio` is gated with them: every view it offers reads an account, and the wallet
-> that requires is part of the same trading setup. Use `status` to check your setup.
+> that requires is part of the same trading setup. Run `status` to check your setup.
 
 Runs deep fundamental research on every market — independent probability estimates, ranked price drivers, catalyst calendars — then computes edge as the spread between model price and the live order book. Signals are sized using half-Kelly and filtered through a 5-gate risk engine before a dollar is risked.
 
@@ -133,23 +128,7 @@ Type help for commands, or just ask a question.
 | `search [theme\|ticker\|query]` | Find markets by keyword or theme (Octagon-backed when key set) |
 | `search edge [--min-edge N]` | Scan all markets by model edge (Octagon `markets-with-edge`) |
 | `similar <market-slug\|"query">` | Related markets: same event → series → category, or keyword query |
-| `clusters [--label X]` | Browse thematic clusters of the market universe — **⏳ not yet available for Polymarket** |
-| `clusters <id>` | List markets inside a cluster — **⏳ not yet available for Polymarket** |
-| `clusters --behavioral` | Behavioral clusters by 30-day return vectors — **⏳ not yet available for Polymarket** |
-| `clusters --ranked` | Rank clusters by historical basket return — **⏳ not yet available for Polymarket** |
-| `peers <ticker>` | Markets in the same cluster as a ticker — **⏳ not yet available for Polymarket** |
-| `correlate <t1> <t2> [...]` | Pairwise Pearson correlation matrix — **⏳ not yet available for Polymarket** |
-| `basket build` | Diversified basket with cluster + correlation caps — **⏳ not yet available for Polymarket** |
-| `basket backtest` | NAV summary: total return, Sharpe, max drawdown, win rate — **⏳ not yet available for Polymarket** |
-| `basket size` | Fractional Kelly sizing for picked legs — **⏳ not yet available for Polymarket** |
-| `basket candles` | OHLC bars for a weighted basket NAV — **⏳ not yet available for Polymarket** |
-| `basket validate` | One-call portfolio diagnostics (clusters, correlations, calendar clashes, warnings) — **⏳ not yet available for Polymarket** |
-| `basket size --auto-probs` | Auto-fetch model probabilities via `markets/edge` and Kelly-size — **⏳ not yet available for Polymarket** |
-| `basket backtest --theme <name>` | Resolve an editorial theme to a NAV basket and backtest it — **⏳ not yet available for Polymarket** |
-| `series events <ticker>` | List events inside a series — **⏳ not yet available for Polymarket** |
 | `events` / `events <event-slug>` | Octagon events list + outcome ladder per event |
-| `series` / `series <ticker>` | Series rollup (24h vol, market count) — **⏳ not yet available for Polymarket** |
-| `series candles <ticker>` | Series-level NAV (basket of top sub-markets) — **⏳ not yet available for Polymarket** |
 | `catalysts upcoming --days N` | Markets closing in the next N days, grouped by week |
 | `trust <event-slug>` | Trader Trust scorecard — per-market integrity scores (table view) |
 | `trust <event-slug> --market <market-slug>` | Single-market Trader Trust detail card (use `--verbose` for evidence) |
@@ -193,38 +172,18 @@ Type help for commands, or just ask a question.
 | `--min-price <n>` | Min contract price, 0-100 scale (backtest, default 5) |
 | `--max-price <n>` | Max contract price, 0-100 scale (backtest, default 95) |
 | `--export <path>` | Export per-market CSV (backtest) |
-| `--top-k <n>` | Number of neighbors (similar); legs per cluster (clusters --ranked) |
-| `--behavioral` | Use behavioral clustering (clusters, peers) |
-| `--ranked` | Rank clusters by historical basket return (clusters) |
-| `--label <substr,...>` | Filter by cluster label substring (clusters, basket build) |
+| `--top-k <n>` | Number of results (similar) |
 | `--close-before <iso>` | Only markets closing before this timestamp |
-| `--window-days <n>` | Correlation lookback (correlate; basket build) |
-| `--correlation-interval <1h\|1d>` | Override candle bin size for correlate |
-| `--timeframe <1w\|1m\|3m\|6m\|1y>` | Window/bin size for basket commands |
-| `--weights <csv>` | Comma-separated weights for basket backtest/candles |
-| `--bankroll <usd>` | Bankroll for Kelly sizing (basket size/build) |
-| `--kelly <0-1>` | Kelly multiplier (default 0.25) |
-| `-n <n>` | Basket size requested (basket build) |
-| `--max-per-cluster <n>` | Cap legs per thematic cluster (basket build) |
-| `--max-corr <-1..1>` | Pairwise correlation cap (basket build) |
-| `--min-return <n>` | Minimum total_return for clusters --ranked |
-| `--series <ticker>` | Filter to a series (search, similar, basket) |
+| `--series <slug>` | Filter to a series (search, similar) |
 | `--sort-by <key>` | Sort key for search edge: edge_pp \| expected_return \| total_volume \| model_probability |
-| `--probs <csv>` | Per-leg probabilities, e.g. `KX-A:0.62,KX-B:0.55` |
-| `--tickers <csv>` | Comma-separated tickers (correlate, basket backtest/candles) |
-| `-q "text"` | Free-text anchor for similar / basket build |
-| `--show-cluster` | Print cluster membership only (peers) |
-| `--theme <name>` | Resolve an editorial theme to a ticker list (basket backtest/candles/validate/size) |
+| `-q "text"` | Free-text query for similar |
 | `--aggregate-by series` | Roll up search results to the series level |
 | `--active-only` | Drop non-active markets (defensive flag — open universe by default) |
 | `--series-prefix <prefix>` | Server-side series prefix match (e.g. `bitcoin` matches `bitcoin-above-…`) |
-| `--sides yes,no,yes` | Per-ticker side for `correlate` (sign-flipped) |
-| `--cells` | Include per-cell detail (overlap, reason) in `correlate` |
-| `--auto-probs` | `basket size`: auto-fetch model probabilities via `markets/edge` |
 
 ### Discovery & Portfolio (Octagon-powered)
 
-The `search`, `similar`, `clusters`, `peers`, `correlate`, and `basket` commands turn the whole market universe into a queryable database. When `OCTAGON_API_KEY` is set the bot routes searches through Octagon's typed endpoints — keyword market search, related-market lookups, nightly k-means clusters (thematic + behavioral), Pearson correlation matrices, and one-call diversified basket construction with cluster caps and pairwise-correlation gates. Without a key, `search` and `search edge` fall back to the local SQLite cache.
+The `search`, `similar`, `events` and `trust` commands turn the whole market universe into a queryable database. When `OCTAGON_API_KEY` is set the bot routes searches through Octagon's typed endpoints — keyword market search, related-market lookups, model-vs-market edge rankings, and per-market integrity scores. Without a key, `search` and `search edge` fall back to the local SQLite cache.
 
 ```bash
 # Free-text + structured search (full-text + filters)
@@ -236,54 +195,11 @@ polymarket search edge --min-edge 5 --limit 10 --sort-by total_volume
 # Related markets — same event first, then series, then category
 polymarket similar will-bitcoin-reach-110000-by-december-31-2026 --top-k 25
 polymarket similar -q "bitcoin" --category crypto
-
-# Browse the universe by theme
-polymarket clusters --label fed                 # find Fed-decision clusters
-polymarket clusters 42                          # markets in cluster 42
-polymarket clusters --behavioral                # behavioral clusters (mean ret + vol)
-polymarket clusters --ranked --timeframe 1y --min-return 0.20 --top-k 5
-
-# Same-theme dedup
-polymarket peers KXBTCD-26DEC31-T100000 --kind thematic --limit 50
-polymarket peers KXBTCD-26DEC31-T100000 --show-cluster     # which cluster does this belong to?
-
-# Pairwise correlation matrix — most-uncorrelated pairs first
-polymarket correlate KXBTCD-... KXETHU-... KXSOL-... --window-days 90
-
-# Build a diversified basket (one HTTP call — universe → cluster cap → corr cap → sizing)
-polymarket basket build --category crypto --min-volume 10000 \
-  -n 8 --max-per-cluster 2 --max-corr 0.6 \
-  --bankroll 1000 --kelly 0.25 \
-  --probs KXBTCD-...:0.62,KXETHU-...:0.58
-
-# "Find me 5 uncorrelated bets on macro themes" — one HTTP call
-polymarket basket build --label fed,cpi,fomc,gdp,jobs \
-  -n 5 --max-per-cluster 1 --max-corr 0.4
-
-# Backtest a basket and read total_return / Sharpe / max DD directly
-polymarket basket backtest --tickers KX-A,KX-B,KX-C --weights 0.4,0.4,0.2 --timeframe 1y
-
-# Kelly-size legs you've already picked
-polymarket basket size --bankroll 1000 --kelly 0.25 --probs KX-A:0.62,KX-B:0.55
-
-# Or let Octagon's model fill in the probabilities for you
-polymarket basket size --auto-probs --tickers KX-A,KX-B,KX-C --bankroll 1000 --kelly 0.25
-polymarket basket size --auto-probs --theme "AI Race Milestones" --bankroll 1000 --kelly 0.25
-
-# Diversified basket builder over an explicit candidate pool
-polymarket basket build --tickers KX-A,KX-B,KX-C,KX-D -n 3 --max-per-cluster 1 --max-corr 0.5
-polymarket basket build --theme "Iran Escalation" -n 4 --max-per-cluster 1 --max-corr 0.5 --auto-probs --bankroll 1000
-
-# Sanity-check a proposed basket before placing orders (one call, server-side)
-polymarket basket validate --tickers KX-A,KX-B --bankroll 1000 --max-corr 0.5
-polymarket basket validate --theme "Iran Escalation" --bankroll 1000
-#   → cluster breakdown, pairwise correlations (top by |corr|), calendar
-#     clashes (weeks where many legs resolve), duplicate underliers, warnings.
 ```
 
 ### Editorial Theme Dashboard
 
-`themes` is a local registry of editorial narrative buckets (e.g. "AI Race Milestones", "Iran Escalation") that maps to lists of series with optional monthly search-volume annotations. The bot ships with a 25-theme seed dataset in `data/themes_seo.json`. Distinct from Octagon's ML clusters — these are *narratives* you curate.
+`themes` is a local registry of editorial narrative buckets (e.g. "AI Race Milestones", "Iran Escalation") that maps to lists of event slugs with optional monthly search-volume annotations. These are *narratives* you curate. No seed file ships yet — build the registry with `themes create` / `themes add-series`, or import your own JSON.
 
 ```bash
 # Seed from the included starter dataset (25 themes, 173 series mappings)
@@ -313,16 +229,6 @@ polymarket themes overlap
 polymarket themes create "My Macro Hedge" --label "..." --tickers us-recession-2027,cpi-above-3-2027
 polymarket themes add-series "My Macro Hedge" fed-decision-in-september,unemployment-above-5
 polymarket themes set-search-volume "My Macro Hedge" 50000
-
-# Backtest an entire theme as a NAV basket (one top market per series)
-polymarket basket backtest --theme "Iran Escalation" --timeframe 3m
-polymarket basket candles --theme "Fed Cuts Aggressively" --timeframe 1y --json
-
-# Series-level rollup and NAV
-polymarket series list --min-volume 10000              # liquid series, ranked
-polymarket series KXBTCD --limit 10                    # drill in
-polymarket series candles KXBTCD --timeframe 3m        # series NAV momentum
-polymarket series search bitcoin --limit 10            # keyword → rollup
 
 # Event ↔ outcome ladder
 polymarket events --category Politics --limit 10       # top political events by volume
@@ -421,9 +327,8 @@ Every command supports `--json` for structured output, making the bot easy to or
 ```bash
 polymarket search crypto --json
 polymarket similar bitcoin-above-95k-by-april-30 --top-k 10 --json
-polymarket clusters --ranked --timeframe 1y --min-return 0.2 --json
-polymarket correlate KX-A KX-B KX-C --window-days 90 --json
-polymarket basket build --category crypto -n 8 --max-per-cluster 2 --max-corr 0.6 --json
+polymarket events --category Politics --limit 10 --json
+polymarket trust fed-decision-in-september-762 --json
 polymarket analyze bitcoin-above-95k-by-april-30 --json
 polymarket status --json
 ```
@@ -471,20 +376,6 @@ EDGE=$(echo "$ANALYSIS" | jq '.data.edge')
 if (( $(echo "$EDGE > 0.05" | bc -l) )); then
   polymarket buy bitcoin-above-95k-by-april-30 3 0.58 --json
 fi
-```
-
-### Server-side basket construction
-
-For agents that want to skip the per-ticker analysis loop, the `basket build` command pushes universe selection, cluster diversification, correlation gating, and Kelly sizing server-side into a single HTTP call:
-
-```bash
-# Pull Octagon's edge ranking, build a diversified 8-leg crypto basket sized for $1000
-EDGE=$(polymarket search edge --category crypto --min-edge 5 --json | jq '.data.data')
-PROBS=$(echo "$EDGE" | jq -r 'map("\(.market_ticker):\(.model_probability/100)") | join(",")')
-
-polymarket basket build --category crypto --min-volume 10000 \
-  -n 8 --max-per-cluster 2 --max-corr 0.6 \
-  --bankroll 1000 --kelly 0.25 --probs "$PROBS" --json
 ```
 
 The `watch --theme` command outputs NDJSON (one JSON object per scan cycle), suitable for streaming pipelines.

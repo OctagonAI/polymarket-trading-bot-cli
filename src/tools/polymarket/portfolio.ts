@@ -1,6 +1,7 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { callPolymarketApi, num } from './api.js';
+import { logger } from '../../utils/logger.js';
 import { formatToolResult } from '../types.js';
 import type { PolymarketBalance, PolymarketPosition } from './types.js';
 
@@ -81,6 +82,13 @@ const POSITIONS_MAX_PAGES = 20;
  *
  * An explicit `opts.limit` is honoured as a single-page maximum, for callers
  * that genuinely want just the first N.
+ *
+ * The walk stops at POSITIONS_MAX_PAGES. A wallet holding more than
+ * POSITIONS_PAGE_SIZE * POSITIONS_MAX_PAGES positions is therefore returned
+ * incomplete, which would understate `openExposure` in risk snapshots. That is
+ * accepted rather than paged without limit, but it is never silent: the cap is
+ * logged as a warning naming the number of pages read. Revisit if real wallets
+ * approach it.
  */
 export async function fetchPositions(
   wallet = requireWalletAddress(),
@@ -98,11 +106,23 @@ export async function fetchPositions(
   }
 
   const all: RawPosition[] = [];
+  let truncated = false;
   for (let page = 0; page < POSITIONS_MAX_PAGES; page++) {
     const batch = await fetchPage(POSITIONS_PAGE_SIZE, page * POSITIONS_PAGE_SIZE);
     all.push(...batch);
     if (batch.length < POSITIONS_PAGE_SIZE) break;
+    // A full final page means the wallet has more than the cap allows.
+    if (page === POSITIONS_MAX_PAGES - 1) truncated = true;
   }
+
+  if (truncated) {
+    logger.warn(
+      `[Polymarket] Position list truncated at ${POSITIONS_MAX_PAGES} pages ` +
+        `(${all.length} positions). This wallet holds more; totals derived from ` +
+        `this list, including open exposure, are understated.`,
+    );
+  }
+
   return all.map(normalizePosition);
 }
 

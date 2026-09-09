@@ -210,56 +210,8 @@ The API returns a \`distance\` field in --json output. Ignore it — it is
 row_number()/1000, so it only restates row order and is not comparable
 between responses.`,
 
-    clusters: `**${p}clusters** — Browse Octagon clusters (thematic + behavioral)
 
-${p}clusters                              List thematic clusters with sample titles
-${p}clusters --label fed                  Filter by label substring
-${p}clusters <id>                         Show markets in cluster
-${p}clusters --behavioral                 List behavioral clusters (mean return + vol)
-${p}clusters <id> --behavioral            Members of a behavioral cluster
-${p}clusters --ranked                     Rank clusters by historical basket return
-${p}clusters --ranked --timeframe 1y --min-return 0.20 --top-k 5
 
-Flags:
-  --behavioral            Use behavioral clustering (30-day return vectors)
-  --label <substring>     Case-insensitive label filter
-  --ranked                Score clusters by equal-weight basket return
-  --timeframe <1w|1m|3m|6m|1y>   Window for --ranked (default 1y)
-  --min-return <n>        Minimum total_return to include (e.g. 0.20)
-  --top-k <n>             Basket size per cluster for --ranked (default 5)
-  --limit <n>             Max clusters to evaluate
-  --json                  JSON output`,
-
-    peers: `**${p}peers** — Find markets in the same cluster as a ticker
-
-${p}peers <ticker>                        Thematic cluster peers (default)
-${p}peers <ticker> --behavioral           Behavioral cluster peers
-${p}peers <ticker> --limit 50             Up to 50 peers (excluding anchor)
-${p}peers <ticker> --show-cluster         Just show which clusters this ticker belongs to
-
-Flags:
-  --behavioral            Use behavioral clusters instead of thematic
-  --limit <n>             Number of peers to return (default 50)
-  --show-cluster          Print cluster membership only (no peer list)
-  --json                  JSON output`,
-
-    correlate: `**${p}correlate** — Pairwise correlation matrix over close-price candles
-
-${p}correlate <ticker1> <ticker2> [...]   Pearson correlation across 2-100 tickers
-${p}correlate --tickers slug-a,slug-b,slug-c    Same, comma-separated
-${p}correlate slug-a slug-b --window-days 90  90-day lookback
-${p}correlate slug-a slug-b --sides yes,no    Side-aware: corr(YES_A, NO_B) flips sign
-${p}correlate slug-a slug-b --cells           Per-cell detail (overlap_count + reason)
-
-Flags:
-  --window-days <n>             Lookback (1-730, default 30; auto interval picks 1d if >=90)
-  --correlation-interval <1h|1d>  Override bin size
-  --tickers <csv>               Alternative to positional args
-  --sides yes,no,yes            Per-ticker side (same length as tickers); default all yes
-  --cells                       Include per-cell detail (overlap_count, reason)
-  --json                        JSON output (matrix + ranked_pairs + cells_detail)
-
-Output ranks pairs ascending by correlation — most-uncorrelated first.`,
 
     report: `**${p}report** — Print the full Octagon markdown report for an event
 
@@ -332,28 +284,6 @@ Each event is a multi-market question (e.g. "Who will Trump nominate as Fed Chai
 with one binary sub-market per outcome (Kevin Warsh, Judy Shelton, ...).
 Octagon supplies a model_probability per outcome so you can rank contracts by edge.`,
 
-    series: `**${p}series** — Series-level rollups over the market universe
-
-${p}series                          List series with 24h vol, market count, dominant category
-${p}series list --min-volume 10000  Liquidity filter
-${p}series list --category Crypto   Filter by category
-${p}series bitcoin-daily                   Drill in: all sub-markets sorted by volume
-${p}series search "bitcoin"         Keyword search → rolled up by series
-${p}series candles bitcoin-daily --timeframe 3m   Series NAV = equal-weight basket of top sub-markets
-${p}series events ipo              List events in a series (e.g. ipo → ipo-2026)
-
-Flags:
-  --min-volume <n>       Floor on 24h volume per series
-  --category <name>      Filter by category
-  --limit <n>            Page size (default 50)
-  --timeframe <1w|1m|3m|6m|1y>  Candle window (default 1y; for "series candles")
-  --top-k <n>            Sub-markets to include in series NAV basket (default 20)
-  --series <prefix>      Filter list by series-ticker prefix (e.g. bitcoin)
-  --json                 JSON output
-
-A series is the grouping above individual markets — bitcoin-daily is the BTC
-strike ladder, with hundreds of sub-markets like bitcoin-daily-26DEC31-T100000.
-Series list is now a single server-side call (was 25 paginated calls).`,
 
     catalysts: `**${p}catalysts** — Upcoming market closes grouped by week
 
@@ -400,65 +330,6 @@ Flags:
 
 Legacy: ${p}search themes still lists category labels (the pre-registry view).`,
 
-    basket: `**${p}basket** — Build, backtest, and size diversified baskets
-
-${p}basket build [universe filters] [-n N] [--max-per-cluster M] [--max-corr X] [--bankroll $ --kelly K --probs ...]
-${p}basket backtest --tickers slug-a,slug-b --weights 0.6,0.4 --timeframe 1y
-${p}basket candles  --tickers slug-a,slug-b --timeframe 6m
-${p}basket size     --bankroll 1000 --kelly 0.25 --probs slug-a:0.62,slug-b:0.55 [--side yes|no]
-
-Validate flags:
-  --tickers slug-a,slug-b           Validate explicit tickers (equal-stake split)
-  --probs slug-a:yes:170,slug-b:no:160  Per-leg ticker:side:stake
-  --theme <name>                Resolve from editorial registry
-  --bankroll <usd>              Used to compute max_leg_pct + warnings
-  --window-days <n>             Correlation lookback (default 30)
-  --max-corr <-1..1>            Soft threshold for correlation warning
-
-Build flags (universe + diversification):
-  --category <name>             Restrict candidate pool by category
-  --series <ticker>             Restrict to a series
-  --min-volume <n>              Volume floor for candidates
-  --close-before <iso>          Only markets closing before
-  --label <csv>                 Restrict cluster labels (substring match, comma-separated)
-  -q "<text>"                   Anchor candidate pool by free-text keyword query
-  --ticker <ticker>             Anchor candidate pool by ticker (taxonomy walk)
-  --tickers slug-a,slug-b           Explicit candidate pool (universe.market_tickers)
-  --theme <name>                Resolve theme registry → explicit candidate pool
-  --auto-probs                  Auto-fetch model probabilities (markets/edge)
-                                and use Kelly sizing
-  -n <n>                        Number of legs (1-20)
-  --max-per-cluster <n>         Cap legs per thematic cluster
-  --max-corr <x>                Pairwise correlation cap (-1 to 1)
-  --limit <n>                   Candidate pool size (2-200)
-  --window-days <n>             Correlation window (7-365)
-
-Sizing flags (build & size):
-  --bankroll <usd>              Required for Kelly sizing
-  --kelly <fraction>            Kelly multiplier 0-1 (default 0.25)
-  --probs slug-a:0.62,slug-b:0.55   Model probabilities per ticker (manual)
-  --auto-probs --tickers slug-a,slug-b   Auto-fetch via POST /markets/edge
-  --auto-probs --theme <name>   Resolve theme + auto-fetch probabilities
-  --side <yes|no>               Default leg side for "basket size" (default yes)
-
-Backtest/candles flags:
-  --tickers <csv>               Tickers (required if --theme is absent)
-  --theme <name>                Resolve from editorial registry (top market per series)
-  --weights <csv>               Optional weights, same length as tickers
-  --timeframe <1w|1m|3m|6m|1y>  Window/bin size
-
-Common:
-  --json                        JSON output
-
-Recipes:
-  ${p}basket build --category crypto --min-volume 10000 -n 8 --max-per-cluster 2 --max-corr 0.6
-  ${p}basket build --label fed,cpi,fomc,gdp,jobs -n 5 --max-per-cluster 1 --max-corr 0.4
-  ${p}basket build --tickers slug-a,slug-b,slug-c -n 2 --max-corr 0.5   # explicit candidate pool
-  ${p}basket build --theme "Iran Escalation" -n 3 --max-per-cluster 1 --auto-probs --bankroll 1000
-  ${p}basket backtest --tickers slug-a,slug-b,slug-c --weights 0.4,0.4,0.2 --timeframe 1y
-  ${p}basket size --auto-probs --theme "Iran Escalation" --bankroll 1000 --kelly 0.25
-  ${p}basket validate --theme "Iran Escalation" --bankroll 1000      # sanity-check before placing
-  ${p}basket validate --tickers slug-a,slug-b --bankroll 1000 --max-corr 0.5`,
   };
 }
 
@@ -655,16 +526,20 @@ Tips:
 export function buildHelp(ctx: HelpContext, topic?: string): { text: string } | { error: string } {
   const topics = buildTopics(ctx);
 
+  // Gated commands are answered before the topics map, and return only the
+  // reason they cannot run. Their reference docs were deleted rather than shown
+  // "for when it lands": that syntax belongs to a venue this tool does not
+  // trade, and a Polymarket user should never be handed identifiers that cannot
+  // resolve here. Restore them, rewritten for Polymarket, if the commands return.
+  if (topic && isDeferredCommand(topic) && !octagonSupports(COMMAND_FEATURE[topic]!)) {
+    return { text: octagonUnavailableMessage(COMMAND_FEATURE[topic]!, topic) };
+  }
+  if (topic && isTradingCommand(topic)) {
+    const body = topics[topic];
+    return { text: body ? `${TRADING_UNAVAILABLE_MESSAGE}\n\nReference (for when it lands):\n\n${body}` : TRADING_UNAVAILABLE_MESSAGE };
+  }
+
   if (topic && topics[topic]) {
-    // Deferred commands keep their reference docs, but lead with the reason
-    // they cannot run — otherwise the topic reads as if it works.
-    if (isDeferredCommand(topic) && !octagonSupports(COMMAND_FEATURE[topic]!)) {
-      const notice = octagonUnavailableMessage(COMMAND_FEATURE[topic]!, topic);
-      return { text: `${notice}\n\nReference (for when it lands):\n\n${topics[topic]}` };
-    }
-    if (isTradingCommand(topic)) {
-      return { text: `${TRADING_UNAVAILABLE_MESSAGE}\n\nReference (for when it lands):\n\n${topics[topic]}` };
-    }
     return { text: topics[topic] };
   }
 

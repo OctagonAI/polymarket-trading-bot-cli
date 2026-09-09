@@ -60,10 +60,13 @@ export function octagonUnavailableMessage(feature: OctagonFeature, command: stri
   if (reason === 'unported') {
     return `\`${command}\` is not available for Polymarket yet.`;
   }
+  // Deliberately does not name the venue Octagon *does* serve these for. This is
+  // a Polymarket product; the other venue is not the user's concern, and the
+  // actionable fact is simply that Octagon has no Polymarket route for it.
   return (
     `\`${command}\` is not available for Polymarket.\n\n` +
-    `Octagon exposes clustering, correlation, basket construction and series rollups for ` +
-    `Kalshi only; there is no Polymarket equivalent to call yet.`
+    `Octagon does not expose clustering, correlation, basket construction or series ` +
+    `rollups for Polymarket, so there is no data to build this from.`
   );
 }
 

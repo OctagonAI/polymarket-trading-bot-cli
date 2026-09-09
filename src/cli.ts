@@ -465,7 +465,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     { name: 'themes', description: 'Editorial themes registry: import, report, audit, overlap', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
       const opts = [
         { value: 'list', label: 'list', description: 'List registered themes' },
-        { value: 'import', label: 'import', description: 'Seed from data/themes_seo.json' },
+        { value: 'import', label: 'import', description: 'Load themes from a JSON file' },
         { value: 'report', label: 'report', description: '25-theme dashboard with SEO + liquidity' },
         { value: 'audit', label: 'audit', description: 'Flag STALE/NO_INVENTORY/THIN themes' },
         { value: 'overlap', label: 'overlap', description: 'Cross-theme dedupe' },

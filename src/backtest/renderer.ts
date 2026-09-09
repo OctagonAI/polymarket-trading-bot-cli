@@ -159,7 +159,7 @@ export function formatBacktestHuman(result: BacktestResult, opts?: FormatOpts): 
 
 function formatResolvedTable(signals: ScoredSignal[]): string {
   const lines: string[] = [];
-  lines.push(`RESOLVED (${signals.length} markets — scored against Kalshi settlement)`);
+  lines.push(`RESOLVED (${signals.length} markets — scored against final settlement)`);
   lines.push('─────────────────────────────────────────────────────────');
 
   const header = '  ' + [
@@ -203,7 +203,7 @@ function formatResolvedTable(signals: ScoredSignal[]): string {
 
 function formatUnresolvedTable(signals: ScoredSignal[], minEdgePp: string): string {
   const lines: string[] = [];
-  lines.push(`UNRESOLVED (${signals.length} markets — mark-to-market vs Kalshi trading price)`);
+  lines.push(`UNRESOLVED (${signals.length} markets — mark-to-market vs live trading price)`);
   lines.push('────────────────────────────────────────────────────────────────');
 
   const header = '  ' + [

@@ -2,10 +2,11 @@
 
 A CLI + TUI for AI-assisted prediction market research and trading on **Polymarket**, built with TypeScript on Bun.
 
-> **Port in progress.** This repo began as a clone of `kalshi-trading-bot-cli` and is being ported to Polymarket
-> one phase at a time. Code under `src/tools/kalshi/` and the Octagon Kalshi client still target Kalshi; they are
-> replaced in later phases. Rebrand cosmetic strings freely, but do not rename Kalshi *code identifiers* ahead of
-> the phase that replaces them.
+> **Read-only today.** Order placement is not implemented, and `portfolio` is gated with it because every view it
+> offers needs a wallet that arrives with trading support. Some Octagon features (clustering, correlation, baskets,
+> series rollups) have no Polymarket route and are gated in `src/scan/octagon-capabilities.ts`; the gated set is
+> hidden from help, autocomplete and the intro screen through one shared predicate. Nothing user-facing should
+> reference another venue — that includes help text, tool descriptions and example identifiers.
 
 ## Project Structure
 
@@ -14,14 +15,14 @@ A CLI + TUI for AI-assisted prediction market research and trading on **Polymark
   - TUI: `src/cli.ts` (built on `@mariozechner/pi-tui`, **not** Ink/React), widgets in `src/components/`, controllers in `src/controllers/`
   - Commands: `src/commands/` — one file per subcommand, plus `parse-args.ts`, `help.ts`, `dispatch.ts`, `index.ts` (slash handler), formatters
   - Agent: `src/agent/` (LangChain loop, prompts, tool executor)
-  - Exchange client: `src/tools/kalshi/` — the single HTTP chokepoint (`callKalshiApi`), retry/DLQ, domain types
-  - Octagon research: `src/scan/` (`octagon-kalshi-api.ts`, `octagon-events-api.ts`, `octagon-client.ts`, `invoker.ts`, edge computation, theme resolution)
+  - Exchange client: `src/tools/polymarket/` — the single HTTP chokepoint (`callPolymarketApi`, Gamma/CLOB/Data), retry/DLQ, domain types
+  - Octagon research: `src/scan/` (`octagon-api.ts`, `octagon-events-api.ts`, `octagon-client.ts`, `invoker.ts`, edge computation, theme resolution)
   - Persistence: `src/db/` (`bun:sqlite`, schema + repos), `src/utils/paths.ts` owns all on-disk locations
   - Risk: `src/risk/` (Kelly sizing, correlation, gate, circuit breaker)
   - Backtest: `src/backtest/`; Gateway (WhatsApp/Baileys): `src/gateway/`; Setup wizard: `src/setup/wizard.ts`
   - Also: `src/audit/`, `src/eval/`, `src/model/llm.ts`, `src/providers.ts`, `src/theme.ts`, `src/utils/`
 - On disk (all under `~/.polymarket-bot/`, via `src/utils/paths.ts`): `.env`, `settings.json`, `config.json`, `polymarket-bot.db`, `dlq.jsonl`
-- Seed data: `data/themes_seo.json`. Scripts: `scripts/release.sh`, `scripts/test-commands*.ts`
+- Scripts: `scripts/release.sh`, `scripts/test-commands*.ts`. No seed data ships; `themes import <path>` takes a user-supplied JSON file.
 
 ## Build, Test, and Development Commands
 
@@ -54,7 +55,7 @@ This is the single largest source of drift in the repo — see `CLAUDE.md`.
 ## Tools
 
 Registered in `src/tools/registry.ts`, conditionally by env var:
-`kalshi_search` (market research router), `kalshi_trade` (trade execution router, requires approval —
+`polymarket_search` (market research router), `polymarket_trade` (trade execution router, currently returns an unavailable error —
 see `TOOLS_REQUIRING_APPROVAL` in `src/agent/tool-executor.ts`), `octagon_report`, `portfolio_overview`,
 `portfolio_query`, `portfolio_review`, `edge_query`, `risk_status`, `scan_markets`, `exchange_status`,
 `web_search` (Tavily), `web_fetch`.

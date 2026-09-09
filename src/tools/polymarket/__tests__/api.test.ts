@@ -83,4 +83,75 @@ describe('fetchPositions pagination', () => {
     expect(seen).toHaveLength(1);      // explicit limit means one request, not a walk
     expect(capped).toHaveLength(5);
   });
+
+  test('a wallet past the page cap is truncated, but says so', async () => {
+    // 20 pages x 100 = 2,000. A wallet with 2,001 exceeds the cap: the walk stops
+    // with a full final page, returns 2,000, and must warn rather than let the
+    // caller treat a partial list as complete.
+    const { fetchPositions } = await import('../portfolio.js');
+    const { logger } = await import('../../../utils/logger.js');
+    const wallet = '0x' + '1'.repeat(40);
+
+    const warnings: string[] = [];
+    const realWarn = logger.warn.bind(logger);
+    logger.warn = ((m: string) => { warnings.push(m); }) as typeof logger.warn;
+
+    const TOTAL = 2001;
+    let requests = 0;
+    globalThis.fetch = (async (url: string) => {
+      requests += 1;
+      const q = new URL(url).searchParams;
+      const limit = Number(q.get('limit') ?? 100);
+      const offset = Number(q.get('offset') ?? 0);
+      const n = Math.max(0, Math.min(limit, TOTAL - offset));
+      const body = Array.from({ length: n }, (_, i) => ({ slug: `m${offset + i}`, size: 1 }));
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as unknown as typeof fetch;
+
+    try {
+      const all = await fetchPositions(wallet);
+      expect(requests).toBe(20);       // stopped at the cap, not at a short page
+      expect(all).toHaveLength(2000);  // the 2,001st is not returned
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('truncated');
+      expect(warnings[0]).toContain('understated');
+    } finally {
+      logger.warn = realWarn;
+    }
+  });
+
+  test('a wallet exactly at the page cap also warns — an accepted false positive', async () => {
+    // Exactly 2,000 ends on a full 20th page too, but nothing is missing. This is
+    // the acceptable false positive of the "full final page" heuristic — assert
+    // the current behaviour so a change to it is deliberate.
+    const { fetchPositions } = await import('../portfolio.js');
+    const { logger } = await import('../../../utils/logger.js');
+    const wallet = '0x' + '1'.repeat(40);
+
+    const warnings: string[] = [];
+    const realWarn = logger.warn.bind(logger);
+    logger.warn = ((m: string) => { warnings.push(m); }) as typeof logger.warn;
+
+    const TOTAL = 2000;
+    globalThis.fetch = (async (url: string) => {
+      const q = new URL(url).searchParams;
+      const limit = Number(q.get('limit') ?? 100);
+      const offset = Number(q.get('offset') ?? 0);
+      const n = Math.max(0, Math.min(limit, TOTAL - offset));
+      return new Response(
+        JSON.stringify(Array.from({ length: n }, (_, i) => ({ slug: `m${offset + i}`, size: 1 }))),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as unknown as typeof fetch;
+
+    try {
+      const all = await fetchPositions(wallet);
+      expect(all).toHaveLength(2000);
+      // Warns even though nothing was lost — a false positive we accept, because
+      // the alternative is a 21st request on every maxed-out wallet.
+      expect(warnings).toHaveLength(1);
+    } finally {
+      logger.warn = realWarn;
+    }
+  });
 });

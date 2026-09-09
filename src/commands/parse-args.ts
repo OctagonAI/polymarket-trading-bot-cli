@@ -430,7 +430,7 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
       autoProbs = true;
     } else if (arg === '--market') {
       if (i + 1 >= argv.length) {
-        parseErrors.push('--market requires a value (a Kalshi market ticker)');
+        parseErrors.push('--market requires a value (a Polymarket market slug)');
       } else {
         market = argv[++i].toUpperCase();
       }

@@ -12,14 +12,13 @@
  *   themes add-series <name> KX-A,KX-B
  *   themes remove-series <name> KX-A
  *   themes set-search-volume <name> N
- *   themes import [<path>]               Default: data/themes_seo.json
+ *   themes import <path>                 Load themes from a JSON file
  *   themes export <path>
  *   themes report [--min-volume N] [--min-search N]   25-theme dashboard
  *   themes audit                         Flag dead themes (high SEO / zero vol)
  *   themes overlap                       Cross-theme dedupe report
  */
 import { readFileSync, writeFileSync } from 'fs';
-import { resolve as resolvePath } from 'path';
 import { wrapSuccess, wrapError } from './json.js';
 import type { CLIResponse } from './json.js';
 import type { ParsedArgs } from './parse-args.js';
@@ -118,7 +117,7 @@ function listHandler(db: ReturnType<typeof getDb>, fellThroughBare: boolean): CL
   const themes = listEditorialThemes(db);
   // If user typed bare `themes` and registry is empty, suggest the import command.
   if (fellThroughBare && themes.length === 0) {
-    return wrapError('themes', 'EMPTY_REGISTRY', 'No editorial themes registered. Run `themes import` to seed from data/themes_seo.json, or `themes create <name>` to add one.');
+    return wrapError('themes', 'EMPTY_REGISTRY', 'No editorial themes registered. Run `themes create <name>` to add one, or `themes import <path>` to load a JSON file.');
   }
   return wrapSuccess('themes', { kind: 'list', data: themes });
 }
@@ -210,7 +209,12 @@ interface ThemesImportFile {
 }
 
 function importHandler(db: ReturnType<typeof getDb>, path?: string): CLIResponse<EditorialThemeResult> {
-  const importPath = path ?? resolvePath(import.meta.dir, '..', '..', 'data', 'themes_seo.json');
+  // No seed file ships, so there is no default to fall back to — themes are
+  // whatever the user curates.
+  if (!path) {
+    return wrapError('themes', 'MISSING_PATH', 'Usage: themes import <path>  (expects { "themes": [...] } JSON)');
+  }
+  const importPath = path;
   let raw: string;
   try {
     raw = readFileSync(importPath, 'utf-8');
@@ -225,22 +229,6 @@ function importHandler(db: ReturnType<typeof getDb>, path?: string): CLIResponse
   }
   if (!parsed.themes || !Array.isArray(parsed.themes)) {
     return wrapError('themes', 'BAD_SHAPE', `Expected { "themes": [...] } in ${importPath}`);
-  }
-  // The shipped seed is still the Kalshi-era file: its series entries are Kalshi
-  // series tickers (KX*), which resolve to nothing on Polymarket. Importing it
-  // would quietly fill the registry with dead mappings, so refuse instead.
-  const kalshiSeries = parsed.themes
-    .flatMap((t) => t.series ?? [])
-    .filter((sTicker) => /^KX[A-Z0-9]/.test(sTicker));
-  if (kalshiSeries.length > 0) {
-    return wrapError(
-      'themes',
-      'KALSHI_SEED',
-      `${importPath} maps themes to Kalshi series tickers (e.g. ${kalshiSeries.slice(0, 3).join(', ')}), ` +
-      `which do not exist on Polymarket. A Polymarket seed file has not been built yet — ` +
-      `create themes with \`themes create <name>\` and \`themes add-series <name> <event-slug>\`, ` +
-      `or pass your own file: \`themes import <path>\`.`,
-    );
   }
   let createdOrUpdated = 0;
   let seriesAdded = 0;
@@ -437,7 +425,7 @@ function formatList(themes: EditorialThemeRow[]): string {
   lines.push(`Editorial themes — ${themes.length}`);
   lines.push('');
   if (themes.length === 0) {
-    lines.push('No themes registered. Run `themes import` to seed from data/themes_seo.json.');
+    lines.push('No themes registered. Run `themes create <name>` to add one.');
     return lines.join('\n');
   }
   const rows: string[][] = themes.map((t) => [

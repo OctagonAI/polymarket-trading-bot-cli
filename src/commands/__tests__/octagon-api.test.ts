@@ -43,7 +43,7 @@ function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
 
-describe('Octagon Kalshi commands', () => {
+describe('Octagon API commands', () => {
   let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {

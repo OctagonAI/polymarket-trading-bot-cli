@@ -289,7 +289,7 @@ export const getMarketOrderbook = new DynamicStructuredTool({
 
 export const getMarketPriceHistory = new DynamicStructuredTool({
   name: 'get_market_price_history',
-  description: 'Get historical prices for a Polymarket market (replaces Kalshi candlesticks).',
+  description: 'Get historical prices for a Polymarket market outcome token.',
   schema: z.object({
     ticker: z.string().describe('Market slug, condition id, or URL'),
     interval: z.enum(['1m', '1h', '6h', '1d', '1w', 'max']).optional().describe('Lookback window (default 1d)'),

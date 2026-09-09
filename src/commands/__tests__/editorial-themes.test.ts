@@ -101,6 +101,13 @@ describe('Editorial themes registry', () => {
     expect(overlap.data.data[0]).toEqual({ series_ticker: 'us-recession-2027', themes: ['A', 'B'] });
   });
 
+  test('import requires an explicit path — no seed file ships', async () => {
+    const resp = await handleEditorialThemes(makeArgs({ positionalArgs: ['import'] }));
+    expect(resp.ok).toBe(false);
+    if (resp.ok) return;
+    expect(resp.error?.code).toBe('MISSING_PATH');
+  });
+
   test('import + export round-trips', async () => {
     const tmpFile = join(tmpdir(), `themes-${Date.now()}.json`);
     writeFileSync(tmpFile, JSON.stringify({

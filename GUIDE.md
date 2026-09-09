@@ -86,10 +86,8 @@ Type `/model` to pick your LLM provider and model. Your choice persists across s
 
 Quick commands that bypass the AI agent and call the exchange or Octagon API directly.
 
-⏳ marks a command that is not available yet. It is hidden from `/help` and
-autocomplete, and running it explains why. Two reasons appear below: commands
-needing trading support, and commands Octagon serves for Kalshi only — the
-latter keep their Kalshi ticker examples, since that is what those routes take.
+⏳ marks a command that is not available yet: it is hidden from `/help` and
+autocomplete, and running it explains why.
 
 | Command | Description | Example |
 |---|---|---|
@@ -103,25 +101,7 @@ latter keep their Kalshi ticker examples, since that is what those routes take.
 | `/search <query>` | Full-text market search (Octagon when key set) | `/search "bitcoin price" --min-volume 10000` |
 | `/search edge` | Edge ranking from Octagon's latest run | `/search edge --min-edge 5 --sort-by total_volume` |
 | `/similar <slug\|"text">` | Related markets (event → series → category) | `/similar will-bitcoin-reach-110000-by-december-31-2026 --top-k 20` |
-| `/clusters [--label X]` ⏳ | Browse thematic clusters — **Kalshi-only on Octagon** | `/clusters --label fed` |
-| `/clusters <id>` ⏳ | List markets inside a cluster — **Kalshi-only on Octagon** | `/clusters 42` |
-| `/clusters --behavioral` ⏳ | Behavioral clusters by 30-day return vectors — **Kalshi-only on Octagon** | `/clusters --behavioral` |
-| `/clusters --ranked` ⏳ | Rank clusters by historical basket return — **Kalshi-only on Octagon** | `/clusters --ranked --timeframe 1y --min-return 0.2` |
-| `/peers <ticker>` ⏳ | Markets in the same cluster — **Kalshi-only on Octagon** | `/peers KXBTCD-... --limit 50` |
-| `/correlate <t1> <t2> [...]` ⏳ | Pairwise correlation matrix — **Kalshi-only on Octagon** | `/correlate KX-A KX-B KX-C --window-days 90` |
-| `/basket build` ⏳ | Diversified basket (cluster + correlation caps) — **Kalshi-only on Octagon** | `/basket build --category crypto -n 8 --max-corr 0.6` |
-| `/basket backtest` ⏳ | Total return / Sharpe / max DD on a basket — **Kalshi-only on Octagon** | `/basket backtest --tickers KX-A,KX-B --timeframe 1y` |
-| `/basket backtest --theme <name>` ⏳ | Backtest an editorial theme NAV — **Kalshi-only on Octagon** | `/basket backtest --theme "Iran Escalation"` |
-| `/basket size` ⏳ | Fractional Kelly sizing for picked legs — **Kalshi-only on Octagon** | `/basket size --bankroll 1000 --kelly 0.25 --probs KX-A:0.62` |
-| `/basket size --auto-probs` ⏳ | Auto-fetch probabilities via `markets/edge` — **Kalshi-only on Octagon** | `/basket size --auto-probs --theme "AI Race Milestones" --bankroll 1000` |
-| `/basket validate` ⏳ | Portfolio diagnostics (clusters, corr, clashes, warnings) — **Kalshi-only on Octagon** | `/basket validate --theme "Iran Escalation" --bankroll 1000` |
-| `/basket candles` ⏳ | OHLC bars for a weighted basket NAV — **Kalshi-only on Octagon** | `/basket candles --tickers KX-A,KX-B --timeframe 6m` |
-| `/series events <ticker>` ⏳ | Events inside a series — **Kalshi-only on Octagon** | `/series events KXIPO` |
-| `/correlate --sides yes,no` ⏳ | Side-aware correlation (sign-flipped) — **Kalshi-only on Octagon** | `/correlate KX-A KX-B --sides yes,no` |
-| `/correlate --cells` ⏳ | Cell detail (overlap_count, reason) — **Kalshi-only on Octagon** | `/correlate KX-A KX-B --cells` |
 | `/events` / `/events <event-slug>` | Octagon events + outcome ladder | `/events fed-decision-in-september-762` |
-| `/series` / `/series <ticker>` ⏳ | Series rollup — **Kalshi-only on Octagon** | `/series KXBTCD` |
-| `/series candles <ticker>` ⏳ | Series-level NAV — **Kalshi-only on Octagon** | `/series candles KXBTCD --timeframe 3m` |
 | `/catalysts upcoming` | Markets closing soon, grouped by week | `/catalysts upcoming --days 14` |
 | `/themes` (registry) | Editorial narrative buckets | `/themes show "Iran Escalation"` |
 | `/themes report` | 25-theme dashboard with SEO + liquidity | `/themes report` |
@@ -179,88 +159,22 @@ The `distance` field in `--json` output is `row_number() / 1000`. It restates ro
 order and nothing else: it is not a similarity metric and is not comparable
 across responses, so a cutoff like `distance < 0.2` just means "the first 199 rows".
 
-### `/clusters`
-
-```bash
-polymarket clusters                              # thematic clusters, with sample titles
-polymarket clusters --label fed                  # find Fed-decision clusters
-polymarket clusters 42                           # markets in cluster 42 (by distance)
-polymarket clusters --behavioral                 # behavioral clusters (mean return + volatility)
-polymarket clusters --ranked --timeframe 1y --min-return 0.20 --top-k 5
-```
-
-### `/peers`
-
-One-call "show me others in the same theme" — replaces the two-step `/clusters` lookup → `/clusters <id>` dance.
-
-```bash
-polymarket peers KXBTCD-26DEC31-T100000 --limit 50      # thematic peers (default)
-polymarket peers KXBTCD-26DEC31-T100000 --behavioral    # behavioral peers
-polymarket peers KXBTCD-26DEC31-T100000 --show-cluster  # only print cluster membership
-```
-
-### `/correlate`
-
-```bash
-polymarket correlate KXBTCD-... KXETHU-... KXSOL-... --window-days 90
-```
-
-Returns the NxN matrix plus a `ranked_pairs` array sorted ascending — most-uncorrelated pairs first.
-
-### `/basket build`
-
-Pulls a candidate universe, computes correlations, greedily selects legs respecting both `--max-per-cluster` and `--max-corr`, then sizes them. Pass `--bankroll` + `--kelly` + `--probs` for Kelly sizing, omit for equal-weight.
-
-```bash
-# 8-leg crypto basket, Kelly-sized
-polymarket basket build --category crypto --min-volume 10000 \
-  -n 8 --max-per-cluster 2 --max-corr 0.6 \
-  --bankroll 1000 --kelly 0.25 \
-  --probs KXBTCD-...:0.62,KXETHU-...:0.58
-
-# 5 uncorrelated bets on macro themes
-polymarket basket build --label fed,cpi,fomc,gdp,jobs \
-  -n 5 --max-per-cluster 1 --max-corr 0.4
-```
-
-### `/basket backtest` / `/basket candles`
-
-```bash
-polymarket basket backtest --tickers KX-A,KX-B,KX-C --weights 0.4,0.4,0.2 --timeframe 1y
-polymarket basket candles  --tickers KX-A,KX-B --timeframe 6m --json
-```
-
-Read `summary.total_return`, `summary.sharpe`, `summary.max_drawdown` directly. Annualization uses calendar seconds (prediction markets trade 24/7), not 252 trading days.
-
-### `/basket size`
-
-Kelly-size legs you've already picked. Probabilities are 0–1 fractions.
-
-```bash
-polymarket basket size --bankroll 1000 --kelly 0.25 \
-  --probs KX-A:0.62,KX-B:0.55 --side yes
-```
-
-The server looks up live `yes_bid`/`no_bid` for each leg to compute edge and Kelly fraction. Legs with no edge (`prob < price`) get `kelly_fraction = 0`.
-
 ### Editorial Themes — narrative registry
 
-Editorial themes are user-curated narrative buckets (e.g. "AI Race Milestones", "Iran Escalation") that map to lists of series. Distinct from Octagon's ML clusters — these are *narratives* you define. The bot ships with a 25-theme seed dataset at `data/themes_seo.json` derived from monthly search-demand research.
+Editorial themes are user-curated narrative buckets (e.g. "AI Race Milestones", "Iran Escalation") that map to lists of event slugs. These are *narratives* you define.
+
+No seed file ships yet, so the registry starts empty — build it up with `themes create` and `themes add-series`, or import your own JSON.
 
 ```bash
-# Seed the registry from the included starter file (25 themes, ~170 series)
-polymarket themes import
 polymarket themes list
+polymarket themes import ~/my-themes.json
 
 # Drill into one
 polymarket themes show "Iran Escalation"
 #  Description    Hormuz traffic, US-Iran nuclear deal, oil & gas price ladders
 #  Search volume  1.1M/month
-#  Series         12 mapped
-#  KXAAAGASD, KXAAAGASM, KXAAAGASMAX, KXBRENTW, KXHORMUZNORM, KXUSAIRANAGREEMENT, ...
-
-# THE dashboard view — 25-theme grid with SEO + liquidity
-polymarket themes report
+#  Series         3 mapped
+#  strait-of-hormuz-traffic-returns-to-normal-by-december-31, us-iran-nuclear-agreement, ...
 
 # Identify dead themes (high SEO but no inventory)
 polymarket themes audit
@@ -272,15 +186,15 @@ polymarket themes audit
 
 # Cross-theme dedupe — same series in two themes
 polymarket themes overlap
-#   KXUSAIRANAGREEMENT  Iran Escalation · Nuclear Renaissance
-#   KXMORTGAGERATE      Fed Cuts Aggressively · Housing / Mortgage Crisis
+#   us-iran-nuclear-agreement    Iran Escalation · Nuclear Renaissance
+#   fed-decision-in-september    Fed Cuts Aggressively · Housing / Mortgage Crisis
 ```
 
 #### Build your own themes
 
 ```bash
-polymarket themes create "My Macro Hedge" --label "Recession + inflation tail" --tickers KXRECSSNBER,KXCPIYOY
-polymarket themes add-series "My Macro Hedge" KXFEDDECISION,KXU3,KXMORTGAGERATE
+polymarket themes create "My Macro Hedge" --label "Recession + inflation tail" --tickers us-recession-2027,cpi-above-3-in-2027
+polymarket themes add-series "My Macro Hedge" fed-decision-in-september,unemployment-above-5-in-2027
 polymarket themes set-search-volume "My Macro Hedge" 50000
 polymarket themes export ~/my-themes.json    # version-control or share
 polymarket themes import ~/my-themes.json    # restore on another machine
@@ -297,25 +211,13 @@ polymarket basket backtest --theme "Iran Escalation" --timeframe 3m
 polymarket basket candles --theme "Fed Cuts Aggressively" --timeframe 1y --json
 ```
 
-### Series rollups
-
-`series` aggregates Octagon's market-level data to the series level — the canonical grouping above individual markets.
-
-```bash
-polymarket series                              # all liquid series, sorted by 24h vol
-polymarket series list --min-volume 10000      # liquidity filter
-polymarket series KXBTCD                       # sub-markets in one series
-polymarket series search bitcoin               # keyword → rollup
-polymarket series candles KXBTCD --timeframe 3m   # series NAV = basket of top sub-markets
-```
-
 ### Events — outcome ladders
 
 `events` exposes Octagon's event-level rollups, where each event is a multi-market question (e.g. "Who will Trump nominate as Fed Chair?") with per-outcome model probabilities.
 
 ```bash
 polymarket events --category Politics --limit 10
-polymarket events KXFEDCHAIRNOM-29     # outcome ladder with per-contract edge
+polymarket events fed-decision-in-september-762   # outcome ladder with per-contract edge
 ```
 
 ### Catalyst calendar
@@ -343,8 +245,8 @@ This is the primary way to use the bot. The AI agent has access to all the tools
 - "Find markets related to AI regulation"
 
 **Price and data:**
-- "What's the current price of KXBTC-26MAR-B80000?"
-- "Show me the orderbook for KXBTC-26MAR-B80000"
+- "What's the current price of bitcoin-above-95k-by-april-30?"
+- "Show me the orderbook for bitcoin-above-95k-by-april-30"
 - "Give me a price history chart for this market over the last week"
 
 **Portfolio:**
@@ -354,10 +256,10 @@ This is the primary way to use the bot. The AI agent has access to all the tools
 - "Do I have any resting orders?"
 
 **Trading (requires confirmation):**
-- "Buy 10 YES contracts of KXBTC-26MAR-B80000 at 55 cents"
-- "Sell my position in KXBTC-26MAR-B80000"
+- "Buy 10 YES shares of bitcoin-above-95k-by-april-30 at $0.55"
+- "Sell my position in bitcoin-above-95k-by-april-30"
 - "Cancel all my resting orders"
-- "Place a limit order: 5 YES on KXPRES-28-DJT at 30 cents"
+- "Place a limit order: 5 YES on presidential-election-winner-2028 at $0.30"
 
 **Web research:**
 - "What's the latest news about the 2028 presidential race?"
@@ -477,7 +379,7 @@ Polymarket identifies things by **slug**, not by a ticker code. There are four l
 | Outcome token | `71321045679252212594626385532706912750332728571942532289631379312455583992563` | The YES or NO side of a market, as a uint256 decimal string |
 
 A market also has a `conditionId` (`0x…`), which commands accept anywhere a market slug is accepted.
-The outcome token id replaces Kalshi's yes/no side flag — never parse it as a JavaScript number.
+An outcome token id is what identifies a side of a market — never parse it as a JavaScript number, it exceeds Number.MAX_SAFE_INTEGER.
 
 **Price interpretation:** prices are **decimal USDC in [0, 1]**. A price of `0.56` means $0.56 per
 share, which implies a **56% probability** of that outcome. YES + NO prices sum to approximately

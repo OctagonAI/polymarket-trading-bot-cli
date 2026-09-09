@@ -170,7 +170,7 @@ export function formatPortfolioHuman(data: PortfolioData): string {
     lines.push(`    Available:       $${(data.accountSummary.available / 100).toFixed(2)}`);
     lines.push(`    Positions:       ${data.accountSummary.positionsCount}`);
   } else {
-    lines.push('    (unavailable — Kalshi API returned an error)');
+    lines.push('    (unavailable — the Polymarket API returned an error)');
   }
   lines.push('');
 

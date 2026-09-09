@@ -21,7 +21,7 @@ describe('octagon capabilities', () => {
     // venue-generic routes, so a false here means Octagon serves Kalshi only.
     for (const cmd of DEFERRED_COMMANDS) {
       expect(octagonSupports(COMMAND_FEATURE[cmd]!)).toBe(false);
-      expect(octagonUnavailableMessage(COMMAND_FEATURE[cmd]!, cmd)).toContain('Kalshi only');
+      expect(octagonUnavailableMessage(COMMAND_FEATURE[cmd]!, cmd)).toContain('not available for Polymarket');
     }
   });
 
@@ -79,10 +79,30 @@ describe('help reflects the gate', () => {
     }
   });
 
-  test('a gated topic leads with why it cannot run', () => {
+  test('a gated topic returns only why it cannot run', () => {
     const r = buildHelp('cli', 'clusters');
     expect('text' in r).toBe(true);
-    if ('text' in r) expect(r.text.startsWith('`clusters` is not available')).toBe(true);
+    if ('text' in r) {
+      expect(r.text.startsWith('`clusters` is not available')).toBe(true);
+      // No reference block: its syntax belongs to a venue this tool does not trade.
+      expect(r.text).not.toContain('Reference');
+    }
+  });
+
+  test('no user-facing help text names another venue or its tickers', () => {
+    const surfaces = ['cli', 'slash'] as const;
+    for (const ctx of surfaces) {
+      const overview = buildHelp(ctx);
+      const text = 'text' in overview ? overview.text : '';
+      expect(text).not.toMatch(/kalshi/i);
+      expect(text).not.toMatch(/\bKX[A-Z0-9-]{2,}/);
+    }
+    for (const cmd of [...DEFERRED_COMMANDS, ...TRADING_COMMANDS]) {
+      const r = buildHelp('cli', cmd);
+      const text = 'text' in r ? r.text : r.error;
+      expect(text).not.toMatch(/kalshi/i);
+      expect(text).not.toMatch(/\bKX[A-Z0-9-]{2,}/);
+    }
   });
 
   test('help carries no Kalshi ticker examples', () => {
