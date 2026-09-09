@@ -140,9 +140,15 @@ export class ThemeResolver {
     // await it so we don't query an unpopulated event_index table
     const pending = getRefreshPromise();
     if (pending) await pending;
+    // `category` holds tags[0], which is often a narrow label ("Bitcoin",
+    // "Price Milestone") rather than the broad one, so matching it alone drops
+    // most of a category. Also match the label as a whole tag: wrapping both
+    // sides in commas makes this exact-token, so "Crypto" does not match on
+    // "Crypto Prices" by accident (SQLite LIKE is ASCII case-insensitive).
     const rows = this.db.query(
-      `SELECT event_ticker FROM event_index WHERE category = ?`,
-    ).all(categoryLabel) as { event_ticker: string }[];
+      `SELECT event_ticker FROM event_index
+        WHERE category = ?1 OR ',' || COALESCE(tags, '') || ',' LIKE ?2`,
+    ).all(categoryLabel, `%,${categoryLabel},%`) as { event_ticker: string }[];
     return rows.map((r) => r.event_ticker);
   }
 
@@ -159,8 +165,11 @@ export class ThemeResolver {
     // Tags are stored comma-joined on the index row; match either the raw label
     // or its kebab-cased form so "pop-culture" and "Pop Culture" both resolve.
     const rows = this.db
-      .query(`SELECT event_ticker, tags FROM event_index WHERE category = ?`)
-      .all(categoryLabel) as Array<{ event_ticker: string; tags: string | null }>;
+      .query(
+        `SELECT event_ticker, tags FROM event_index
+          WHERE category = ?1 OR ',' || COALESCE(tags, '') || ',' LIKE ?2`,
+      )
+      .all(categoryLabel, `%,${categoryLabel},%`) as Array<{ event_ticker: string; tags: string | null }>;
 
     const seen = new Set<string>();
     const eventTickers: string[] = [];

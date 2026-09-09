@@ -183,6 +183,32 @@ describe('ThemeResolver', () => {
     globalThis.fetch = originalFetch;
   });
 
+  test('resolves a category from any tag position, not just tags[0]', async () => {
+    // normalizeGammaEvent stores tags[0] in `category`, and Gamma frequently puts
+    // a narrow label there ("Bitcoin", "Price Milestone") with the broad one
+    // further along. Matching `category` alone dropped most of a category.
+    const now = Math.floor(Date.now() / 1000);
+    const insert = db.prepare(
+      `INSERT INTO event_index (event_ticker, series_ticker, title, category, strike_date, sub_title, tags, markets_json, indexed_at)
+       VALUES (?, '', ?, ?, '', '', ?, '[]', ?)`,
+    );
+    insert.run('broad', 'Broad', 'Crypto', 'Crypto,Bitcoin', now);
+    insert.run('narrow', 'Narrow', 'Bitcoin', 'Bitcoin,Weekly,Crypto,Crypto Prices', now);
+    insert.run('unrelated', 'Unrelated', 'Sports', 'Sports,NFL', now);
+    // Must NOT match: "Crypto Prices" is a different tag, not the label.
+    insert.run('adjacent', 'Adjacent', 'Price Milestone', 'Price Milestone,Crypto Prices', now);
+
+    globalThis.fetch = mock(async () => new Response('[]')) as unknown as typeof fetch;
+
+    const resolver = new ThemeResolver(db, audit);
+    const tickers = await resolver.resolve('crypto');
+
+    expect(tickers).toContain('broad');
+    expect(tickers).toContain('narrow');
+    expect(tickers).not.toContain('unrelated');
+    expect(tickers).not.toContain('adjacent');
+  });
+
   test('deactivates expired events after resolve', async () => {
     const now = Math.floor(Date.now() / 1000);
 
