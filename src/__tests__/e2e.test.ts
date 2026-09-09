@@ -474,7 +474,11 @@ describe('E2E Integration Tests', () => {
 
     expect(names).toContain('polymarket_search');
     expect(names).toContain('polymarket_trade');
-    expect(names).toContain('portfolio_overview');
+    // portfolio_overview and portfolio_review are deliberately unregistered:
+    // both read positions through requireWalletAddress, which throws until the
+    // wallet phase, so the agent would get a raw exception rather than a tool.
+    expect(names).not.toContain('portfolio_overview');
+    expect(names).not.toContain('portfolio_review');
     expect(names).toContain('exchange_status');
     expect(names).toContain('web_fetch');
   });

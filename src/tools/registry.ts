@@ -1,19 +1,14 @@
 import { StructuredToolInterface } from '@langchain/core/tools';
-import { DynamicStructuredTool } from '@langchain/core/tools';
-import { z } from 'zod';
 import { createPolymarketSearch, POLYMARKET_SEARCH_DESCRIPTION } from './polymarket/polymarket-search.js';
 import { createPolymarketTrade, POLYMARKET_TRADE_DESCRIPTION } from './polymarket/polymarket-trade.js';
 import { getExchangeStatus } from './polymarket/exchange.js';
-import { fetchPortfolioValue, fetchPositions } from './polymarket/portfolio.js';
 import { tavilySearch, WEB_SEARCH_DESCRIPTION } from './search/index.js';
 import { webFetchTool, WEB_FETCH_DESCRIPTION } from './fetch/web-fetch.js';
-import { formatToolResult } from './types.js';
 import { edgeQueryTool, EDGE_QUERY_DESCRIPTION } from './v2/edge-query.js';
 import { portfolioQueryTool, PORTFOLIO_QUERY_DESCRIPTION } from './v2/portfolio-query.js';
 import { riskStatusTool, RISK_STATUS_DESCRIPTION } from './v2/risk-status.js';
 import { octagonReportTool, OCTAGON_REPORT_DESCRIPTION } from './v2/octagon-report.js';
 import { scanTool, SCAN_DESCRIPTION } from './v2/scan.js';
-import { portfolioReviewTool, PORTFOLIO_REVIEW_DESCRIPTION } from './v2/portfolio-review.js';
 
 /**
  * A registered tool with its rich description for system prompt injection.
@@ -27,19 +22,23 @@ export interface RegisteredTool {
   description: string;
 }
 
-// Direct portfolio overview tool (balance + positions in one call)
-const portfolioOverviewTool = new DynamicStructuredTool({
-  name: 'portfolio_overview',
-  description: 'Get a quick overview of the Polymarket portfolio: total value and open positions.',
-  schema: z.object({}),
-  func: async () => {
-    const [balanceData, positionsData] = await Promise.all([
-      fetchPortfolioValue(),
-      fetchPositions(),
-    ]);
-    return formatToolResult({ balance: balanceData, positions: positionsData });
-  },
-});
+/*
+ * portfolio_overview is NOT registered while the wallet path is disabled.
+ *
+ * fetchPortfolioValue and fetchPositions both default their wallet argument to
+ * requireWalletAddress(), which throws unconditionally until the wallet phase.
+ * Registering the tool would hand the agent a capability that can only raise,
+ * and an unset wallet is the normal state — so the agent would surface a raw
+ * exception rather than an explanation. Unlike polymarket_trade, which is kept
+ * registered so trade intent gets a clear refusal, there is no research value in
+ * the agent attempting a portfolio read it cannot perform: `portfolio` is hidden
+ * from users too, so the agent should not believe the capability exists.
+ *
+ * portfolio_review is unregistered for the same reason: reviewPortfolio calls
+ * fetchPositions, so it throws on the same missing wallet.
+ *
+ * Re-register both alongside the wallet work; their descriptions are unchanged.
+ */
 
 const PORTFOLIO_OVERVIEW_DESCRIPTION = `
 Quick portfolio overview tool. Returns total portfolio value and all open positions in a single call.
@@ -78,11 +77,6 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       description: POLYMARKET_TRADE_DESCRIPTION,
     },
     {
-      name: 'portfolio_overview',
-      tool: portfolioOverviewTool,
-      description: PORTFOLIO_OVERVIEW_DESCRIPTION,
-    },
-    {
       name: 'exchange_status',
       tool: getExchangeStatus,
       description: EXCHANGE_STATUS_DESCRIPTION,
@@ -116,11 +110,6 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       name: 'scan_markets',
       tool: scanTool,
       description: SCAN_DESCRIPTION,
-    },
-    {
-      name: 'portfolio_review',
-      tool: portfolioReviewTool,
-      description: PORTFOLIO_REVIEW_DESCRIPTION,
     },
   ];
 

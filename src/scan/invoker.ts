@@ -44,14 +44,20 @@ function requireApiKey(): string {
  * are keyed by.
  */
 async function resolveEventSlug(input: string): Promise<string> {
-  const url = input.match(/^https?:\/\/(?:www\.)?polymarket\.com\/(?:event|market)\/([^/?#]+)/i);
-  const candidate = (url ? url[1] : input).toLowerCase();
-  if (url) return candidate;
+  // Only an /event/ URL yields an event slug directly. A /market/ URL yields a
+  // MARKET slug, which reports are not keyed by — short-circuiting on it would
+  // request /reports/polymarket/<market-slug>, 404, and read as a cache miss.
+  // Market slugs fall through to the lookups below, which resolve the parent.
+  const eventUrl = input.match(/^https?:\/\/(?:www\.)?polymarket\.com\/event\/([^/?#]+)/i);
+  if (eventUrl) return eventUrl[1].toLowerCase();
+
+  const marketUrl = input.match(/^https?:\/\/(?:www\.)?polymarket\.com\/market\/([^/?#]+)/i);
+  const candidate = (marketUrl ? marketUrl[1] : input).toLowerCase();
 
   const event = await fetchEventBySlug(candidate).catch(() => undefined);
   if (event) return (event.event_ticker || candidate).toLowerCase();
 
-  const market = await lookupMarket(input);
+  const market = await lookupMarket(candidate);
   if (!market) {
     throw new Error(`'${input}' not found on Polymarket. Use polymarket_search to find valid slugs.`);
   }

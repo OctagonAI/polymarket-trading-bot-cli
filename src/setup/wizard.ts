@@ -408,10 +408,15 @@ export class SetupWizardController {
     // Reload env from .env (non-overwriting so staged process.env values are preserved)
     config({ path: ENV_PATH, quiet: true });
 
-    // Test Polymarket — public endpoint, no credentials involved
+    // Test Polymarket — public endpoint, no credentials involved.
+    // fetchExchangeStatus swallows its own errors and reports the outcome in
+    // `exchange_active`, so the flag must be read; a try/catch here would never
+    // fire and the wizard would claim "Connected" with the CLOB down.
     try {
-      await fetchExchangeStatus();
-      this.testResults[0] = { name: 'Polymarket CLOB', status: 'ok', message: 'Connected' };
+      const status = await fetchExchangeStatus();
+      this.testResults[0] = status.exchange_active
+        ? { name: 'Polymarket CLOB', status: 'ok', message: 'Connected' }
+        : { name: 'Polymarket CLOB', status: 'fail', message: 'Unreachable' };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.testResults[0] = { name: 'Polymarket CLOB', status: 'fail', message: msg.slice(0, 60) };

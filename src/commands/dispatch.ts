@@ -4,20 +4,13 @@ import type { CLIResponse } from './json.js';
 import { handleEdge, formatEdgeHuman } from './edge.js';
 import { handleAnalyze, formatAnalyzeHuman, promptAnalyzeActions } from './analyze.js';
 import { formatRawReport } from '../controllers/browse.js';
-import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
 import { handleConfig, formatConfigHuman } from './config.js';
 import { handleAlerts, formatAlertsHuman } from './alerts.js';
 import { handleStatus } from './status.js';
 import { handleThemes, formatThemesHuman } from './themes.js';
 import { handleWatch } from './watch.js';
 import { handleBacktest, formatBacktestHuman } from './backtest.js';
-import { fetchPositions, fetchPortfolioValue } from '../tools/polymarket/portfolio.js';
 import { TRADING_UNAVAILABLE_MESSAGE, isTradingCommand } from '../tools/polymarket/polymarket-trade.js';
-import {
-  formatBalance,
-  formatPositions,
-} from './formatters.js';
-import type { PolymarketPosition } from '../tools/polymarket/types.js';
 import { buildHelp } from './help.js';
 import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 import { ensureIndex, forceRefreshIndex } from '../tools/polymarket/search-index.js';
@@ -322,64 +315,18 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       return;
     }
 
-    // ─── portfolio (with subviews) ─────────────────────────────────────
-    if (resolved.canonical === 'portfolio') {
-      const subview = resolved.subview ?? args.positionalArgs[0] ?? 'overview';
-
-      if (subview === 'positions') {
-        const allPositions = await fetchPositions();
-        const positions = allPositions.filter((p) => p.size !== 0);
-        if (json) {
-          console.log(JSON.stringify(wrapSuccess('portfolio:positions', { positions })));
-        } else {
-          console.log(formatPositions(positions));
-        }
-        return;
-      }
-
-      // Resting orders require the trading integration, which is not built yet.
-      if (subview === 'orders') {
-        if (json) {
-          console.log(JSON.stringify(wrapError('portfolio:orders', 'NOT_AVAILABLE', TRADING_UNAVAILABLE_MESSAGE)));
-        } else {
-          console.error(TRADING_UNAVAILABLE_MESSAGE);
-        }
-        process.exit(ExitCode.USER_ERROR);
-        return;
-      }
-
-      if (subview === 'balance') {
-        const data = await fetchPortfolioValue();
-        if (json) {
-          console.log(JSON.stringify(wrapSuccess('portfolio:balance', data)));
-        } else {
-          console.log(formatBalance(data));
-        }
-        return;
-      }
-
-      if (subview === 'status') {
-        const output = await handleStatus();
-        if (json) {
-          console.log(JSON.stringify({ ok: true, output }));
-        } else {
-          console.log(output);
-        }
-        return;
-      }
-
-      // Default: full portfolio overview
-      const resp = await handlePortfolio(args);
+    // ─── status ────────────────────────────────────────────────────────
+    // `status` resolves to a portfolio subview for historical reasons. It is the
+    // only one still reachable: the trading gate above returns for every other
+    // portfolio view, so their handlers were dead code and have been removed.
+    // They come back with the wallet phase.
+    if (resolved.canonical === 'portfolio' && resolved.subview === 'status') {
+      const output = await handleStatus();
       if (json) {
-        console.log(JSON.stringify(resp));
+        console.log(JSON.stringify({ ok: true, output }));
       } else {
-        console.log(formatPortfolioHuman(resp.data));
-        const warnings = (resp.meta as Record<string, unknown>)?.warnings;
-        if (Array.isArray(warnings) && warnings.length > 0) {
-          for (const w of warnings) console.error(`  ⚠ ${String(w)}`);
-        }
+        console.log(output);
       }
-      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
       return;
     }
 
