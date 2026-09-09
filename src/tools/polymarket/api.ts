@@ -100,12 +100,15 @@ interface RetryContext {
 }
 
 const MAX_RETRIES = 5;
+/** Per-request deadline. Matches the 60s the Octagon client uses. */
+const REQUEST_TIMEOUT_MS = 60_000;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 120_000;
 const JITTER_FACTOR = 0.2;
 
 function isRetryable(error: unknown): boolean {
   if (!(error instanceof PolymarketApiError)) return false;
+  if (error.statusCode === 408) return true; // our own request deadline — transient
   if (error.statusCode === 429) return true;
   if (error.statusCode >= 500) return true;
   return false;
@@ -208,7 +211,29 @@ export async function callPolymarketApi<T = unknown>(
         fetchOptions.body = JSON.stringify(options.body);
       }
 
-      const response = await fetch(url.toString(), fetchOptions);
+      // Without a deadline a half-open connection never settles: the promise
+      // hangs, withRetry never sees an error, and every command that reads
+      // market data stalls indefinitely.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      let response: Response;
+      try {
+        response = await fetch(url.toString(), { ...fetchOptions, signal: controller.signal });
+      } catch (err) {
+        // Surface a timeout as a retryable-looking error rather than a bare
+        // AbortError, so the retry wrapper and exit codes read correctly.
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          throw new PolymarketApiError(
+            408,
+            'Request Timeout',
+            `No response from ${service} within ${REQUEST_TIMEOUT_MS / 1000}s (${method} ${path})`,
+            service,
+          );
+        }
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
