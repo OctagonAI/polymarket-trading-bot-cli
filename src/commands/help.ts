@@ -37,7 +37,7 @@ Examples:
   ${p}search "bitcoin price" --min-volume 10000
   ${p}search edge --min-edge 30 --category crypto
 
-Tip: ${p}similar gives semantic match (catches "Bitcoin pierce six figures" ↔ "BTC > $100k").`,
+Tip: ${p}similar <market-slug> walks the event → series → category tree to find related markets.`,
 
     portfolio: `**${p}portfolio** — Account state
 
@@ -53,8 +53,8 @@ Flags:
 
     analyze: `**${p}analyze** — Deep market analysis
 
-${p}analyze <ticker>                       Full analysis: edge, drivers, catalysts, Kelly sizing
-${p}analyze <ticker> ${ctx === 'cli' ? '--' : ''}refresh             Force fresh Octagon report
+${p}analyze <market-slug>                  Full analysis: edge, drivers, catalysts, Kelly sizing
+${p}analyze <market-slug> ${ctx === 'cli' ? '--' : ''}refresh        Force fresh Octagon report
 
 Batch mode (one Octagon round-trip instead of N):
 ${p}analyze slug-a slug-b slug-c                 Edge readout across 2-100 tickers
@@ -73,7 +73,7 @@ Legacy aliases (still work):
     watch: `**${p}watch** — Live monitoring
 
 Modes:
-  ${p}watch <ticker>               Per-ticker price/orderbook feed (5s default)
+  ${p}watch <market-slug>          Per-market price/orderbook feed (5s default)
   ${p}watch --theme <theme>        Continuous theme scan${ctx === 'cli' ? ' (default: every 60m)' : ' (press Esc to stop)'}
 ${ctx === 'cli' ? `
 Flags:
@@ -86,22 +86,22 @@ Press Ctrl+C to stop.` : `
 Per-ticker mode shows live price, bid/ask, spread, volume, and top-5 orderbook.
 Theme mode runs recurring Octagon scans and displays an edge table.`}`,
 
-    buy: `**${p}buy** — Buy contracts
+    buy: `**${p}buy** — Buy shares
 
-${p}buy <ticker> <count> [price${ctx === 'cli' ? '_in_cents' : ''}] [yes|no]${ctx === 'slash' ? '   Buy contracts (price 0-1)' : ''}
+${p}buy <market-slug> <shares> [price] [yes|no]${ctx === 'slash' ? '   Buy shares (price 0-1)' : ''}
 
 Example${ctx === 'cli' ? 's' : ''}:
-  ${p}buy bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '          Buy at best ask (10 YES shares)' : '56'}
+  ${p}buy bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '          Buy at best ask (10 YES shares)' : '0.56'}
   ${p}buy bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '0.56      Limit order at $0.56/share' : '0.56 no  Buy NO shares'}
 ${ctx === 'cli' ? `  ${p}buy bitcoin-above-100k-2026 10 0.56 no  Limit order for NO shares at $0.56` : ''}
 Side defaults to YES if omitted.`,
 
-    sell: `**${p}sell** — Sell contracts
+    sell: `**${p}sell** — Sell shares
 
-${p}sell <ticker> <count> [price${ctx === 'cli' ? '_in_cents' : ''}] [yes|no]${ctx === 'slash' ? '  Sell contracts (price 0-1)' : ''}
+${p}sell <market-slug> <shares> [price] [yes|no]${ctx === 'slash' ? '  Sell shares (price 0-1)' : ''}
 
 Example${ctx === 'cli' ? 's' : ''}:
-  ${p}sell bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '         Sell at best ask (10 YES shares)' : '72'}
+  ${p}sell bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '         Sell at best ask (10 YES shares)' : '0.72'}
   ${p}sell bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '0.72      Limit order at $0.72/share' : '0.72 no  Sell NO shares'}
 ${ctx === 'cli' ? `  ${p}sell bitcoin-above-100k-2026 10 0.72 no  Limit order for NO shares at $0.72` : ''}
 Side defaults to YES if omitted.`,
@@ -183,21 +183,31 @@ For parallel bunx, pre-warm the cache serially before fanning out:
 
 See README → Scripting & Parallel Use for the full picture.`,
 
-    similar: `**${p}similar** — Semantic market search (Octagon-powered)
+    similar: `**${p}similar** — Related markets (Octagon-powered)
 
-${p}similar <market-slug>             Markets near this one by embedding distance
-${p}similar -q "free-text query"      Markets matching free-text intent (server-side embed)
-${p}similar <market-slug> --top-k 25  Return top-25 nearest neighbors
+${p}similar <market-slug>             Markets related to this one
+${p}similar -q "free-text query"      Markets matching a keyword query
+${p}similar <market-slug> --top-k 25  Return the top 25
 ${p}similar -q "..." --category crypto --min-volume 10000 --close-before 2026-08-19T00:00:00Z
 
 Flags:
-  --top-k <n>             Number of neighbors (default 25, max 100)
+  --top-k <n>             Number of results (default 25, max 100)
   --category <name>       Restrict to a category
   --min-volume <n>        Floor on 24h volume
   --close-before <iso>    Only markets closing before this timestamp
   --json                  JSON output
 
-Catches matches keyword search misses — "Will Bitcoin pierce six figures" ↔ "BTC over $100k".`,
+How results are ordered:
+  <market-slug>  Same event first, then same series, then same category —
+                 each tier by 24h volume. Structural relatedness, not meaning.
+  -q "text"      Keyword relevance, then 24h volume.
+
+This is not semantic search: it will not match "Bitcoin pierce six figures" to
+"BTC over $100k". Use ${p}search for keyword lookups across the whole universe.
+
+The API returns a \`distance\` field in --json output. Ignore it — it is
+row_number()/1000, so it only restates row order and is not comparable
+between responses.`,
 
     clusters: `**${p}clusters** — Browse Octagon clusters (thematic + behavioral)
 
@@ -410,8 +420,8 @@ Build flags (universe + diversification):
   --min-volume <n>              Volume floor for candidates
   --close-before <iso>          Only markets closing before
   --label <csv>                 Restrict cluster labels (substring match, comma-separated)
-  -q "<text>"                   Anchor candidate pool by free-text intent (semantic)
-  --ticker <ticker>             Anchor candidate pool by ticker (semantic)
+  -q "<text>"                   Anchor candidate pool by free-text keyword query
+  --ticker <ticker>             Anchor candidate pool by ticker (taxonomy walk)
   --tickers slug-a,slug-b           Explicit candidate pool (universe.market_tickers)
   --theme <name>                Resolve theme registry → explicit candidate pool
   --auto-probs                  Auto-fetch model probabilities (markets/edge)
@@ -487,7 +497,7 @@ function buildOverview(ctx: HelpContext): string {
 
 Quick start:
   polymarket search crypto          Find markets by keyword or theme
-  polymarket analyze <ticker>       Deep analysis + trade recommendation
+  polymarket analyze <market-slug>  Deep analysis + trade recommendation
   polymarket watch --theme crypto   Continuous scan across a theme
 
 Discovery:
@@ -496,8 +506,8 @@ Discovery:
   search --aggregate-by series  Roll up results to series level
   search themes                 (Legacy) Category labels
   search edge [--min-edge N]    Edge ranking (Octagon when key set, else local)
-  similar <market-slug>         Semantic neighbors (embedding distance)
-  similar -q "free text"        Semantic search by natural-language query
+  similar <market-slug>         Related markets (same event → series → category)
+  similar -q "free text"        Keyword search ranked by relevance
   clusters [--label X]          Browse thematic clusters
   clusters <id>                 List markets in a cluster
   clusters --behavioral         Behavioral clusters (30-day return vectors)
@@ -512,7 +522,7 @@ Discovery:
   trust <event-slug>          Trader Trust scorecard (table across markets)
   trust <event-slug> --market <slug>  Single-market trust detail card
   report <event-slug>         Full Octagon markdown report (use --refresh for fresh pull)
-  watch <ticker>                Live price/orderbook feed
+  watch <market-slug>           Live price/orderbook feed
   watch --theme <theme>         Continuous theme scan (Ctrl+C to stop)
   watch --refresh               Force index rebuild before watching
 
@@ -533,10 +543,10 @@ Portfolio construction:
   basket candles --tickers ...  OHLC bars for a weighted basket NAV
 
 Analysis & Trading:
-  analyze <ticker>              Full report: edge, drivers, Kelly sizing
-  analyze <ticker> --refresh    Force fresh Octagon report
-  buy <ticker> <n> [price] [yes|no]   Buy contracts (price 0-1)
-  sell <ticker> <n> [price] [yes|no]  Sell contracts
+  analyze <market-slug>         Full report: edge, drivers, Kelly sizing
+  analyze <market-slug> --refresh  Force fresh Octagon report
+  buy <market-slug> <shares> [price] [yes|no]   Buy shares (price 0-1)
+  sell <market-slug> <shares> [price] [yes|no]  Sell shares
   cancel <order_id>                   Cancel a resting order
 
 Analysis:
@@ -576,8 +586,8 @@ Discovery:
   /search --aggregate-by series  Roll up results to series level
   /search themes                 (Legacy) Category labels
   /search edge [--min-edge N]    Edge ranking (Octagon when key set, else local)
-  /similar <ticker>              Semantic neighbors (embedding distance)
-  /similar -q "free text"        Semantic search by natural-language query
+  /similar <market-slug>         Related markets (same event → series → category)
+  /similar -q "free text"        Keyword search ranked by relevance
   /clusters [--label X]          Browse thematic clusters
   /clusters <id>                 List markets in a cluster
   /clusters --behavioral         Behavioral clusters (30-day return vectors)

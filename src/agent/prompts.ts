@@ -65,9 +65,9 @@ STRICT FORMAT - each row must:
 - Have no trailing spaces after the final |
 - Use |---| separator (with optional : for alignment)
 
-| Ticker | YES  | NO   |
+| Market | YES  | NO   |
 |--------|------|------|
-| KXBTC  | $0.56| $0.44|
+| BTC 88k| $0.56| $0.44|
 
 Keep tables compact:
 - Max 3-4 columns; prefer multiple small tables over one wide table
@@ -119,13 +119,14 @@ ${toolDescriptions}
 - IMPORTANT: Whenever the user asks about ANY specific market, event, or ticker — call octagon_report. This applies to deep dives, research, analysis, "tell me about", "what do you think of", price checks, edge questions, or any query that references a market. The Octagon report provides model probabilities, price drivers, catalysts, and sources that make your answer dramatically better. Call it alongside polymarket_search by default. Pick the most relevant ticker yourself — never ask the user to choose. Pass a full Polymarket URL when possible (like https://polymarket.com/event/world-cup-winner) — construct it from polymarket_search results using the event_ticker field. The only exceptions are pure account queries (balance, orders, positions) or trade execution
 - The edge/portfolio/risk/octagon tools query the local database populated by the scan loop
 - NEVER place trades without explicit user confirmation
-- Prices are in cents: $0.56 = 56 cents = 56% implied probability
-- YES price + NO price ≈ 100 cents (they are complements)
+- Prices are decimal USDC in [0, 1]: 0.56 = $0.56 per share = 56% implied probability
+- YES price + NO price ≈ 1.00 (they are complements)
+- Markets are identified by slug (e.g. bitcoin-above-88k-on-september-11-2026), not by a ticker code
 - CRITICAL TABLE FORMAT: When Octagon data is available (look for octagon_report in polymarket_search results — it contains outcome_probabilities with per-market model_probability and market_probability), you MUST show a SINGLE unified table. Match each market ticker to its Octagon outcome by market_ticker field, then show:
-  | Ticker | Market | Model | Edge | Vol |
-  |--------|--------|-------|------|-----|
-  | KXTESLA-26-Q1-330000 | 72% | 95% | +23% | 67.5K |
-  | KXTESLA-26-Q1-340000 | 65% | 65% | 0% | 92.1K |
+  | Market | Market % | Model | Edge | Vol |
+  |--------|----------|-------|------|-----|
+  | Tesla above $330 | 72% | 95% | +23% | 67.5K |
+  | Tesla above $340 | 65% | 65% | 0% | 92.1K |
   Market = YES price as %. Model = model_probability from octagon outcome_probabilities. Edge = Model - Market.
   NEVER show a table without Model and Edge columns when Octagon data is present. NEVER show Octagon data in a separate section — it must be in the same table as market data
 

@@ -11,8 +11,6 @@ import type { SelectItem } from '@mariozechner/pi-tui';
 
 export type WizardState =
   | 'welcome'
-  | 'kalshi_api_key'
-  | 'kalshi_private_key'
   | 'octagon_api_key'
   | 'llm_provider_select'
   | 'llm_api_key'
@@ -35,7 +33,6 @@ export class SetupWizardController {
   private readonly onComplete: () => void;
   private readonly onChange: () => void;
   private active = false;
-  private stepError: string | null = null;
 
   // Reusable UI components for the current step
   private currentInput: ApiKeyInputComponent | null = null;
@@ -105,16 +102,12 @@ export class SetupWizardController {
     switch (this.wizardState) {
       case 'welcome':
         return 'Welcome to Polymarket Trading Bot CLI';
-      case 'kalshi_api_key':
-        return 'Step 1/5: Kalshi API Key';
-      case 'kalshi_private_key':
-        return 'Step 2/5: Kalshi Private Key';
       case 'octagon_api_key':
-        return 'Step 3/5: Octagon API Key';
+        return 'Step 1/3: Octagon API Key';
       case 'llm_provider_select':
-        return 'Step 4/5: LLM Provider';
+        return 'Step 2/3: LLM Provider';
       case 'llm_api_key':
-        return `Step 5/5: ${this.selectedProvider ?? 'LLM'} API Key`;
+        return `Step 3/3: ${this.selectedProvider ?? 'LLM'} API Key`;
       case 'testing':
         return 'Testing connections...';
       case 'complete':
@@ -125,14 +118,7 @@ export class SetupWizardController {
   getDescription(): string {
     switch (this.wizardState) {
       case 'welcome':
-        return "Let's get you set up. This takes ~2 minutes.\nYou'll need your Kalshi API credentials and at least one LLM API key.";
-      case 'kalshi_api_key':
-        return 'Paste your Kalshi API key below.\nGet one at: https://kalshi.com/account/api';
-      case 'kalshi_private_key': {
-        let desc = 'Paste your Kalshi private key below.\nCopy it from the Kalshi API key creation screen.\nYou can also enter a path to a .pem file.';
-        if (this.stepError) desc += `\n\n${this.stepError}`;
-        return desc;
-      }
+        return "Let's get you set up. This takes about a minute.\nPolymarket market data needs no credentials — you only need an LLM API key,\nplus an Octagon key if you want deep research.";
       case 'octagon_api_key':
         return 'Paste your Octagon API key (recommended for deep research).\nGet one at: https://app.octagonai.co\nLeave empty and press Enter to skip.';
       case 'llm_provider_select':
@@ -152,8 +138,6 @@ export class SetupWizardController {
     switch (this.wizardState) {
       case 'welcome':
         return 'Enter to continue';
-      case 'kalshi_api_key':
-      case 'kalshi_private_key':
       case 'octagon_api_key':
       case 'llm_api_key':
         return 'Enter to confirm · Esc to cancel setup';
@@ -202,11 +186,11 @@ export class SetupWizardController {
       if (this.configWritten) {
         lines.push('');
         lines.push(theme.muted('  Default thresholds (to customize, run the command shown):'));
-        lines.push(`    min_edge_threshold  = 5%     ${theme.muted('e.g. kalshi config risk.min_edge_threshold 0.10')}`);
-        lines.push(`    kelly_multiplier    = 0.5    ${theme.muted('e.g. kalshi config risk.kelly_multiplier 0.25')}`);
-        lines.push(`    max_position_pct    = 10%    ${theme.muted('e.g. kalshi config risk.max_position_pct 0.05')}`);
-        lines.push(`    daily_loss_limit    = $200   ${theme.muted('e.g. kalshi config risk.daily_loss_limit 100')}`);
-        lines.push(`    max_positions       = 10     ${theme.muted('e.g. kalshi config risk.max_positions 5')}`);
+        lines.push(`    min_edge_threshold  = 5%     ${theme.muted('e.g. polymarket config risk.min_edge_threshold 0.10')}`);
+        lines.push(`    kelly_multiplier    = 0.5    ${theme.muted('e.g. polymarket config risk.kelly_multiplier 0.25')}`);
+        lines.push(`    max_position_pct    = 10%    ${theme.muted('e.g. polymarket config risk.max_position_pct 0.05')}`);
+        lines.push(`    daily_loss_limit    = $200   ${theme.muted('e.g. polymarket config risk.daily_loss_limit 100')}`);
+        lines.push(`    max_positions       = 10     ${theme.muted('e.g. polymarket config risk.max_positions 5')}`);
         lines.push('');
         lines.push(theme.muted('  Run "polymarket config" to see all settings.'));
       }
@@ -218,24 +202,6 @@ export class SetupWizardController {
   /** Create the input/selector component for the current step (called by cli.ts during render) */
   ensureComponent(): ApiKeyInputComponent | VimSelectList | null {
     switch (this.wizardState) {
-      case 'kalshi_api_key': {
-        if (!this.currentInput) {
-          const input = new ApiKeyInputComponent(true);
-          input.onSubmit = (value) => this.handleApiKeySubmit('POLYMARKET_API_KEY', value, 'kalshi_private_key');
-          input.onCancel = () => this.cancel();
-          this.currentInput = input;
-        }
-        return this.currentInput;
-      }
-      case 'kalshi_private_key': {
-        if (!this.currentInput) {
-          const input = new ApiKeyInputComponent(true); // Masked — it's a private key
-          input.onSubmit = (value) => this.handlePrivateKeySubmit(value);
-          input.onCancel = () => this.cancel();
-          this.currentInput = input;
-        }
-        return this.currentInput;
-      }
       case 'octagon_api_key': {
         if (!this.currentInput) {
           const input = new ApiKeyInputComponent(true);
@@ -282,7 +248,7 @@ export class SetupWizardController {
   handleInput(keyData: string): void {
     if (keyData === '\r') {
       if (this.wizardState === 'welcome') {
-        this.transition('kalshi_api_key');
+        this.transition('octagon_api_key');
         return;
       }
       if (this.wizardState === 'complete') {
@@ -301,7 +267,7 @@ export class SetupWizardController {
       if (this.testResults.some((r) => r.status === 'fail')) {
         this.restoreStagedEnv();
         this.testResults = [];
-        this.transition('kalshi_api_key');
+        this.transition('octagon_api_key');
         return;
       }
     }
@@ -340,76 +306,9 @@ export class SetupWizardController {
 
   private transition(next: WizardState) {
     this.wizardState = next;
-    this.stepError = null;
     this.currentInput = null;
     this.currentSelector = null;
     this.onChange();
-  }
-
-  private handleApiKeySubmit(envName: string, value: string | null, nextState: WizardState) {
-    if (!value) {
-      // Required key — don't advance
-      return;
-    }
-    this.stageEnv(envName, value);
-    this.transition(nextState);
-  }
-
-  private handlePrivateKeySubmit(value: string | null) {
-    if (!value) return; // Required
-
-    const trimmed = value.trim();
-
-    // Check if it's a file path
-    if (trimmed.endsWith('.pem') || trimmed.startsWith('/') || trimmed.startsWith('~') || trimmed.startsWith('.')) {
-      // Expand ~ to home
-      const expanded = trimmed.startsWith('~')
-        ? trimmed.replace('~', process.env.HOME ?? '')
-        : trimmed;
-
-      if (!existsSync(expanded)) {
-        this.stepError = `File not found: ${expanded}`;
-        this.onChange();
-        return;
-      }
-      this.stageEnv('POLYMARKET_PRIVATE_KEY_FILE', expanded);
-    } else {
-      // Raw PEM content pasted — the single-line input strips newlines,
-      // so reconstruct PEM structure: header, base64 body in 64-char lines, footer
-      let pem = trimmed;
-      const pemHeaderRe = /^(-----BEGIN [A-Z ]+-----)(.*?)(-----END [A-Z ]+-----)$/;
-      const match = pem.match(pemHeaderRe);
-      if (!match) {
-        this.stepError = 'Invalid private key. Expected PEM format starting with -----BEGIN RSA PRIVATE KEY-----';
-        this.onChange();
-        return;
-      }
-      if (match) {
-        const header = match[1];
-        const body = match[2].replace(/\s+/g, '');
-        const footer = match[3];
-        // Split base64 body into 64-character lines (standard PEM format)
-        const bodyLines: string[] = [];
-        for (let i = 0; i < body.length; i += 64) {
-          bodyLines.push(body.slice(i, i + 64));
-        }
-        pem = [header, ...bodyLines, footer].join('\n');
-      }
-      // Encode newlines for .env compatibility — dotenv expands \n in double-quoted values
-      const encoded = `"${pem.replace(/\n/g, '\\n')}"`;
-      this.collectedKeys['POLYMARKET_PRIVATE_KEY'] = encoded;
-      // Store actual PEM (with real newlines) in process.env so API clients can use it directly
-      if (!(('POLYMARKET_PRIVATE_KEY') in this.originalEnvValues)) {
-        this.originalEnvValues['POLYMARKET_PRIVATE_KEY'] = process.env['POLYMARKET_PRIVATE_KEY'];
-      }
-      process.env['POLYMARKET_PRIVATE_KEY'] = pem;
-    }
-
-    // Only set POLYMARKET_USE_DEMO default if not already configured
-    if (!process.env.POLYMARKET_USE_DEMO) {
-      this.stageEnv('POLYMARKET_USE_DEMO', 'false');
-    }
-    this.transition('octagon_api_key');
   }
 
   private handleOptionalKeySubmit(envName: string, value: string | null, nextState: WizardState) {
@@ -500,7 +399,7 @@ export class SetupWizardController {
 
   private async runTests() {
     this.testResults = [
-      { name: 'Kalshi API', status: 'pending' },
+      { name: 'Polymarket CLOB', status: 'pending' },
       { name: 'Octagon API', status: 'pending' },
       { name: 'LLM API', status: 'pending' },
     ];
@@ -509,13 +408,13 @@ export class SetupWizardController {
     // Reload env from .env (non-overwriting so staged process.env values are preserved)
     config({ path: ENV_PATH, quiet: true });
 
-    // Test Kalshi
+    // Test Polymarket — public endpoint, no credentials involved
     try {
       await fetchExchangeStatus();
-      this.testResults[0] = { name: 'Kalshi API', status: 'ok', message: 'Connected' };
+      this.testResults[0] = { name: 'Polymarket CLOB', status: 'ok', message: 'Connected' };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.testResults[0] = { name: 'Kalshi API', status: 'fail', message: msg.slice(0, 60) };
+      this.testResults[0] = { name: 'Polymarket CLOB', status: 'fail', message: msg.slice(0, 60) };
     }
     this.onChange();
 

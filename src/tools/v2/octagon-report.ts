@@ -97,7 +97,7 @@ Fetch a full Octagon AI research report for a Polymarket market. Returns model p
 - IMPORTANT: NEVER guess or construct tickers yourself — only use exact tickers returned by polymarket_search results
 - polymarket_search already auto-fetches an Octagon report for the top result — check if the data you need is already in the polymarket_search response before calling this tool separately
 - PREFERRED: Pass a full Polymarket URL (e.g. https://polymarket.com/event/world-cup-winner) — this is what Octagon expects
-- Also accepts a market ticker (e.g. KXBTC-26MAR-B80000) — will be resolved to a URL automatically
+- Also accepts a market slug (e.g. bitcoin-above-88k-on-september-11-2026) — resolved to its event automatically
 - If you got market data from polymarket_search, construct the URL as: https://polymarket.com/event/EVENT_SLUG using the event_ticker field
 
 ## When NOT to Use

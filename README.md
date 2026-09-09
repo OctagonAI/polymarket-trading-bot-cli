@@ -88,17 +88,17 @@ Type help for commands, or just ask a question.
 
 > search crypto
 
-  Ticker                  Title                          Last    Volume
-  KXBTC-26APR-B95000      Bitcoin above $95k by Apr 30   $0.58   12,841
-  KXBTC-26APR-B100000     Bitcoin above $100k by Apr 30  $0.31    8,203
-  KXETH-26APR-B2000       Ethereum above $2k by Apr 30   $0.72    5,419
+  Slug                              Title                          Last    Volume
+  bitcoin-above-95k-by-april-30     Bitcoin above $95k by Apr 30   $0.58   12,841
+  bitcoin-above-100k-by-april-30    Bitcoin above $100k by Apr 30  $0.31    8,203
+  ethereum-above-2k-by-april-30     Ethereum above $2k by Apr 30   $0.72    5,419
 
 3 markets found
 
-> analyze KXBTC-26APR-B95000
+> analyze bitcoin-above-95k-by-april-30
 
-  Octagon Research Report — KXBTC-26APR-B95000
-  ─────────────────────────────────────────────
+  Octagon Research Report — bitcoin-above-95k-by-april-30
+  ───────────────────────────────────────────────────────
   Model Probability   72%
   Market Price        58%
   Edge               +14.0%  (very_high confidence)
@@ -109,21 +109,18 @@ Type help for commands, or just ask a question.
   3. Macro risk-on sentiment                     impact: moderate
 
   Kelly Sizing
-  Recommended: 3 contracts YES at $0.58
+  Recommended: 3 shares YES at $0.58
   Risk gates: ✓ Kelly  ✓ Liquidity  ✓ Correlation  ✓ Concentration  ✓ Drawdown
-
-> buy KXBTC-26APR-B95000 3 58
-
-  ✓ Order placed: BUY 3 YES @ $0.58
-  Order ID: abc-123-def
 
 > portfolio
 
-  Ticker                  Side  Qty  Entry   Now    Edge    P&L
-  KXBTC-26APR-B95000      YES    3   $0.58   $0.61  +11.0%  +$0.09
+  Slug                              Side  Shares  Entry   Now    P&L
+  bitcoin-above-95k-by-april-30     YES        3  $0.58   $0.61  +$0.09
 
-  Cash: $487.26 · Exposure: $1.74 · Positions: 1
+  Position value: $1.83 · Positions: 1
 ```
+
+<sub>`buy` is shown in the command table below but is not implemented yet — see the port status note at the top.</sub>
 
 ## Commands
 
@@ -131,7 +128,7 @@ Type help for commands, or just ask a question.
 |---------|-------------|
 | `search [theme\|ticker\|query]` | Find markets by keyword or theme (Octagon-backed when key set) |
 | `search edge [--min-edge N]` | Scan all markets by model edge (Octagon `markets-with-edge`) |
-| `similar <market-slug\|"query">` | Semantic neighbors via Octagon embeddings |
+| `similar <market-slug\|"query">` | Related markets: same event → series → category, or keyword query |
 | `clusters [--label X]` | Browse thematic clusters of the market universe — **⏳ not yet available for Polymarket** |
 | `clusters <id>` | List markets inside a cluster — **⏳ not yet available for Polymarket** |
 | `clusters --behavioral` | Behavioral clusters by 30-day return vectors — **⏳ not yet available for Polymarket** |
@@ -216,25 +213,25 @@ Type help for commands, or just ask a question.
 | `--theme <name>` | Resolve an editorial theme to a ticker list (basket backtest/candles/validate/size) |
 | `--aggregate-by series` | Roll up search results to the series level |
 | `--active-only` | Drop non-active markets (defensive flag — open universe by default) |
-| `--series-prefix <prefix>` | Server-side series prefix match (e.g. `KXBTC` matches KXBTCD, KXBTCY, ...) |
+| `--series-prefix <prefix>` | Server-side series prefix match (e.g. `bitcoin` matches `bitcoin-above-…`) |
 | `--sides yes,no,yes` | Per-ticker side for `correlate` (sign-flipped) |
 | `--cells` | Include per-cell detail (overlap, reason) in `correlate` |
 | `--auto-probs` | `basket size`: auto-fetch model probabilities via `markets/edge` |
 
 ### Discovery & Portfolio (Octagon-powered)
 
-The `search`, `similar`, `clusters`, `peers`, `correlate`, and `basket` commands turn the whole market universe into a queryable database. When `OCTAGON_API_KEY` is set the bot routes searches through Octagon's typed endpoints — semantic embedding lookups, nightly k-means clusters (thematic + behavioral), Pearson correlation matrices, and one-call diversified basket construction with cluster caps and pairwise-correlation gates. Without a key, `search` and `search edge` fall back to the local SQLite cache.
+The `search`, `similar`, `clusters`, `peers`, `correlate`, and `basket` commands turn the whole market universe into a queryable database. When `OCTAGON_API_KEY` is set the bot routes searches through Octagon's typed endpoints — keyword market search, related-market lookups, nightly k-means clusters (thematic + behavioral), Pearson correlation matrices, and one-call diversified basket construction with cluster caps and pairwise-correlation gates. Without a key, `search` and `search edge` fall back to the local SQLite cache.
 
 ```bash
-# Free-text + structured search (semantic full-text + filters)
+# Free-text + structured search (full-text + filters)
 polymarket search "bitcoin price" --category crypto --min-volume 10000 --limit 20
 
 # Edge ranking from Octagon's latest run (server-side, no local pre-fetch)
 polymarket search edge --min-edge 5 --limit 10 --sort-by total_volume
 
-# Semantic neighbors — catches matches keyword search misses
-polymarket similar KXBTCD-26DEC31-T100000 --top-k 25
-polymarket similar -q "Will Bitcoin pierce six figures" --category crypto
+# Related markets — same event first, then series, then category
+polymarket similar will-bitcoin-reach-110000-by-december-31-2026 --top-k 25
+polymarket similar -q "bitcoin" --category crypto
 
 # Browse the universe by theme
 polymarket clusters --label fed                 # find Fed-decision clusters
@@ -304,12 +301,13 @@ polymarket themes audit
 
 # Cross-theme dedupe (when a series belongs to multiple themes)
 polymarket themes overlap
-#   → KXUSAIRANAGREEMENT  Iran Escalation · Nuclear Renaissance
-#   → KXMORTGAGERATE      Fed Cuts Aggressively · Housing / Mortgage Crisis
+#   → us-iran-nuclear-agreement   Iran Escalation · Nuclear Renaissance
+#   → fed-decision-in-september   Fed Cuts Aggressively · Housing / Mortgage Crisis
 
-# Build/manage your own themes
-polymarket themes create "My Macro Hedge" --label "..." --tickers KXRECSSNBER,KXCPIYOY
-polymarket themes add-series "My Macro Hedge" KXFEDDECISION,KXU3
+# Build/manage your own themes (no Polymarket seed file ships yet — themes are
+# yours to define; `themes import <path>` loads your own JSON)
+polymarket themes create "My Macro Hedge" --label "..." --tickers us-recession-2027,cpi-above-3-2027
+polymarket themes add-series "My Macro Hedge" fed-decision-in-september,unemployment-above-5
 polymarket themes set-search-volume "My Macro Hedge" 50000
 
 # Backtest an entire theme as a NAV basket (one top market per series)
@@ -324,7 +322,7 @@ polymarket series search bitcoin --limit 10            # keyword → rollup
 
 # Event ↔ outcome ladder
 polymarket events --category Politics --limit 10       # top political events by volume
-polymarket events KXFEDCHAIRNOM-29                     # outcome probabilities + per-contract edge
+polymarket events fed-decision-in-september-762        # outcome probabilities + per-contract edge
 
 # Catalyst calendar
 polymarket catalysts upcoming --days 14 --min-volume 5000 --category Politics
@@ -368,18 +366,18 @@ Octagon Backtest — 15-day lookback (04/02 – 04/17)
 
 RESOLVED (142 markets)
   Ticker                    Model   Mkt Then   Outcome   Edge    P&L
-  KXBTC-26APR-B95000        72%     58%        YES 100%  +14pp   +$0.42
+  bitcoin-above-95k-…       72%     58%        YES 100%  +14pp   +$0.42
   ...
 
 UNRESOLVED (105 markets)
-  Ticker                    Model   Mkt Then   Now       Edge    M2M
-  KXBTC-26MAY-B110000       71%     58%        68%       +13pp   +$0.10
+  Market                        Model   Mkt Then   Now       Edge    M2M
+  bitcoin-above-110k-may-2026   71%     58%        68%       +13pp   +$0.10
   ...
 ```
 
-### Demo Mode
+### Staging
 
-Set `POLYMARKET_USE_DEMO=true` in your `.env` to use the exchange demo environment. All trades are simulated — no real money at risk.
+Set `POLYMARKET_USE_STAGING=true` in your `.env` to point the Gamma, CLOB and Data clients at Polymarket's staging hosts. Those hostnames are documented but do not currently resolve, so treat this as unverified. Individual services can also be overridden with `POLYMARKET_GAMMA_URL`, `POLYMARKET_CLOB_URL` and `POLYMARKET_DATA_URL`.
 
 ## Scripting & Parallel Use
 
@@ -396,18 +394,18 @@ The `bunx polymarket-trading-bot-cli@latest …` form is great for one-off inter
 bun add -g polymarket-trading-bot-cli
 
 # Then use the `polymarket` binary directly — fan out as much as you want
-parallel -j 30 'polymarket analyze {} --json > {}.json' ::: KXBTC-26APR-B95000 KXETH-… …
+parallel -j 30 'polymarket analyze {} --json > {}.json' ::: bitcoin-above-95k-by-april-30 ethereum-… …
 ```
 
 **If you must use `bunx`:**
 
 ```bash
 # --silent suppresses Bun's install chatter (keeps your CLI's stdout clean)
-bunx --silent polymarket-trading-bot-cli@latest analyze KXBTC-26APR-B95000 --json
+bunx --silent polymarket-trading-bot-cli@latest analyze bitcoin-above-95k-by-april-30 --json
 
 # For parallel bunx, pre-warm the cache serially first to dodge the link race
 bunx --silent polymarket-trading-bot-cli@latest --version    # one-shot, populates cache
-parallel -j 30 'bunx --silent polymarket-trading-bot-cli@latest analyze {} --json' ::: KXBTC-… …
+parallel -j 30 'bunx --silent polymarket-trading-bot-cli@latest analyze {} --json' ::: bitcoin-above-95k-by-april-30 …
 ```
 
 Keep `@latest` if you want auto-update on every invocation; drop it after the first run if you've pinned a version and want speed.
@@ -418,12 +416,12 @@ Every command supports `--json` for structured output, making the bot easy to or
 
 ```bash
 polymarket search crypto --json
-polymarket similar KXBTC-26APR-B95000 --top-k 10 --json
+polymarket similar bitcoin-above-95k-by-april-30 --top-k 10 --json
 polymarket clusters --ranked --timeframe 1y --min-return 0.2 --json
 polymarket correlate KX-A KX-B KX-C --window-days 90 --json
 polymarket basket build --category crypto -n 8 --max-per-cluster 2 --max-corr 0.6 --json
-polymarket analyze KXBTC-26APR-B95000 --json
-polymarket buy KXBTC-26APR-B95000 3 58 --json
+polymarket analyze bitcoin-above-95k-by-april-30 --json
+polymarket buy bitcoin-above-95k-by-april-30 3 0.58 --json
 polymarket portfolio --json
 ```
 
@@ -436,7 +434,7 @@ All responses follow the same envelope:
   "ok": true,
   "command": "analyze",
   "data": {
-    "ticker": "KXBTC-26APR-B95000",
+    "ticker": "bitcoin-above-95k-by-april-30",
     "modelProb": 0.72,
     "marketProb": 0.58,
     "edge": 0.14,
@@ -462,12 +460,12 @@ Errors return `"ok": false` with an `error` object containing `code` and `messag
 MARKETS=$(polymarket search crypto --json | jq '.data')
 
 # 2. Analyze top pick
-ANALYSIS=$(polymarket analyze KXBTC-26APR-B95000 --json)
+ANALYSIS=$(polymarket analyze bitcoin-above-95k-by-april-30 --json)
 EDGE=$(echo "$ANALYSIS" | jq '.data.edge')
 
 # 3. Trade if edge is high enough
 if (( $(echo "$EDGE > 0.05" | bc -l) )); then
-  polymarket buy KXBTC-26APR-B95000 3 58 --json
+  polymarket buy bitcoin-above-95k-by-april-30 3 0.58 --json
 fi
 
 # 4. Check portfolio
@@ -502,19 +500,20 @@ cp env.example ~/.polymarket-bot/.env
 
 **Required:**
 
+Polymarket market data is public, so there is no exchange key to set — reads work with no credentials at all.
+
 | Variable | Description |
 |----------|-------------|
-| `POLYMARKET_API_KEY` | Exchange API key ID |
-| `POLYMARKET_PRIVATE_KEY_FILE` | Path to your exchange RSA private key PEM file |
 | `OPENAI_API_KEY` | OpenAI API key (default model is GPT-5.4) |
-| `OCTAGON_API_KEY` | Octagon API key. Powers deep research (`analyze`), edge scanning (`search edge`), and the Octagon-backed discovery + basket commands (`search`, `similar`, `clusters`, `peers`, `correlate`, `basket`). Get one at [app.octagonai.co](https://app.octagonai.co) |
+| `OCTAGON_API_KEY` | Octagon API key. Powers deep research (`analyze`), edge scanning (`search edge`), and the Octagon-backed discovery commands (`search`, `similar`, `events`, `trust`, `report`). Get one at [app.octagonai.co](https://app.octagonai.co) |
 
 **Optional:**
 
 | Variable | Description |
 |----------|-------------|
-| `POLYMARKET_USE_DEMO` | `true` for demo environment (simulated trades) |
-| `POLYMARKET_PRIVATE_KEY` | Inline PEM key as alternative to file path |
+| `POLYMARKET_WALLET_ADDRESS` | Your Polygon address (`0x…`), read-only — required by `portfolio` |
+| `POLYMARKET_USE_STAGING` | `true` to target Polymarket's staging hosts (unverified) |
+| `POLYMARKET_GAMMA_URL` / `POLYMARKET_CLOB_URL` / `POLYMARKET_DATA_URL` | Override an individual service base URL |
 | `ANTHROPIC_API_KEY` | Anthropic (Claude) |
 | `GOOGLE_API_KEY` | Google (Gemini) |
 | `XAI_API_KEY` | xAI (Grok) |

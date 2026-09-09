@@ -93,7 +93,7 @@ Quick commands that bypass the AI agent and call the exchange or Octagon API dir
 | `/market <ticker>` | Market detail + top-of-book orderbook | `/market KXBTC-26MAR-B80000` |
 | `/search <query>` | Full-text market search (Octagon when key set) | `/search "bitcoin price" --min-volume 10000` |
 | `/search edge` | Edge ranking from Octagon's latest run | `/search edge --min-edge 5 --sort-by total_volume` |
-| `/similar <ticker\|"text">` | Semantic neighbors via embeddings | `/similar KXBTCD-26DEC31-T100000 --top-k 20` |
+| `/similar <slug\|"text">` | Related markets (event → series → category) | `/similar will-bitcoin-reach-110000-by-december-31-2026 --top-k 20` |
 | `/clusters [--label X]` | Browse thematic clusters | `/clusters --label fed` |
 | `/clusters <id>` | List markets inside a cluster | `/clusters 42` |
 | `/clusters --behavioral` | Behavioral clusters by 30-day return vectors | `/clusters --behavioral` |
@@ -118,19 +118,19 @@ Quick commands that bypass the AI agent and call the exchange or Octagon API dir
 | `/themes report` | 25-theme dashboard with SEO + liquidity | `/themes report` |
 | `/themes audit` | Flag dead themes (high SEO + zero volume) | `/themes audit` |
 | `/themes overlap` | Cross-theme dedupe report | `/themes overlap` |
-| `/buy <ticker> <count> [price]` | Buy YES contracts (price in cents) | `/buy KXBTC-26MAR-B80000 5 56` |
-| `/sell <ticker> <count> [price]` | Sell YES contracts | `/sell KXBTC-26MAR-B80000 5 60` |
+| `/buy <market-slug> <shares> [price]` | Buy YES shares (price 0-1) | `/buy bitcoin-above-95k-by-april-30 5 0.56` |
+| `/sell <market-slug> <shares> [price]` | Sell YES shares | `/sell bitcoin-above-95k-by-april-30 5 0.60` |
 | `/cancel <order_id>` | Cancel a resting order | `/cancel abc-123-def` |
 
 **Trade confirmation:** `/buy` and `/sell` always show a confirmation prompt before executing. Type `yes` to confirm or `no` to cancel.
 
-**Price format:** Prices are always in cents. `56` = $0.56 = 56% implied probability.
+**Price format:** Prices are decimal USDC in [0, 1]. `0.56` = $0.56 per share = 56% implied probability.
 
 ---
 
 ## Discovery & Portfolio (Octagon-powered)
 
-With `OCTAGON_API_KEY` set, the bot routes searches through Octagon's typed endpoints. This unlocks semantic similarity, thematic and behavioral clustering, pairwise correlation matrices, and one-call diversified basket construction. Without a key the bot falls back to the local SQLite index for `/search` and `/search edge`; the other commands require the key.
+With `OCTAGON_API_KEY` set, the bot routes searches through Octagon's typed endpoints. This unlocks related-market lookups, thematic and behavioral clustering, pairwise correlation matrices, and one-call diversified basket construction. Without a key the bot falls back to the local SQLite index for `/search` and `/search edge`; the other commands require the key.
 
 ### `/search` and `/search edge`
 
@@ -147,15 +147,25 @@ Flags (server-side path): `--category`, `--series <ticker>`, `--min-volume <n>`,
 
 ### `/similar`
 
-Catches semantic matches keyword search misses ("Will Bitcoin pierce six figures" ↔ "BTC > $100k").
+Finds markets *related* to an anchor. This is not semantic search — it will not
+match "Will Bitcoin pierce six figures" to "BTC > $100k". Use `/search` for that.
 
 ```bash
-polymarket similar KXBTCD-26DEC31-T100000 --top-k 25                # anchor by ticker (no embedding call)
-polymarket similar -q "Will Bitcoin pierce six figures" --category crypto
-polymarket similar -q "ETH 2.0 staking" --category crypto --min-volume 10000 --close-before 2026-08-19T00:00:00Z
+polymarket similar will-bitcoin-reach-110000-by-december-31-2026 --top-k 25   # anchor by market slug
+polymarket similar -q "bitcoin" --category crypto
+polymarket similar -q "ethereum staking" --category crypto --min-volume 10000 --close-before 2026-08-19T00:00:00Z
 ```
 
-Lower `distance` = closer cosine similarity.
+Ordering depends on the anchor:
+
+- **Market slug** — a taxonomy walk: markets in the anchor's own event first, then
+  its series, then its category, each tier sorted by 24h volume.
+- **`-q "text"`** — keyword relevance (the same ranking the market list uses),
+  then 24h volume.
+
+The `distance` field in `--json` output is `row_number() / 1000`. It restates row
+order and nothing else: it is not a similarity metric and is not comparable
+across responses, so a cutoff like `distance < 0.2` just means "the first 199 rows".
 
 ### `/clusters`
 
@@ -347,9 +357,9 @@ This is the primary way to use the bot. The AI agent has access to all the tools
 
 The agent has access to the following tools. You never call these directly — the agent selects them based on your query.
 
-### kalshi_search (Market Research Router)
+### polymarket_search (Market Research Router)
 
-The primary research tool. Takes your natural language query and automatically routes to the right Kalshi API endpoints across up to **3 iterations** (browse → drill down → analyze).
+The primary research tool. Takes your natural language query and automatically routes to the right Polymarket API endpoints (Gamma / CLOB / Data) across up to **3 iterations** (browse → drill down → analyze).
 
 **How it works:**
 1. An LLM reads your query and decides which sub-tools to call
@@ -404,15 +414,18 @@ The primary research tool. Takes your natural language query and automatically r
 | `get_exchange_status` | Is the exchange open/trading? | *(none)* |
 | `get_exchange_schedule` | Trading hours and maintenance windows | *(none)* |
 
-### kalshi_trade (Trade Execution Router)
+### polymarket_trade (Trade Execution Router)
 
 Routes natural language trade instructions to the appropriate trading action. **Always requires user approval** before executing.
+
+> **⏳ Not implemented yet.** Order placement is deferred; this tool currently returns an
+> explanatory error. Polymarket orders need EIP-712 wallet signing and on-chain allowances.
 
 **Sub-tools:**
 
 | Tool | Purpose | Key Parameters |
 |---|---|---|
-| `place_order` | Place a single order | `ticker`, `action` (buy/sell), `side` (yes/no), `type` (limit/market), `count`, `yes_price` (1-99 cents) |
+| `place_order` | Place a single order | `slug`, `action` (buy/sell), `side` (yes/no), `type` (limit/market), `shares`, `price` (0-1 USDC) |
 | `amend_order` | Modify a resting order | `order_id`, `count`, `yes_price`, `expiration_ts` |
 | `cancel_order` | Cancel one order | `order_id` |
 | `cancel_orders` | Batch cancel | `order_ids[]` |
@@ -436,17 +449,23 @@ Fetches and parses content from a specific URL. Used for reading articles, press
 
 ---
 
-## Ticker Formats
+## Identifiers
 
-Kalshi uses a hierarchical ticker system:
+Polymarket identifies things by **slug**, not by a ticker code. There are four levels:
 
-| Level | Format | Example | Description |
-|---|---|---|---|
-| Series | `KXBTC` | `KXBTC` | A recurring topic (e.g., Bitcoin price) |
-| Event | `KXBTC-26MAR` | `KXPRES-28` | A specific occurrence (e.g., March 2026 BTC, 2028 election) |
-| Market | `KXBTC-26MAR-B80000` | `KXPRES-28-DJT` | A single yes/no contract within an event |
+| Level | Example | Description |
+|---|---|---|
+| Series | `nfl` | A recurring topic |
+| Event | `fed-decision-in-september-762` | A specific occurrence, and the `polymarket.com/event/<slug>` path |
+| Market | `will-the-fed-decrease-interest-rates-by-25-bps-…` | One outcome question within an event |
+| Outcome token | `71321045679252212594626385532706912750332728571942532289631379312455583992563` | The YES or NO side of a market, as a uint256 decimal string |
 
-**Price interpretation:** All prices are in **cents** (1-99). A price of `56` means $0.56, which implies a **56% probability** of the YES outcome. YES + NO prices always sum to approximately 100 cents.
+A market also has a `conditionId` (`0x…`), which commands accept anywhere a market slug is accepted.
+The outcome token id replaces Kalshi's yes/no side flag — never parse it as a JavaScript number.
+
+**Price interpretation:** prices are **decimal USDC in [0, 1]**. A price of `0.56` means $0.56 per
+share, which implies a **56% probability** of that outcome. YES + NO prices sum to approximately
+`1.00`. Tick size is `0.01` or `0.001` depending on the market, and the minimum order is 5 shares.
 
 ---
 

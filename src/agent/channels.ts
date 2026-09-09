@@ -30,9 +30,9 @@ STRICT FORMAT - each row must:
 - Have no trailing spaces after the final |
 - Use |---| separator (with optional : for alignment)
 
-| Ticker | YES   | NO    | Volume |
-|--------|-------|-------|--------|
-| KXBTC  | $0.56 | $0.44 | 12,450 |
+| Market  | YES   | NO    | Volume |
+|---------|-------|-------|--------|
+| BTC 88k | $0.56 | $0.44 | 12,450 |
 
 Keep tables compact:
 - Max 4 columns; prefer multiple small tables over one wide table
