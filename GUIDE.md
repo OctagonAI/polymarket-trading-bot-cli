@@ -1,6 +1,11 @@
 # Polymarket Trading Bot CLI — User Guide
 
-AI-powered prediction market terminal for [Polymarket](https://polymarket.com). Ask natural language questions, research markets, and trade — all from your terminal.
+AI-powered prediction market terminal for [Polymarket](https://polymarket.com). Ask natural language questions and research markets from your terminal.
+
+> **⏳ Read-only for now.** Order placement is not implemented: `/buy`, `/sell` and
+> `/cancel` return an explanation rather than trading, and `/portfolio` is gated with
+> them because every view it offers needs a wallet that arrives with trading support.
+> Market data and research need no credentials. Commands marked ⏳ below are unavailable.
 
 ---
 
@@ -46,12 +51,12 @@ bun start        # or `bun run dev` for hot-reload
 
 ### Environment Variables
 
+Polymarket market data is public — there is no exchange key or private key to set.
+
 | Variable | Required | Description |
 |---|---|---|
-| `POLYMARKET_API_KEY` | Yes | Your exchange API key |
-| `POLYMARKET_PRIVATE_KEY_FILE` | Yes* | Path to RSA private key PEM file |
-| `POLYMARKET_PRIVATE_KEY` | Yes* | Inline RSA private key (alternative to file) |
-| `POLYMARKET_USE_DEMO` | No | Set `true` for demo/paper trading (no real money) |
+| `POLYMARKET_USE_STAGING` | No | Point reads at Polymarket's staging hosts (unverified) |
+| `POLYMARKET_GAMMA_URL` / `POLYMARKET_CLOB_URL` / `POLYMARKET_DATA_URL` | No | Override an individual service base URL |
 | `OPENAI_API_KEY` | One of these | OpenAI API key |
 | `ANTHROPIC_API_KEY` | One of these | Anthropic API key |
 | `GOOGLE_API_KEY` | One of these | Google AI API key |
@@ -61,7 +66,6 @@ bun start        # or `bun run dev` for hot-reload
 | `TAVILY_API_KEY` | No | Enables web search tool for background research |
 | `LANGSMITH_API_KEY` | No | LangSmith tracing for debugging |
 
-*Provide either `POLYMARKET_PRIVATE_KEY_FILE` or `POLYMARKET_PRIVATE_KEY`, not both.
 
 ---
 
@@ -82,47 +86,55 @@ Type `/model` to pick your LLM provider and model. Your choice persists across s
 
 Quick commands that bypass the AI agent and call the exchange or Octagon API directly.
 
+⏳ marks a command that is not available yet. It is hidden from `/help` and
+autocomplete, and running it explains why. Two reasons appear below: commands
+needing trading support, and commands Octagon serves for Kalshi only — the
+latter keep their Kalshi ticker examples, since that is what those routes take.
+
 | Command | Description | Example |
 |---|---|---|
 | `/help` | Show all available commands | `/help` |
-| `/status` | Exchange open/closed status | `/status` |
-| `/balance` | Account balance | `/balance` |
-| `/positions` | Open positions with P&L | `/positions` |
-| `/orders` | Resting (open) orders | `/orders` |
-| `/markets [series]` | Browse markets, optionally filter by series ticker | `/markets KXBTC` |
-| `/market <ticker>` | Market detail + top-of-book orderbook | `/market KXBTC-26MAR-B80000` |
+| `/status` | Setup check: connectivity, API keys | `/status` |
+| `/balance` ⏳ | Account balance — **needs trading support** | `/balance` |
+| `/positions` ⏳ | Open positions with P&L — **needs trading support** | `/positions` |
+| `/orders` ⏳ | Resting (open) orders — **needs trading support** | `/orders` |
+| `/markets [series]` | Browse markets, optionally filter by series slug | `/markets bitcoin` |
+| `/market <market-slug>` | Market detail + top-of-book orderbook | `/market bitcoin-above-95k-by-april-30` |
 | `/search <query>` | Full-text market search (Octagon when key set) | `/search "bitcoin price" --min-volume 10000` |
 | `/search edge` | Edge ranking from Octagon's latest run | `/search edge --min-edge 5 --sort-by total_volume` |
 | `/similar <slug\|"text">` | Related markets (event → series → category) | `/similar will-bitcoin-reach-110000-by-december-31-2026 --top-k 20` |
-| `/clusters [--label X]` | Browse thematic clusters | `/clusters --label fed` |
-| `/clusters <id>` | List markets inside a cluster | `/clusters 42` |
-| `/clusters --behavioral` | Behavioral clusters by 30-day return vectors | `/clusters --behavioral` |
-| `/clusters --ranked` | Rank clusters by historical basket return | `/clusters --ranked --timeframe 1y --min-return 0.2` |
-| `/peers <ticker>` | Markets in the same cluster | `/peers KXBTCD-... --limit 50` |
-| `/correlate <t1> <t2> [...]` | Pairwise correlation matrix | `/correlate KX-A KX-B KX-C --window-days 90` |
-| `/basket build` | Diversified basket (cluster + correlation caps) | `/basket build --category crypto -n 8 --max-corr 0.6` |
-| `/basket backtest` | Total return / Sharpe / max DD on a basket | `/basket backtest --tickers KX-A,KX-B --timeframe 1y` |
-| `/basket backtest --theme <name>` | Backtest an editorial theme NAV | `/basket backtest --theme "Iran Escalation"` |
-| `/basket size` | Fractional Kelly sizing for picked legs | `/basket size --bankroll 1000 --kelly 0.25 --probs KX-A:0.62` |
-| `/basket size --auto-probs` | Auto-fetch probabilities via `markets/edge` | `/basket size --auto-probs --theme "AI Race Milestones" --bankroll 1000` |
-| `/basket validate` | Portfolio diagnostics (clusters, corr, clashes, warnings) | `/basket validate --theme "Iran Escalation" --bankroll 1000` |
-| `/basket candles` | OHLC bars for a weighted basket NAV | `/basket candles --tickers KX-A,KX-B --timeframe 6m` |
-| `/series events <ticker>` | Events inside a series | `/series events KXIPO` |
-| `/correlate --sides yes,no` | Side-aware correlation (sign-flipped) | `/correlate KX-A KX-B --sides yes,no` |
-| `/correlate --cells` | Cell detail (overlap_count, reason) | `/correlate KX-A KX-B --cells` |
-| `/events` / `/events <ticker>` | Octagon events + outcome ladder | `/events KXFEDCHAIRNOM-29` |
-| `/series` / `/series <ticker>` | Series rollup | `/series KXBTCD` |
-| `/series candles <ticker>` | Series-level NAV | `/series candles KXBTCD --timeframe 3m` |
+| `/clusters [--label X]` ⏳ | Browse thematic clusters — **Kalshi-only on Octagon** | `/clusters --label fed` |
+| `/clusters <id>` ⏳ | List markets inside a cluster — **Kalshi-only on Octagon** | `/clusters 42` |
+| `/clusters --behavioral` ⏳ | Behavioral clusters by 30-day return vectors — **Kalshi-only on Octagon** | `/clusters --behavioral` |
+| `/clusters --ranked` ⏳ | Rank clusters by historical basket return — **Kalshi-only on Octagon** | `/clusters --ranked --timeframe 1y --min-return 0.2` |
+| `/peers <ticker>` ⏳ | Markets in the same cluster — **Kalshi-only on Octagon** | `/peers KXBTCD-... --limit 50` |
+| `/correlate <t1> <t2> [...]` ⏳ | Pairwise correlation matrix — **Kalshi-only on Octagon** | `/correlate KX-A KX-B KX-C --window-days 90` |
+| `/basket build` ⏳ | Diversified basket (cluster + correlation caps) — **Kalshi-only on Octagon** | `/basket build --category crypto -n 8 --max-corr 0.6` |
+| `/basket backtest` ⏳ | Total return / Sharpe / max DD on a basket — **Kalshi-only on Octagon** | `/basket backtest --tickers KX-A,KX-B --timeframe 1y` |
+| `/basket backtest --theme <name>` ⏳ | Backtest an editorial theme NAV — **Kalshi-only on Octagon** | `/basket backtest --theme "Iran Escalation"` |
+| `/basket size` ⏳ | Fractional Kelly sizing for picked legs — **Kalshi-only on Octagon** | `/basket size --bankroll 1000 --kelly 0.25 --probs KX-A:0.62` |
+| `/basket size --auto-probs` ⏳ | Auto-fetch probabilities via `markets/edge` — **Kalshi-only on Octagon** | `/basket size --auto-probs --theme "AI Race Milestones" --bankroll 1000` |
+| `/basket validate` ⏳ | Portfolio diagnostics (clusters, corr, clashes, warnings) — **Kalshi-only on Octagon** | `/basket validate --theme "Iran Escalation" --bankroll 1000` |
+| `/basket candles` ⏳ | OHLC bars for a weighted basket NAV — **Kalshi-only on Octagon** | `/basket candles --tickers KX-A,KX-B --timeframe 6m` |
+| `/series events <ticker>` ⏳ | Events inside a series — **Kalshi-only on Octagon** | `/series events KXIPO` |
+| `/correlate --sides yes,no` ⏳ | Side-aware correlation (sign-flipped) — **Kalshi-only on Octagon** | `/correlate KX-A KX-B --sides yes,no` |
+| `/correlate --cells` ⏳ | Cell detail (overlap_count, reason) — **Kalshi-only on Octagon** | `/correlate KX-A KX-B --cells` |
+| `/events` / `/events <event-slug>` | Octagon events + outcome ladder | `/events fed-decision-in-september-762` |
+| `/series` / `/series <ticker>` ⏳ | Series rollup — **Kalshi-only on Octagon** | `/series KXBTCD` |
+| `/series candles <ticker>` ⏳ | Series-level NAV — **Kalshi-only on Octagon** | `/series candles KXBTCD --timeframe 3m` |
 | `/catalysts upcoming` | Markets closing soon, grouped by week | `/catalysts upcoming --days 14` |
 | `/themes` (registry) | Editorial narrative buckets | `/themes show "Iran Escalation"` |
 | `/themes report` | 25-theme dashboard with SEO + liquidity | `/themes report` |
 | `/themes audit` | Flag dead themes (high SEO + zero volume) | `/themes audit` |
 | `/themes overlap` | Cross-theme dedupe report | `/themes overlap` |
-| `/buy <market-slug> <shares> [price]` | Buy YES shares (price 0-1) | `/buy bitcoin-above-95k-by-april-30 5 0.56` |
-| `/sell <market-slug> <shares> [price]` | Sell YES shares | `/sell bitcoin-above-95k-by-april-30 5 0.60` |
-| `/cancel <order_id>` | Cancel a resting order | `/cancel abc-123-def` |
+| `/buy <market-slug> <shares> [price]` ⏳ | Buy YES shares (price 0-1) — **not implemented** | `/buy bitcoin-above-95k-by-april-30 5 0.56` |
+| `/sell <market-slug> <shares> [price]` ⏳ | Sell YES shares — **not implemented** | `/sell bitcoin-above-95k-by-april-30 5 0.60` |
+| `/cancel <order_id>` ⏳ | Cancel a resting order — **not implemented** | `/cancel abc-123-def` |
 
-**Trade confirmation:** `/buy` and `/sell` always show a confirmation prompt before executing. Type `yes` to confirm or `no` to cancel.
+**Trading is not available yet.** These commands return an explanation instead of
+placing an order; Polymarket orders need EIP-712 wallet signing and on-chain
+USDC/CTF allowances. When they land, `/buy` and `/sell` will show a confirmation
+prompt before executing.
 
 **Price format:** Prices are decimal USDC in [0, 1]. `0.56` = $0.56 per share = 56% implied probability.
 
@@ -431,13 +443,17 @@ Routes natural language trade instructions to the appropriate trading action. **
 | `cancel_orders` | Batch cancel | `order_ids[]` |
 | `place_batch_orders` | Place multiple orders at once | `orders[]` (array of order specs) |
 
-### portfolio_overview
+### portfolio_overview ⏳
 
-Quick composite tool that fetches balance + all positions in a single call. Used when the agent needs a fast portfolio snapshot.
+Quick composite tool that fetches balance + all positions in a single call.
+**Not registered yet** — it reads positions through a wallet, which arrives with
+trading support, so the agent is not offered it. `portfolio_review` is
+unregistered for the same reason.
 
 ### exchange_status
 
-Checks whether the exchange is currently open and trading is active.
+Reachability check against the Polymarket CLOB. Polymarket trades 24/7, so there
+are no exchange hours to report.
 
 ### web_search
 
@@ -482,8 +498,8 @@ share, which implies a **56% probability** of that outcome. YES + NO prices sum 
 
 ## Tips
 
-- **Demo mode**: Set `POLYMARKET_USE_DEMO=true` to trade with fake money while learning
+- **Staging**: Set `POLYMARKET_USE_STAGING=true` to point reads at Polymarket's staging hosts (currently unverified — the documented hostnames do not resolve)
 - **Multi-step research**: The search router automatically drills down — ask "what's the implied probability of X" and it will find the event, then fetch contract-level prices
 - **Be specific**: "BTC markets closing this week" works better than "crypto"
-- **Trade safely**: All trades require explicit confirmation. The agent will show you the order details and ask for approval
+- **Trade safely**: when trading lands, all orders will require explicit confirmation — the agent shows the order details and asks for approval
 - **Web + Markets**: Combine web search with market data — "what's the latest polling for 2028 and how do market odds compare?"
