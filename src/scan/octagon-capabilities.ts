@@ -4,10 +4,8 @@
  * Two distinct reasons a feature can be unavailable:
  *
  *  - `unported`  Octagon has a venue-generic endpoint that supports Polymarket
- *                (`/v1/predictions/*` with `venue=polymarket`), but this client
- *                still calls the deprecated Kalshi-scoped
- *                `/v1/prediction-markets/kalshi/*` routes. Repointing the client
- *                enables these — that is the next phase of the port.
+ *                (`/v1/predictions/*` with `venue=polymarket`) and this client
+ *                now calls it. These features are live.
  *
  *  - `kalshi-only`  Octagon exposes no venue-generic equivalent at all. These
  *                stay unavailable until Octagon ships one.
@@ -49,23 +47,18 @@ const FEATURE_REASON: Record<OctagonFeature, Reason> = {
 };
 
 /**
- * Every Octagon feature is currently unavailable for Polymarket, because the
- * client still targets the Kalshi-scoped routes. Repointing it flips the
- * `unported` group on; this predicate is the single place that changes.
+ * The client now calls the venue-generic `/v1/predictions/*` routes, so every
+ * feature with a Polymarket-capable endpoint is live. What remains false is
+ * exactly the set Octagon serves for Kalshi only.
  */
-export function octagonSupports(_feature: OctagonFeature): boolean {
-  return false;
+export function octagonSupports(feature: OctagonFeature): boolean {
+  return FEATURE_REASON[feature] !== 'kalshi-only';
 }
 
 export function octagonUnavailableMessage(feature: OctagonFeature, command: string): string {
   const reason = FEATURE_REASON[feature];
   if (reason === 'unported') {
-    return (
-      `\`${command}\` is not available for Polymarket yet.\n\n` +
-      `Octagon supports Polymarket on its venue-generic API, but this CLI still calls the ` +
-      `Kalshi-scoped routes — so running it would return Kalshi markets. It is enabled once ` +
-      `the Octagon client is repointed.`
-    );
+    return `\`${command}\` is not available for Polymarket yet.`;
   }
   return (
     `\`${command}\` is not available for Polymarket.\n\n` +
@@ -74,17 +67,16 @@ export function octagonUnavailableMessage(feature: OctagonFeature, command: stri
   );
 }
 
-/** Commands hidden from help, autocomplete and the intro list while gated. */
+/**
+ * Commands hidden from help, autocomplete and the intro list while gated.
+ * Every one of these needs an Octagon capability that exists for Kalshi only.
+ */
 export const DEFERRED_COMMANDS = [
-  'similar',
   'clusters',
   'peers',
   'correlate',
   'basket',
-  'events',
   'series',
-  'trust',
-  'report',
 ] as const;
 
 export function isDeferredCommand(name: string): boolean {

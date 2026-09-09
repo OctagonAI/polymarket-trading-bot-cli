@@ -61,15 +61,24 @@ export function deleteEditorialTheme(db: Database, name: string): boolean {
   return before > 0;
 }
 
+/**
+ * Series keys are stored lowercase. Kalshi tickers were uppercase and were
+ * normalized that way; Polymarket slugs are lowercase, and uppercasing them
+ * produces a key that matches nothing in the event index.
+ */
+function normalizeSeriesKey(s: string): string {
+  return s.trim().toLowerCase();
+}
+
 export function addSeriesToTheme(db: Database, themeName: string, seriesTickers: string[]): number {
   const stmt = db.query(
     `INSERT OR IGNORE INTO editorial_theme_series (theme_name, series_ticker) VALUES ($name, $series)`,
   );
   let added = 0;
   for (const s of seriesTickers) {
-    const upper = s.trim().toUpperCase();
-    if (!upper) continue;
-    const changes = stmt.run({ $name: themeName, $series: upper });
+    const key = normalizeSeriesKey(s);
+    if (!key) continue;
+    const changes = stmt.run({ $name: themeName, $series: key });
     if (changes.changes > 0) added += 1;
   }
   return added;
@@ -81,8 +90,7 @@ export function removeSeriesFromTheme(db: Database, themeName: string, seriesTic
   );
   let removed = 0;
   for (const s of seriesTickers) {
-    const upper = s.trim().toUpperCase();
-    const changes = stmt.run({ $name: themeName, $series: upper });
+    const changes = stmt.run({ $name: themeName, $series: normalizeSeriesKey(s) });
     removed += changes.changes;
   }
   return removed;

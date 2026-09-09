@@ -10,8 +10,13 @@ import { getThemeTickers } from '../db/themes.js';
  * `category` and `tags` columns of the local event index.
  *
  * Polymarket has no fixed category taxonomy the way Kalshi did — it has free-form
- * tags — so these are best-effort groupings. Phase 3 replaces this with Octagon's
- * derived `meta_category`.
+ * tags — so these are best-effort groupings.
+ *
+ * Deliberately NOT switched to Octagon's `meta_category`: that field only exists
+ * on the few hundred events Octagon has scored, and collapses to a handful of
+ * labels (Crypto / Politics / Sports / …). Resolving themes against the local
+ * Gamma index covers the whole active universe at a finer grain, so Octagon is
+ * the wrong source here even though it is the right source for edge and reports.
  */
 export const CATEGORY_MAP: Record<string, string> = {
   'climate': 'Climate',

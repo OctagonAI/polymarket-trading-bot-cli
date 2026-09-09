@@ -11,7 +11,7 @@ import {
   type PagedResult,
   type SimilarMarketRow,
   type RankedClustersResponse,
-} from '../scan/octagon-kalshi-api.js';
+} from '../scan/octagon-api.js';
 import { formatTable } from './scan-formatters.js';
 
 function truncate(s: string, max: number): string {

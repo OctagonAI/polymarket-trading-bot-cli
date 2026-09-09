@@ -88,7 +88,7 @@ describe('handleReport', () => {
 
   test('Octagon event lookup 404 + market resolver failure → EVENT_NOT_FOUND', async () => {
     installFetchMock((url) => {
-      // Octagon events endpoint 404; Kalshi /markets, /events, series all 404
+      // Octagon events endpoint 404; Gamma /markets, /events all 404
       return new Response(JSON.stringify({ error: { code: 'not_found' } }), { status: 404 });
     });
     const resp = await handleReport(makeArgs({ positionalArgs: ['KX-BOGUS'] }));
@@ -100,7 +100,7 @@ describe('handleReport', () => {
   test('normalizes a Polymarket URL to a slug before lookup', async () => {
     let eventLookupUrl = '';
     installFetchMock((url) => {
-      if (url.includes('/v1/prediction-markets/events/')) {
+      if (url.includes('/v1/predictions/events/')) {
         // Capture the FIRST lookup (the user-input → event), not the later
         // re-lookup with the canonical event_ticker.
         if (!eventLookupUrl) eventLookupUrl = url;
@@ -125,7 +125,7 @@ describe('handleReport', () => {
     // outcome_probabilities before handing it to the invoker.
     const gammaMarketCalls: string[] = [];
     installFetchMock((url) => {
-      if (url.includes('/v1/prediction-markets/events/')) {
+      if (url.includes('/v1/predictions/events/')) {
         return jsonResponse({
           event_ticker: 'when-will-tim-cook-leave-apple',
           name: 'When will Tim Cook leave Apple?',
@@ -150,8 +150,15 @@ describe('handleReport', () => {
           },
         ]);
       }
-      if (url.includes('/responses')) {
-        return jsonResponse({ output_text: '# Report body' });
+      // Cached reports are read straight from the Reports API, not the agent.
+      if (url.includes('/predictions/reports/polymarket/')) {
+        return jsonResponse({
+          event_ticker: 'when-will-tim-cook-leave-apple',
+          venue: 'polymarket',
+          versions: [{ run_id: 'r1' }],
+          markdown_report: '# Report body',
+          run_id: 'r1',
+        });
       }
       return jsonResponse({});
     });

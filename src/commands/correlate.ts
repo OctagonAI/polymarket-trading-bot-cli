@@ -1,7 +1,7 @@
 import { wrapSuccess, wrapError } from './json.js';
 import type { CLIResponse } from './json.js';
 import type { ParsedArgs } from './parse-args.js';
-import { getCorrelations, type CorrelationResponseWithSides } from '../scan/octagon-kalshi-api.js';
+import { getCorrelations, type CorrelationResponseWithSides } from '../scan/octagon-api.js';
 import { formatTable } from './scan-formatters.js';
 
 function shortTicker(t: string, max = 18): string {

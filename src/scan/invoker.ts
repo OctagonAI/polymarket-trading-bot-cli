@@ -1,20 +1,61 @@
 import { lookupMarket } from '../tools/polymarket/markets.js';
+import { fetchEventBySlug } from '../tools/polymarket/events.js';
 import { logger } from '../utils/logger.js';
 import type { OctagonInvoker, OctagonVariant } from './types.js';
 
 /**
- * Build the Polymarket event URL Octagon resolves reports against.
+ * Octagon report access, split across two surfaces for a deliberate reason:
  *
- * Much simpler than the Kalshi equivalent, which had to look up the series title
- * to synthesise a URL slug: a Polymarket event slug IS the URL path.
+ *  - Reading a cached report  → GET /v1/predictions/reports/polymarket/{slug}
+ *    A plain HTTP read. No agent inference, no credits, and it returns the
+ *    `versions[]` list so callers can tell "never generated" from "stale".
+ *
+ *  - Generating a fresh one   → POST /v1/responses (prediction-markets agent)
+ *    The REST route for generation (POST /predictions/reports/...) is async: it
+ *    returns 202 + a run_id and the caller must poll for completion, which can
+ *    take several minutes. The agent holds the connection open until the report
+ *    exists, so it stays a single awaited call here. Both write to the same
+ *    report store, so a generate-then-read round trip is consistent.
+ *
+ * Both are keyed by the Polymarket EVENT SLUG (the polymarket.com/event/<slug>
+ * segment). Note this is not always Octagon's `event_ticker` — see the header of
+ * octagon-events-api.ts.
  */
-async function buildPolymarketMarketUrl(ticker: string): Promise<string> {
-  const market = await lookupMarket(ticker);
+
+const VENUE = 'polymarket';
+
+function octagonBaseUrl(): string {
+  return process.env.OCTAGON_BASE_URL ?? 'https://api.octagonai.co/v1';
+}
+
+function requireApiKey(): string {
+  const apiKey = process.env.OCTAGON_API_KEY;
+  if (!apiKey) throw new Error('OCTAGON_API_KEY not set. Get one at https://app.octagonai.co');
+  return apiKey;
+}
+
+/**
+ * Resolve CLI input to the Polymarket event slug Octagon keys reports by.
+ * Accepts a polymarket.com URL, an event slug, or a market slug/conditionId
+ * (resolved to its parent event via Gamma).
+ *
+ * The event lookup has to come first: an event slug is not a market slug, so
+ * resolving through markets alone rejects exactly the identifier that reports
+ * are keyed by.
+ */
+async function resolveEventSlug(input: string): Promise<string> {
+  const url = input.match(/^https?:\/\/(?:www\.)?polymarket\.com\/(?:event|market)\/([^/?#]+)/i);
+  const candidate = (url ? url[1] : input).toLowerCase();
+  if (url) return candidate;
+
+  const event = await fetchEventBySlug(candidate).catch(() => undefined);
+  if (event) return (event.event_ticker || candidate).toLowerCase();
+
+  const market = await lookupMarket(input);
   if (!market) {
-    throw new Error(`Market '${ticker}' not found on Polymarket. Use polymarket_search to find valid slugs.`);
+    throw new Error(`'${input}' not found on Polymarket. Use polymarket_search to find valid slugs.`);
   }
-  const eventSlug = market.event_ticker || market.ticker;
-  return `https://polymarket.com/event/${eventSlug.toLowerCase()}`;
+  return (market.event_ticker || market.ticker).toLowerCase();
 }
 
 /**
@@ -62,29 +103,65 @@ function extractTextFromResponse(data: unknown): string {
   return JSON.stringify(data);
 }
 
+interface ReportResponse {
+  event_ticker: string;
+  venue: string;
+  requested_url: string | null;
+  versions: unknown[];
+  markdown_report: string | null;
+  run_id: string | null;
+}
+
 /**
- * Call the Octagon API with a Kalshi market URL or ticker.
- * Octagon only accepts full Kalshi URLs (e.g. https://kalshi.com/markets/series/event/ticker).
- * If a ticker is passed, it will be resolved to a URL via the Kalshi API.
+ * GET the newest cached report for an event.
+ *
+ * Returns the raw JSON string OctagonClient.parseReport consumes. The response
+ * is re-shaped with a `latest_report` alias because the agent nests the markdown
+ * one level deeper, and the parser reads that path; an empty `versions` array is
+ * passed through untouched so the parser can flag a cache miss.
  */
-export async function callOctagon(input: string, variant: OctagonVariant): Promise<string> {
-  const apiKey = process.env.OCTAGON_API_KEY;
-  const baseUrl = process.env.OCTAGON_BASE_URL ?? 'https://api.octagonai.co/v1';
+async function fetchCachedReport(slug: string): Promise<string> {
+  const apiKey = requireApiKey();
+  const url = `${octagonBaseUrl()}/predictions/reports/${VENUE}/${encodeURIComponent(slug)}?version=latest`;
 
-  if (!apiKey) throw new Error('OCTAGON_API_KEY not set. Get one at https://app.octagonai.co');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60_000);
+  let resp: Response;
+  try {
+    resp = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` }, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 
+  // No report has ever been generated for this event — a cache miss, not an error.
+  if (resp.status === 404) return JSON.stringify({ event_ticker: slug, venue: VENUE, versions: [] });
+
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '');
+    throw new Error(`Octagon reports API ${resp.status} (GET ${VENUE}/${slug}): ${body.slice(0, 200)}`);
+  }
+
+  const data = (await resp.json()) as ReportResponse;
+  return JSON.stringify({
+    ...data,
+    latest_report: data.markdown_report ? { markdown_report: data.markdown_report, run_id: data.run_id } : undefined,
+  });
+}
+
+/**
+ * Generate a fresh report via the prediction-markets agent, which blocks until
+ * the run completes. Retries the gateway errors a long-running run tends to hit.
+ */
+async function generateReport(slug: string, variant: OctagonVariant): Promise<string> {
+  const apiKey = requireApiKey();
+  const baseUrl = octagonBaseUrl();
   const model = variant === 'default'
     ? 'octagon-prediction-markets-agent'
     : `octagon-prediction-markets-agent:${variant}`;
 
-  // Octagon requires a full Kalshi URL — resolve tickers to URLs
-  const marketUrl = input.startsWith('https://kalshi.com/')
-    ? input
-    : await buildPolymarketMarketUrl(input);
-
-  // Refresh reports can take several minutes to generate; cache is fast
-  const timeoutMs = variant === 'cache' ? 60_000 : 600_000;
-  const reqBody = JSON.stringify({ model, input: marketUrl });
+  // The agent accepts an event slug or a full polymarket.com URL.
+  const timeoutMs = 600_000;
+  const reqBody = JSON.stringify({ model, input: `https://polymarket.com/event/${slug}` });
   const MAX_RETRIES = 3;
   const RETRY_DELAYS = [15_000, 30_000, 60_000]; // 15s, 30s, 60s
 
@@ -143,7 +220,7 @@ export async function callOctagon(input: string, variant: OctagonVariant): Promi
     const body = await resp.text().catch(() => '');
     const isHtml = body.trimStart().startsWith('<');
     const detail = isHtml ? '' : body.slice(0, 200);
-    const maskedKey = apiKey!.length > 4 ? '...' + apiKey!.slice(-4) : '****';
+    const maskedKey = apiKey.length > 4 ? '...' + apiKey.slice(-4) : '****';
     const curl = `curl -X POST '${baseUrl}/responses' \\\n  -H 'Authorization: Bearer ${maskedKey}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${reqBody}'`;
     throw new Error(
       `Octagon API error: ${resp.status} ${resp.statusText}${detail ? ` — ${detail}` : ''}\n\nReproduce with:\n${curl}`
@@ -155,8 +232,17 @@ export async function callOctagon(input: string, variant: OctagonVariant): Promi
 }
 
 /**
+ * Fetch an Octagon report for a Polymarket market, event slug or event URL.
+ * `cache` reads the stored report; any other variant generates a fresh one.
+ */
+export async function callOctagon(input: string, variant: OctagonVariant): Promise<string> {
+  requireApiKey();
+  const slug = await resolveEventSlug(input);
+  return variant === 'cache' ? fetchCachedReport(slug) : generateReport(slug, variant);
+}
+
+/**
  * Factory for the OctagonInvoker used by ScanLoop.
- * Calls the Octagon Prediction Markets Agent API (OpenAI-compatible).
  */
 export function createOctagonInvoker(): OctagonInvoker {
   return async (ticker: string, variant: OctagonVariant): Promise<string> => {

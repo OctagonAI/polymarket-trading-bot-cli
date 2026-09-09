@@ -37,7 +37,8 @@ import {
   type EditorialThemeWithSeries,
 } from '../db/editorial-themes.js';
 import { type SeriesRollup } from './series.js';
-import { listKalshiSeries, type SeriesRollupRow } from '../scan/octagon-kalshi-api.js';
+import { listKalshiSeries, type SeriesRollupRow } from '../scan/octagon-api.js';
+import { octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 import { formatTable } from './scan-formatters.js';
 
 function truncate(s: string, max: number): string {
@@ -225,6 +226,22 @@ function importHandler(db: ReturnType<typeof getDb>, path?: string): CLIResponse
   if (!parsed.themes || !Array.isArray(parsed.themes)) {
     return wrapError('themes', 'BAD_SHAPE', `Expected { "themes": [...] } in ${importPath}`);
   }
+  // The shipped seed is still the Kalshi-era file: its series entries are Kalshi
+  // series tickers (KX*), which resolve to nothing on Polymarket. Importing it
+  // would quietly fill the registry with dead mappings, so refuse instead.
+  const kalshiSeries = parsed.themes
+    .flatMap((t) => t.series ?? [])
+    .filter((sTicker) => /^KX[A-Z0-9]/.test(sTicker));
+  if (kalshiSeries.length > 0) {
+    return wrapError(
+      'themes',
+      'KALSHI_SEED',
+      `${importPath} maps themes to Kalshi series tickers (e.g. ${kalshiSeries.slice(0, 3).join(', ')}), ` +
+      `which do not exist on Polymarket. A Polymarket seed file has not been built yet — ` +
+      `create themes with \`themes create <name>\` and \`themes add-series <name> <event-slug>\`, ` +
+      `or pass your own file: \`themes import <path>\`.`,
+    );
+  }
   let createdOrUpdated = 0;
   let seriesAdded = 0;
   for (const t of parsed.themes) {
@@ -281,6 +298,13 @@ async function reportHandler(db: ReturnType<typeof getDb>, args: ParsedArgs): Pr
     return wrapError('themes', 'EMPTY_REGISTRY', 'No editorial themes registered. Run `themes import` first.');
   }
   // Single server-side rollup call instead of the old paginate-then-reduce.
+  // The liquidity half of this dashboard comes from Octagon's series rollup,
+  // which exists for Kalshi only — calling it here would price Polymarket themes
+  // off Kalshi series.
+  if (!octagonSupports('series-rollup')) {
+    return wrapError('themes', 'UNAVAILABLE', octagonUnavailableMessage('series-rollup', 'themes report'));
+  }
+
   // Pull a generous page (most universes < 200 series).
   const allRollups: SeriesRollupRow[] = [];
   let cursor: string | undefined;
@@ -290,7 +314,7 @@ async function reportHandler(db: ReturnType<typeof getDb>, args: ParsedArgs): Pr
     if (!page.has_more || !page.next_cursor) break;
     cursor = page.next_cursor;
   }
-  const rollupByTicker = new Map(allRollups.map((r) => [r.series_ticker, {
+  const rollupByTicker = new Map(allRollups.map((r) => [r.series_ticker.toLowerCase(), {
     series_ticker: r.series_ticker,
     market_count: r.market_count,
     active_count: r.active_count,
@@ -323,7 +347,7 @@ async function reportHandler(db: ReturnType<typeof getDb>, args: ParsedArgs): Pr
     let activeMarkets = 0;
     let totalVolume = 0;
     for (const seriesTicker of detail?.series ?? []) {
-      const r = rollupByTicker.get(seriesTicker.toUpperCase());
+      const r = rollupByTicker.get(seriesTicker.toLowerCase());
       if (r) {
         seriesList.push({ ...r, theme_match: true });
         activeMarkets += r.active_count;
@@ -331,7 +355,7 @@ async function reportHandler(db: ReturnType<typeof getDb>, args: ParsedArgs): Pr
       } else {
         // Theme references a series with no current active markets — record a stub
         seriesList.push({
-          series_ticker: seriesTicker.toUpperCase(),
+          series_ticker: seriesTicker.toLowerCase(),
           market_count: 0,
           active_count: 0,
           total_volume_24h: 0,

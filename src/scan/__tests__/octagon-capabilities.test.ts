@@ -15,24 +15,27 @@ describe('octagon capabilities', () => {
     }
   });
 
-  test('no Octagon feature is available for Polymarket yet', () => {
+  test('every deferred command is deferred because Octagon has no Polymarket route', () => {
+    // Nothing stays gated for want of porting: the client now calls the
+    // venue-generic routes, so a false here means Octagon serves Kalshi only.
     for (const cmd of DEFERRED_COMMANDS) {
       expect(octagonSupports(COMMAND_FEATURE[cmd]!)).toBe(false);
+      expect(octagonUnavailableMessage(COMMAND_FEATURE[cmd]!, cmd)).toContain('Kalshi only');
     }
   });
 
-  test('distinguishes "not ported yet" from "Octagon has no equivalent"', () => {
-    // report has a venue-generic endpoint; we just have not repointed the client
-    expect(octagonUnavailableMessage('reports', 'report')).toContain('venue-generic');
-    // clusters has no Polymarket equivalent at all
-    expect(octagonUnavailableMessage('clusters', 'clusters')).toContain('Kalshi only');
+  test('the venue-generic features are live', () => {
+    for (const feature of ['market-search', 'similar-markets', 'events', 'reports', 'trader-trust'] as const) {
+      expect(octagonSupports(feature)).toBe(true);
+    }
   });
 
   test('isDeferredCommand only matches gated commands', () => {
     expect(isDeferredCommand('clusters')).toBe(true);
-    expect(isDeferredCommand('report')).toBe(true);
-    // These run natively against Polymarket and must stay available
-    for (const live of ['search', 'analyze', 'watch', 'portfolio', 'catalysts', 'themes', 'help']) {
+    expect(isDeferredCommand('series')).toBe(true);
+    // These run against Polymarket — natively or via Octagon — and must stay available
+    for (const live of ['search', 'analyze', 'watch', 'portfolio', 'catalysts', 'themes', 'help',
+                        'report', 'trust', 'events', 'similar']) {
       expect(isDeferredCommand(live)).toBe(false);
     }
   });

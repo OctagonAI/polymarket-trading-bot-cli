@@ -6,7 +6,7 @@ import {
   backtestBasket,
   getBasketSize,
   getBasketCandles,
-  searchKalshiMarkets,
+  searchOctagonMarkets,
   validateBasket,
   getMarketsEdge,
   type BasketBuildResponse,
@@ -19,7 +19,7 @@ import {
   type BasketValidateResponse,
   type ValidateBasketBody,
   type ValidateBasketLeg,
-} from '../scan/octagon-kalshi-api.js';
+} from '../scan/octagon-api.js';
 import { formatTable } from './scan-formatters.js';
 import { getDb } from '../db/index.js';
 import { getEditorialTheme } from '../db/editorial-themes.js';
@@ -97,12 +97,12 @@ async function tickersFromTheme(themeName: string, topPerSeries: number, maxTota
   if (!theme) throw new Error(`No editorial theme named "${themeName}". Try \`themes list\` or \`themes import\`.`);
   if (theme.series.length === 0) throw new Error(`Theme "${themeName}" has no mapped series.`);
   // Pull the universe once and bucket by series prefix.
-  const universe = await searchKalshiMarkets({ limit: 200 });
+  const universe = await searchOctagonMarkets({ limit: 200 });
   const all = [...universe.data];
   let cursor = universe.next_cursor;
   let pages = 1;
   while (cursor && universe.has_more && pages < 25) {
-    const page = await searchKalshiMarkets({ limit: 200, cursor });
+    const page = await searchOctagonMarkets({ limit: 200, cursor });
     all.push(...page.data);
     if (!page.has_more || !page.next_cursor) break;
     cursor = page.next_cursor;

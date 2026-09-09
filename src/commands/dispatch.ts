@@ -31,7 +31,7 @@ import { handleClusters, formatClustersHuman } from './clusters.js';
 import { handlePeers, formatPeersHuman } from './peers.js';
 import { handleCorrelate, formatCorrelationHuman } from './correlate.js';
 import { handleBasket, formatBasketHuman } from './basket.js';
-import { searchKalshiMarkets, getMarketsWithEdge } from '../scan/octagon-kalshi-api.js';
+import { searchOctagonMarkets, getEventsWithEdge } from '../scan/octagon-api.js';
 import { formatMarketSearchHuman, formatMarketsWithEdgeHuman } from './search-remote.js';
 import { handleEvents, formatEventsHuman } from './events.js';
 import { handleTrust, formatTrustHuman } from './trust.js';
@@ -197,7 +197,7 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
         if (process.env.OCTAGON_API_KEY) {
           // edge_pp_min is asymmetric (only filters lower bound). Skip when
           // user passes --min-edge 0 so they see the full distribution.
-          const data = await getMarketsWithEdge({
+          const data = await getEventsWithEdge({
             category: args.category,
             ...(minEdgePp > 0 ? { edge_pp_min: minEdgePp } : {}),
             sort_by: (args.sortBy as 'edge_pp' | 'expected_return' | 'total_volume' | 'model_probability' | undefined) ?? 'edge_pp',
@@ -259,7 +259,7 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
         const serverSortBy = (args.sortBy === 'volume_24h' || args.sortBy === 'close_time' || args.sortBy === 'last_price')
           ? args.sortBy
           : undefined;
-        const page = await searchKalshiMarkets({
+        const page = await searchOctagonMarkets({
           q: query,
           category: args.category,
           series_ticker: args.seriesTicker,

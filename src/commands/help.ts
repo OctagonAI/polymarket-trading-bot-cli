@@ -185,9 +185,9 @@ See README → Scripting & Parallel Use for the full picture.`,
 
     similar: `**${p}similar** — Semantic market search (Octagon-powered)
 
-${p}similar <ticker>                  Markets near this ticker by embedding distance
+${p}similar <market-slug>             Markets near this one by embedding distance
 ${p}similar -q "free-text query"      Markets matching free-text intent (server-side embed)
-${p}similar <ticker> --top-k 25       Return top-25 nearest neighbors
+${p}similar <market-slug> --top-k 25  Return top-25 nearest neighbors
 ${p}similar -q "..." --category crypto --min-volume 10000 --close-before 2026-08-19T00:00:00Z
 
 Flags:
@@ -252,11 +252,11 @@ Output ranks pairs ascending by correlation — most-uncorrelated first.`,
 
     report: `**${p}report** — Print the full Octagon markdown report for an event
 
-${p}report <event_ticker>           Cached report body (most recent)
+${p}report <event-slug>           Cached report body (most recent)
 ${p}report <market_ticker>          Resolves to the parent event automatically
 ${p}report <series_ticker>          Resolves to the latest event in the series
 ${p}report <polymarket_url>             Accepts a full polymarket.com URL too
-${p}report <ticker> --refresh       Force a fresh pull from Octagon (costs 3 credits)
+${p}report <event-slug> --refresh       Force a fresh pull from Octagon (costs 3 credits)
 
 The full deep-research markdown body — same content the OctagonAI web app shows.
 Lookup is more lenient than \`analyze\`: tries Octagon's event endpoint first
@@ -275,9 +275,9 @@ the error message instead.`,
 
     trust: `**${p}trust** — Trader Trust scorecard (market-integrity metrics)
 
-${p}trust <event_ticker>                       Table across all markets in the event
-${p}trust <event_ticker> --market <market>     Single-market detail card
-${p}trust <event_ticker> --market <market> --verbose
+${p}trust <event-slug>                       Table across all markets in the event
+${p}trust <event-slug> --market <market-slug>     Single-market detail card
+${p}trust <event-slug> --market <market-slug> --verbose
                                             Include raw evidence + confidence/freshness
 
 Six per-market scores (each 0-100), produced by Octagon's deterministic
@@ -291,7 +291,7 @@ Trader Trust calculation:
   quote_risk         Quote-side risk                        (higher = WORSE)
 
 Flags:
-  --market <ticker>   Drill into one market in the event
+  --market <slug>     Drill into one market in the event
   --verbose           Show evidence (raw metrics), confidence, data freshness
   --json              JSON envelope output
 
@@ -364,8 +364,8 @@ resolutions cluster up so you can position before catalyst risk.`,
     themes: `**${p}themes** — Editorial narrative registry (curated theme buckets)
 
 ${p}themes                                List registered editorial themes
-${p}themes import                         Seed from data/themes_seo.json (25 starter themes)
-${p}themes import <path>                  Import from a custom JSON file
+${p}themes import <path>                  Import themes from a JSON file
+${p}                                      (no Polymarket seed file ships yet)
 ${p}themes export <path>                  Export current registry
 ${p}themes show "Iran Escalation"         Drill into one theme
 ${p}themes create "My Theme" --tickers slug-a,slug-b --label "..." [--min-volume N]
@@ -496,7 +496,7 @@ Discovery:
   search --aggregate-by series  Roll up results to series level
   search themes                 (Legacy) Category labels
   search edge [--min-edge N]    Edge ranking (Octagon when key set, else local)
-  similar <ticker>              Semantic neighbors (embedding distance)
+  similar <market-slug>         Semantic neighbors (embedding distance)
   similar -q "free text"        Semantic search by natural-language query
   clusters [--label X]          Browse thematic clusters
   clusters <id>                 List markets in a cluster
@@ -504,21 +504,21 @@ Discovery:
   clusters --ranked             Rank clusters by historical basket return
   peers <ticker>                Find markets in the same cluster
   events                        Octagon events (event ↔ outcome ladder)
-  events <event_ticker>         Drill into one event's outcome probabilities
+  events <event-slug>         Drill into one event's outcome probabilities
   series                        Series rollup with 24h vol, market count
   series <SERIES>               Sub-markets in one series
   series candles <SERIES>       Series NAV (basket of top sub-markets)
   catalysts upcoming --days 30  Markets closing soon, grouped by week
-  trust <event_ticker>          Trader Trust scorecard (table across markets)
-  trust <event> --market <mkt>  Single-market trust detail card
-  report <event_ticker>         Full Octagon markdown report (use --refresh for fresh pull)
+  trust <event-slug>          Trader Trust scorecard (table across markets)
+  trust <event-slug> --market <slug>  Single-market trust detail card
+  report <event-slug>         Full Octagon markdown report (use --refresh for fresh pull)
   watch <ticker>                Live price/orderbook feed
   watch --theme <theme>         Continuous theme scan (Ctrl+C to stop)
   watch --refresh               Force index rebuild before watching
 
 Editorial themes (narrative registry):
   themes                        List registered editorial themes
-  themes import                 Seed from data/themes_seo.json (25 starter themes)
+  themes import <path>          Seed from a JSON file (no Polymarket seed ships yet)
   themes show <name>            Drill into one theme
   themes report                 25-theme dashboard with SEO + liquidity
   themes audit                  Flag dead themes (high SEO + zero volume)
@@ -584,21 +584,21 @@ Discovery:
   /clusters --ranked             Rank clusters by historical basket return
   /peers <ticker>                Find markets in the same cluster
   /events                        Octagon events (event ↔ outcome ladder)
-  /events <event_ticker>         Drill into one event's outcome probabilities
+  /events <event-slug>         Drill into one event's outcome probabilities
   /series                        Series rollup with 24h vol, market count
   /series <SERIES>               Sub-markets in one series
   /series candles <SERIES>       Series NAV (basket of top sub-markets)
   /catalysts upcoming --days 30  Markets closing soon, grouped by week
-  /trust <event_ticker>          Trader Trust scorecard (table across markets)
-  /trust <event> --market <mkt>  Single-market trust detail card
-  /report <event_ticker>         Full Octagon markdown report (use --refresh for fresh pull)
+  /trust <event-slug>          Trader Trust scorecard (table across markets)
+  /trust <event-slug> --market <slug>  Single-market trust detail card
+  /report <event-slug>         Full Octagon markdown report (use --refresh for fresh pull)
   /watch <ticker>                Live price/orderbook feed
   /watch --theme <theme>         Continuous theme scan (Esc to stop)
   /watch --refresh               Force index rebuild before watching
 
 Editorial themes (narrative registry):
   /themes                        List registered editorial themes
-  /themes import                 Seed from data/themes_seo.json (25 starter themes)
+  /themes import <path>          Seed from a JSON file (no Polymarket seed ships yet)
   /themes show <name>            Drill into one theme
   /themes report                 25-theme dashboard with SEO + liquidity
   /themes audit                  Flag dead themes (high SEO + zero volume)

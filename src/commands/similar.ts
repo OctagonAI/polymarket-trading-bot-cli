@@ -1,7 +1,17 @@
 import { wrapSuccess, wrapError } from './json.js';
 import type { CLIResponse } from './json.js';
 import type { ParsedArgs } from './parse-args.js';
-import { findSimilarMarkets, type SimilarResponse, type SimilarMarketRow } from '../scan/octagon-kalshi-api.js';
+import { findSimilarMarkets, stripVenuePrefix, type SimilarResponse, type SimilarMarketRow } from '../scan/octagon-api.js';
+
+/**
+ * The venue-generic /markets/similar route returns a bare page, where the
+ * Kalshi-era route echoed the anchor back. The anchor is re-attached here so the
+ * rendered output and the --json shape are unchanged.
+ */
+export interface SimilarView extends SimilarResponse {
+  anchor_ticker: string | null;
+  anchor_query: string | null;
+}
 import { formatTable } from './scan-formatters.js';
 
 function truncate(s: string, max: number): string {
@@ -26,7 +36,7 @@ function looksLikeTicker(s: string): boolean {
   return /^[A-Z0-9._-]+$/i.test(s) && /[A-Z]/i.test(s) && s.includes('-');
 }
 
-export async function handleSimilar(args: ParsedArgs): Promise<CLIResponse<SimilarResponse>> {
+export async function handleSimilar(args: ParsedArgs): Promise<CLIResponse<SimilarView>> {
   const positional = args.positionalArgs.join(' ').trim();
   let anchorTicker = args.ticker;
   let q = args.query;
@@ -34,7 +44,7 @@ export async function handleSimilar(args: ParsedArgs): Promise<CLIResponse<Simil
   if (!anchorTicker && !q && positional) {
     // Single-token uppercase-ish string with a hyphen → treat as ticker, else as query.
     if (looksLikeTicker(positional)) {
-      anchorTicker = positional.toUpperCase();
+      anchorTicker = positional.toLowerCase();
     } else {
       q = positional;
     }
@@ -56,14 +66,15 @@ export async function handleSimilar(args: ParsedArgs): Promise<CLIResponse<Simil
       min_volume_24h: args.minVolume,
       close_before: args.closeBefore,
     });
-    return wrapSuccess('similar', data);
+    const view: SimilarView = { ...data, anchor_ticker: anchorTicker ?? null, anchor_query: q ?? null };
+    return wrapSuccess('similar', view);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return wrapError('similar', 'OCTAGON_ERROR', message);
   }
 }
 
-export function formatSimilarHuman(data: SimilarResponse): string {
+export function formatSimilarHuman(data: SimilarView): string {
   const lines: string[] = [];
   const anchor = data.anchor_ticker
     ? `ticker ${data.anchor_ticker}`
@@ -79,8 +90,8 @@ export function formatSimilarHuman(data: SimilarResponse): string {
   }
 
   const rows: string[][] = data.data.map((m: SimilarMarketRow) => [
-    m.market_ticker,
-    truncate(m.title, 40),
+    truncate(m.native_ticker ?? stripVenuePrefix(m.market_ticker), 44),
+    truncate(m.title ?? '-', 40),
     m.distance.toFixed(3),
     fmtMoney(m.last_price ?? m.yes_ask),
     fmtVol(m.volume_24h),
@@ -88,7 +99,7 @@ export function formatSimilarHuman(data: SimilarResponse): string {
   ]);
 
   lines.push(formatTable(
-    ['Ticker', 'Title', 'Distance', 'Last', '24h Vol', 'Category'],
+    ['Slug', 'Title', 'Distance', 'Last', '24h Vol', 'Category'],
     rows,
   ));
   lines.push('');

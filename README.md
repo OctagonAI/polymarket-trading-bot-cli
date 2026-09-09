@@ -4,13 +4,13 @@ AI-powered Polymarket trading CLI that finds edge and executes trades.
 
 > **⏳ Port in progress.** This CLI began as a port of the Kalshi trading bot. Market data,
 > search, analysis, watch and portfolio reads run natively against Polymarket
-> (Gamma / CLOB / Data APIs) and need no credentials. Two groups of commands are
-> gated and say so when you run them:
+> (Gamma / CLOB / Data APIs) and need no credentials. Octagon research — `search`,
+> `search edge`, `similar`, `events`, `trust`, `report` — runs against Octagon's
+> venue-generic API with `venue=polymarket`.
 >
-> - **Awaiting an Octagon repoint** — `similar`, `events`, `series`, `trust`, `report`.
->   Octagon supports Polymarket on its venue-generic API; this client still calls the
->   Kalshi-scoped routes.
-> - **No Polymarket equivalent on Octagon** — `clusters`, `peers`, `correlate`, `basket`.
+> Still gated, because Octagon serves them for Kalshi only and there is no
+> venue-generic equivalent to call: `clusters`, `peers`, `correlate`, `basket`,
+> `series`. They say so when you run them.
 >
 > **Order placement is not implemented yet** — `buy`, `sell` and `cancel` return a clear
 > error. Polymarket orders need EIP-712 wallet signing and on-chain USDC/CTF allowances.
@@ -131,7 +131,7 @@ Type help for commands, or just ask a question.
 |---------|-------------|
 | `search [theme\|ticker\|query]` | Find markets by keyword or theme (Octagon-backed when key set) |
 | `search edge [--min-edge N]` | Scan all markets by model edge (Octagon `markets-with-edge`) |
-| `similar <ticker\|"query">` | Semantic neighbors via Octagon embeddings — **⏳ not yet available for Polymarket** |
+| `similar <market-slug\|"query">` | Semantic neighbors via Octagon embeddings |
 | `clusters [--label X]` | Browse thematic clusters of the market universe — **⏳ not yet available for Polymarket** |
 | `clusters <id>` | List markets inside a cluster — **⏳ not yet available for Polymarket** |
 | `clusters --behavioral` | Behavioral clusters by 30-day return vectors — **⏳ not yet available for Polymarket** |
@@ -146,13 +146,13 @@ Type help for commands, or just ask a question.
 | `basket size --auto-probs` | Auto-fetch model probabilities via `markets/edge` and Kelly-size — **⏳ not yet available for Polymarket** |
 | `basket backtest --theme <name>` | Resolve an editorial theme to a NAV basket and backtest it — **⏳ not yet available for Polymarket** |
 | `series events <ticker>` | List events inside a series — **⏳ not yet available for Polymarket** |
-| `events` / `events <ticker>` | Octagon events list + outcome ladder per event — **⏳ not yet available for Polymarket** |
+| `events` / `events <event-slug>` | Octagon events list + outcome ladder per event |
 | `series` / `series <ticker>` | Series rollup (24h vol, market count) — **⏳ not yet available for Polymarket** |
 | `series candles <ticker>` | Series-level NAV (basket of top sub-markets) — **⏳ not yet available for Polymarket** |
 | `catalysts upcoming --days N` | Markets closing in the next N days, grouped by week |
-| `trust <event_ticker>` | Trader Trust scorecard — per-market integrity scores (table view) — **⏳ not yet available for Polymarket** |
-| `trust <event> --market <market>` | Single-market Trader Trust detail card (use `--verbose` for evidence) — **⏳ not yet available for Polymarket** |
-| `report <ticker>` | Full Octagon markdown report for an event (accepts event/market/series/URL). `--refresh` forces a fresh pull. — **⏳ not yet available for Polymarket** |
+| `trust <event-slug>` | Trader Trust scorecard — per-market integrity scores (table view) |
+| `trust <event-slug> --market <market-slug>` | Single-market Trader Trust detail card (use `--verbose` for evidence) |
+| `report <event-slug>` | Full Octagon markdown report for an event (accepts event slug, market slug, or URL). `--refresh` forces a fresh pull. |
 | `themes` (registry) | Editorial narrative buckets — list/show/import/create/delete/add-series |
 | `themes report` | 25-theme dashboard with SEO + liquidity |
 | `themes audit` | Flag dead themes (high SEO + zero volume) |

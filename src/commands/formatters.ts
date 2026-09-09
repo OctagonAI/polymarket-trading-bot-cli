@@ -56,7 +56,7 @@ function fmtDollars(val: string | number | undefined | null): string {
  * Format a decimal price (0-1) the way Polymarket displays it: cents, with a
  * decimal only when the market's sub-cent tick actually uses one.
  */
-function fmtPrice(val: number | string | undefined | null): string {
+export function fmtPrice(val: number | string | undefined | null): string {
   const n = parseDollars(val);
   if (n === undefined) return '-';
   const cents = n * 100;
@@ -66,7 +66,7 @@ function fmtPrice(val: number | string | undefined | null): string {
 }
 
 /** Format a USDC amount. */
-function fmtUsd(val: number | undefined | null): string {
+export function fmtUsd(val: number | undefined | null): string {
   if (val === undefined || val === null || !Number.isFinite(val)) return '-';
   return `$${val.toFixed(2)}`;
 }

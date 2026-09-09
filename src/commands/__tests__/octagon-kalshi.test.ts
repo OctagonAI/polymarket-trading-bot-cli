@@ -58,35 +58,40 @@ describe('Octagon Kalshi commands', () => {
 
   test('handleSimilar: ticker anchor', async () => {
     installFetchMock((url) => {
-      expect(url).toContain('/markets/similar');
-      expect(url).toContain('anchor_ticker=KXBTCD-26DEC31-T100000');
+      expect(url).toContain('/predictions/markets/similar');
+      expect(url).toContain('venues=polymarket');
+      expect(url).toContain('anchor_ticker=polymarket__will-btc-hit-100k-by-dec-2026');
       return jsonResponse({
-        anchor_ticker: 'KXBTCD-26DEC31-T100000',
-        anchor_query: null,
         data: [{
-          market_ticker: 'KXETHU-26DEC31-T10000',
-          event_ticker: 'KXETHU-26DEC31',
+          market_ticker: 'polymarket__will-eth-hit-10k-by-dec-2026',
+          native_ticker: 'will-eth-hit-10k-by-dec-2026',
+          venue: 'polymarket',
+          event_ticker: 'polymarket__crypto-price-targets-2026',
           title: 'ETH above $10k by Dec 2026',
           status: 'active',
           close_time: '2026-12-31T23:59:59Z',
           category: 'crypto',
           distance: 0.18,
         }],
+        next_cursor: null,
+        has_more: false,
       });
     });
 
-    const resp = await handleSimilar(makeArgs({ subcommand: 'similar', positionalArgs: ['KXBTCD-26DEC31-T100000'], topK: 5 }));
+    const resp = await handleSimilar(makeArgs({ subcommand: 'similar', positionalArgs: ['will-btc-hit-100k-by-dec-2026'], topK: 5 }));
     expect(resp.ok).toBe(true);
     if (!resp.ok) return;
     expect(resp.data.data).toHaveLength(1);
     expect(resp.data.data[0].distance).toBe(0.18);
+    // The anchor is re-attached client-side now that the API no longer echoes it.
+    expect(resp.data.anchor_ticker).toBe('will-btc-hit-100k-by-dec-2026');
   });
 
   test('handleSimilar: free-text query routed to -q', async () => {
     installFetchMock((url) => {
-      expect(url).toContain('/markets/similar');
+      expect(url).toContain('/predictions/markets/similar');
       expect(url).toMatch(/q=[^&]*Bitcoin/);
-      return jsonResponse({ anchor_ticker: null, anchor_query: 'Will Bitcoin pierce six figures', data: [] });
+      return jsonResponse({ data: [], next_cursor: null, has_more: false });
     });
     const resp = await handleSimilar(makeArgs({ subcommand: 'similar', query: 'Will Bitcoin pierce six figures' }));
     expect(resp.ok).toBe(true);

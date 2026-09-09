@@ -58,24 +58,32 @@ describe('Editorial themes registry', () => {
 
   test('show drills into a theme', async () => {
     await handleEditorialThemes(makeArgs({
-      positionalArgs: ['create', 'Test'], tickers: 'KXA,KXB,KXC',
+      positionalArgs: ['create', 'Test'], tickers: 'btc-100k,us-recession-2027,epl-2027-champion',
     }));
     const show = await handleEditorialThemes(makeArgs({ positionalArgs: ['show', 'Test'] }));
     expect(show.ok).toBe(true);
     if (!show.ok) return;
     if (show.data.kind !== 'show') throw new Error();
-    expect(show.data.theme.series).toEqual(['KXA', 'KXB', 'KXC']);
+    expect(show.data.theme.series).toEqual(['btc-100k', 'epl-2027-champion', 'us-recession-2027']);
+  });
+
+  test('series keys normalize to lowercase, so slugs survive a round trip', async () => {
+    await handleEditorialThemes(makeArgs({ positionalArgs: ['create', 'Case'], tickers: 'Fed-Decision-In-September' }));
+    const show = await handleEditorialThemes(makeArgs({ positionalArgs: ['show', 'Case'] }));
+    expect(show.ok).toBe(true);
+    if (!show.ok || show.data.kind !== 'show') throw new Error();
+    expect(show.data.theme.series).toEqual(['fed-decision-in-september']);
   });
 
   test('add-series and remove-series', async () => {
     await handleEditorialThemes(makeArgs({ positionalArgs: ['create', 'T'] }));
-    const add = await handleEditorialThemes(makeArgs({ positionalArgs: ['add-series', 'T', 'KXX,KXY'] }));
+    const add = await handleEditorialThemes(makeArgs({ positionalArgs: ['add-series', 'T', 'btc-100k,us-recession-2027'] }));
     expect(add.ok).toBe(true);
     if (!add.ok) return;
     if (add.data.kind !== 'mutation') throw new Error();
     expect(add.data.affected).toBe(2);
 
-    const remove = await handleEditorialThemes(makeArgs({ positionalArgs: ['remove-series', 'T', 'KXX'] }));
+    const remove = await handleEditorialThemes(makeArgs({ positionalArgs: ['remove-series', 'T', 'btc-100k'] }));
     expect(remove.ok).toBe(true);
     if (!remove.ok) return;
     if (remove.data.kind !== 'mutation') throw new Error();
@@ -83,21 +91,21 @@ describe('Editorial themes registry', () => {
   });
 
   test('overlap detects cross-theme series', async () => {
-    await handleEditorialThemes(makeArgs({ positionalArgs: ['create', 'A'], tickers: 'KXX,KXY' }));
-    await handleEditorialThemes(makeArgs({ positionalArgs: ['create', 'B'], tickers: 'KXY,KXZ' }));
+    await handleEditorialThemes(makeArgs({ positionalArgs: ['create', 'A'], tickers: 'btc-100k,us-recession-2027' }));
+    await handleEditorialThemes(makeArgs({ positionalArgs: ['create', 'B'], tickers: 'us-recession-2027,epl-2027-champion' }));
     const overlap = await handleEditorialThemes(makeArgs({ positionalArgs: ['overlap'] }));
     expect(overlap.ok).toBe(true);
     if (!overlap.ok) return;
     if (overlap.data.kind !== 'overlap') throw new Error();
     expect(overlap.data.data).toHaveLength(1);
-    expect(overlap.data.data[0]).toEqual({ series_ticker: 'KXY', themes: ['A', 'B'] });
+    expect(overlap.data.data[0]).toEqual({ series_ticker: 'us-recession-2027', themes: ['A', 'B'] });
   });
 
   test('import + export round-trips', async () => {
     const tmpFile = join(tmpdir(), `themes-${Date.now()}.json`);
     writeFileSync(tmpFile, JSON.stringify({
       themes: [
-        { name: 'X', description: 'desc', search_volume: 1234, series: ['KXA', 'KXB'] },
+        { name: 'X', description: 'desc', search_volume: 1234, series: ['fed-decision-in-september', 'us-recession-2027'] },
       ],
     }));
     const importResp = await handleEditorialThemes(makeArgs({ positionalArgs: ['import', tmpFile] }));
@@ -105,7 +113,7 @@ describe('Editorial themes registry', () => {
 
     const showResp = await handleEditorialThemes(makeArgs({ positionalArgs: ['show', 'X'] }));
     if (!showResp.ok || showResp.data.kind !== 'show') throw new Error();
-    expect(showResp.data.theme.series).toEqual(['KXA', 'KXB']);
+    expect(showResp.data.theme.series).toEqual(['fed-decision-in-september', 'us-recession-2027']);
     expect(showResp.data.theme.search_volume).toBe(1234);
 
     const exportFile = join(tmpdir(), `themes-export-${Date.now()}.json`);
@@ -114,7 +122,7 @@ describe('Editorial themes registry', () => {
 
     const reimported = JSON.parse(readFileSync(exportFile, 'utf-8'));
     expect(reimported.themes[0].name).toBe('X');
-    expect(reimported.themes[0].series).toEqual(['KXA', 'KXB']);
+    expect(reimported.themes[0].series).toEqual(['fed-decision-in-september', 'us-recession-2027']);
 
     try { unlinkSync(tmpFile); } catch {}
     try { unlinkSync(exportFile); } catch {}
@@ -152,11 +160,12 @@ describe('Events command', () => {
   test('events list paginates and sorts', async () => {
     globalThis.fetch = mock(async (url: string | URL | Request) => {
       const s = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
-      expect(s).toContain('/prediction-markets/events');
+      expect(s).toContain('/predictions/events');
+      expect(s).toContain('venue=polymarket');
       return new Response(JSON.stringify({
         data: [
-          { event_ticker: 'KXA', name: 'A', series_category: 'Crypto', model_probability: 50, market_probability: 45, edge_pp: 5, confidence_score: 8, total_volume: 100, total_open_interest: 50, expected_return: 0.05, close_time: '2026-12-31T00:00:00Z', key_takeaway: '', captured_at: '', history_id: 1, run_id: 'r', slug: 'a', available_on_brokers: true, mutually_exclusive: false, analysis_last_updated: '', r_score: 0 },
-          { event_ticker: 'KXB', name: 'B', series_category: 'Politics', model_probability: 60, market_probability: 50, edge_pp: 10, confidence_score: 9, total_volume: 500, total_open_interest: 200, expected_return: 0.10, close_time: '2026-06-01T00:00:00Z', key_takeaway: '', captured_at: '', history_id: 2, run_id: 'r', slug: 'b', available_on_brokers: true, mutually_exclusive: false, analysis_last_updated: '', r_score: 0 },
+          { event_ticker: 'btc-100k-2026', name: 'A', series_category: 'Crypto', model_probability: 50, market_probability: 45, edge_pp: 5, confidence_score: 8, total_volume: 100, total_open_interest: 50, expected_return: 0.05, close_time: '2026-12-31T00:00:00Z', key_takeaway: '', captured_at: '', history_id: 1, run_id: 'r', slug: 'a', available_on_brokers: true, mutually_exclusive: false, analysis_last_updated: '', r_score: 0 },
+          { event_ticker: 'us-election-winner', name: 'B', series_category: 'Politics', model_probability: 60, market_probability: 50, edge_pp: 10, confidence_score: 9, total_volume: 500, total_open_interest: 200, expected_return: 0.10, close_time: '2026-06-01T00:00:00Z', key_takeaway: '', captured_at: '', history_id: 2, run_id: 'r', slug: 'b', available_on_brokers: true, mutually_exclusive: false, analysis_last_updated: '', r_score: 0 },
         ],
         next_cursor: null,
         has_more: false,
@@ -168,8 +177,8 @@ describe('Events command', () => {
     expect(resp.ok).toBe(true);
     if (!resp.ok) return;
     if (resp.data.kind !== 'list') throw new Error();
-    // Sorted by total_volume desc: KXB (500) before KXA (100)
-    expect(resp.data.data[0].event_ticker).toBe('KXB');
-    expect(resp.data.data[1].event_ticker).toBe('KXA');
+    // Sorted by total_volume desc: us-election-winner (500) before btc-100k-2026 (100)
+    expect(resp.data.data[0].event_ticker).toBe('us-election-winner');
+    expect(resp.data.data[1].event_ticker).toBe('btc-100k-2026');
   });
 });

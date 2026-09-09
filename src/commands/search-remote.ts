@@ -4,7 +4,7 @@
  * OCTAGON_API_KEY is set; the legacy local-SQLite paths remain as fallback.
  */
 import { formatTable } from './scan-formatters.js';
-import type { KalshiMarketRow, PagedResult, MarketsWithEdgeResponse } from '../scan/octagon-kalshi-api.js';
+import { stripVenuePrefix, type OctagonMarketRow, type PagedResult, type MarketsWithEdgeResponse } from '../scan/octagon-api.js';
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
@@ -27,7 +27,7 @@ function fmtCloseDate(iso: string | null): string {
   return iso.slice(0, 10);
 }
 
-export function formatMarketSearchHuman(query: string, page: PagedResult<KalshiMarketRow>): string {
+export function formatMarketSearchHuman(query: string, page: PagedResult<OctagonMarketRow>): string {
   const lines: string[] = [];
   const more = page.has_more ? ' (more available)' : '';
   lines.push(`Markets matching "${query}" — ${page.data.length} shown${more}`);
@@ -39,14 +39,14 @@ export function formatMarketSearchHuman(query: string, page: PagedResult<KalshiM
   }
 
   const rows: string[][] = page.data.map((m) => [
-    m.market_ticker,
-    truncate(m.title, 40),
+    truncate(m.native_ticker ?? stripVenuePrefix(m.market_ticker), 44),
+    truncate(m.title ?? '-', 40),
     fmtMoney(m.last_price ?? m.yes_ask),
     fmtVol(m.volume_24h),
     m.category ?? '-',
     fmtCloseDate(m.close_time),
   ]);
-  lines.push(formatTable(['Ticker', 'Title', 'Last', '24h Vol', 'Category', 'Closes'], rows));
+  lines.push(formatTable(['Slug', 'Title', 'Last', '24h Vol', 'Category', 'Closes'], rows));
   return lines.join('\n');
 }
 
@@ -60,7 +60,8 @@ export function formatMarketsWithEdgeHuman(data: MarketsWithEdgeResponse, minEdg
       captured = d.toISOString().slice(0, 16).replace('T', ' ');
     }
   }
-  lines.push(`Octagon Edge Scanner (server-side) — run ${data.run_id.slice(0, 8)}, captured ${captured} UTC, sort by ${data.sort_by}`);
+  const run = data.run_id ? `run ${data.run_id.slice(0, 8)}, ` : '';
+  lines.push(`Octagon Edge Scanner — ${run}captured ${captured} UTC, sort by ${data.sort_by}`);
   lines.push('════════════════════════════════════════════════════════');
   lines.push('');
 
@@ -71,7 +72,7 @@ export function formatMarketsWithEdgeHuman(data: MarketsWithEdgeResponse, minEdg
 
   const rows: string[][] = data.data.map((r, i) => [
     String(i + 1),
-    r.market_ticker || r.event_ticker,
+    truncate(stripVenuePrefix(r.market_ticker || r.event_ticker), 40),
     truncate(r.title, 35),
     `${r.model_probability.toFixed(1)}%`,
     `${r.market_probability.toFixed(1)}%`,

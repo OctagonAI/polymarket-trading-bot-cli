@@ -15,7 +15,7 @@
  */
 import { wrapSuccess, wrapError } from './json.js';
 import type { CLIResponse } from './json.js';
-import { getMarketsEdge, type PerTickerEdgeRow } from '../scan/octagon-kalshi-api.js';
+import { getMarketsEdge, type PerTickerEdgeRow } from '../scan/octagon-api.js';
 import { formatTable } from './scan-formatters.js';
 
 function truncate(s: string, max: number): string {

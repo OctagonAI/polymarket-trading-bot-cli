@@ -1,5 +1,5 @@
 import { getDb } from '../db/index.js';
-import { formatBoxHeader } from './formatters.js';
+import { formatBoxHeader, fmtPrice, fmtUsd } from './formatters.js';
 import { insertEdge } from '../db/edge.js';
 import { getLatestReport } from '../db/octagon-cache.js';
 import { auditTrail } from '../audit/index.js';
@@ -522,13 +522,15 @@ export function formatAnalyzeHuman(data: AnalyzeData): string {
   if (!data.hasMarketPrice) {
     lines.push('    ⚠ Skipped — market has no last traded price; no sizing reference available.');
   } else {
+    // All money here is already USDC and all prices are decimals in [0,1];
+    // the /100 these lines used to carry was Kalshi's integer-cents unit.
     lines.push(`    Side:         ${data.kelly.side.toUpperCase()}`);
-    lines.push(`    Cash Balance: $${(data.kelly.cashBalance / 100).toFixed(2)}`);
-    lines.push(`    Open Exposure: $${(data.kelly.openExposure / 100).toFixed(2)}`);
-    lines.push(`    Available:    $${(data.kelly.availableBankroll / 100).toFixed(2)}`);
-    lines.push(`    Contracts:    ${data.kelly.shares}`);
-    lines.push(`    Dollar Amount: $${(data.kelly.notionalUsdc / 100).toFixed(2)}`);
-    lines.push(`    Entry Price:  ${data.kelly.entryPrice}¢`);
+    lines.push(`    Cash Balance: ${fmtUsd(data.kelly.cashBalance)}`);
+    lines.push(`    Open Exposure: ${fmtUsd(data.kelly.openExposure)}`);
+    lines.push(`    Available:    ${fmtUsd(data.kelly.availableBankroll)}`);
+    lines.push(`    Shares:       ${data.kelly.shares}`);
+    lines.push(`    Notional:     ${fmtUsd(data.kelly.notionalUsdc)}`);
+    lines.push(`    Entry Price:  ${fmtPrice(data.kelly.entryPrice)}`);
     lines.push(`    Kelly f*:     ${(data.kelly.fraction * 100).toFixed(1)}%`);
     lines.push(`    Adjusted f:   ${(data.kelly.adjustedFraction * 100).toFixed(1)}%`);
     if (data.kelly.liquidityAdjusted) {
