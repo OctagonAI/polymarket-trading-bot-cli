@@ -72,7 +72,19 @@ describe('theme registry', () => {
 
 describe('searchOctagonEvents param handling', () => {
   const realFetch = globalThis.fetch;
-  afterEach(() => { globalThis.fetch = realFetch; });
+
+  beforeEach(() => {
+    // request() rejects before it ever calls fetch when this is unset, so the
+    // mock below would never be reached. A placeholder also SHADOWS a real key
+    // that Bun auto-loads from .env — no test should be able to reach a live
+    // endpoint with a live credential just because a mock had a gap.
+    process.env.OCTAGON_API_KEY = 'sk_test';
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    delete process.env.OCTAGON_API_KEY;
+  });
 
   function captureUrl(): { url: () => string } {
     let seen = '';
