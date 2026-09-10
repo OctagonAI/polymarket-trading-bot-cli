@@ -20,10 +20,11 @@ chat_history.json
 coverage.json
 logs
 
-# Internal docs (not user-facing)
+# Internal docs (not user-facing).
+# GUIDE.md is deliberately NOT here: it is the User Guide, and README links to
+# it, so excluding it left a broken link on the npm package page.
 AGENTS.md
 CLAUDE.md
-GUIDE.md
 .claude
 .dexter
 .polymarket-deep-trading-bot
