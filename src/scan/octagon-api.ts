@@ -16,7 +16,7 @@
  *
  * Conventions:
  * - Fetch + Authorization: Bearer ${OCTAGON_API_KEY}
- * - 60s AbortController timeout per request
+ * - 60s deadline per request, covering the body read (see utils/http.ts)
  * - Non-2xx → Error with status + body excerpt
  * - Market-row prices are DECIMALS (0-1), matching Polymarket's native units.
  *   Event-level probabilities in octagon-events-api.ts are percentages (0-100).
@@ -25,6 +25,7 @@
  */
 
 import { fetchAllOctagonEvents } from './octagon-events-api.js';
+import { fetchWithDeadline, safeText } from '../utils/http.js';
 
 const PREDICTIONS_BASE = 'https://api.octagonai.co/v1/predictions';
 const KALSHI_BASE = `${PREDICTIONS_BASE}/kalshi`;
@@ -83,37 +84,34 @@ async function request<T>(
   }
 
   const url = `${base}${path}${method === 'GET' ? buildQuery(opts?.params) : ''}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? TIMEOUT_MS);
 
-  let resp: Response;
-  try {
-    resp = await fetch(url, {
+  return fetchWithDeadline<T>(
+    url,
+    {
       method,
       headers: {
         Authorization: `Bearer ${apiKey}`,
         ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}),
       },
       ...(method === 'POST' && opts?.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+    },
+    opts?.timeoutMs ?? TIMEOUT_MS,
+    async (resp) => {
+      if (!resp.ok) {
+        const body = await safeText(resp);
+        let detail = body.slice(0, 300);
+        try {
+          const parsed = JSON.parse(body) as { detail?: unknown };
+          if (typeof parsed.detail === 'string') detail = parsed.detail;
+        } catch {
+          // body wasn't JSON — fall through with text excerpt
+        }
+        throw new Error(`Octagon API ${resp.status} (${method} ${path}): ${detail}`);
+      }
 
-  if (!resp.ok) {
-    const body = await resp.text().catch(() => '');
-    let detail = body.slice(0, 300);
-    try {
-      const parsed = JSON.parse(body) as { detail?: unknown };
-      if (typeof parsed.detail === 'string') detail = parsed.detail;
-    } catch {
-      // body wasn't JSON — fall through with text excerpt
-    }
-    throw new Error(`Octagon API ${resp.status} (${method} ${path}): ${detail}`);
-  }
-
-  return (await resp.json()) as T;
+      return (await resp.json()) as T;
+    },
+  );
 }
 
 /** Kalshi-only routes. Reachable only via features gated off for Polymarket. */

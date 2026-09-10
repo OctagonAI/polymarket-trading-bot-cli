@@ -1,4 +1,5 @@
 import { lookupMarket } from '../tools/polymarket/markets.js';
+import { fetchWithDeadline, isAbortError, safeText } from '../utils/http.js';
 import { fetchEventBySlug } from '../tools/polymarket/events.js';
 import { logger } from '../utils/logger.js';
 import type { OctagonInvoker, OctagonVariant } from './types.js';
@@ -130,28 +131,30 @@ async function fetchCachedReport(slug: string): Promise<string> {
   const apiKey = requireApiKey();
   const url = `${octagonBaseUrl()}/predictions/reports/${VENUE}/${encodeURIComponent(slug)}?version=latest`;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60_000);
-  let resp: Response;
-  try {
-    resp = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` }, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+  return fetchWithDeadline(
+    url,
+    { headers: { Authorization: `Bearer ${apiKey}` } },
+    60_000,
+    async (resp) => {
+      // No report has ever been generated for this event — a cache miss, not an error.
+      if (resp.status === 404) {
+        return JSON.stringify({ event_ticker: slug, venue: VENUE, versions: [] });
+      }
 
-  // No report has ever been generated for this event — a cache miss, not an error.
-  if (resp.status === 404) return JSON.stringify({ event_ticker: slug, venue: VENUE, versions: [] });
+      if (!resp.ok) {
+        const body = await safeText(resp);
+        throw new Error(`Octagon reports API ${resp.status} (GET ${VENUE}/${slug}): ${body.slice(0, 200)}`);
+      }
 
-  if (!resp.ok) {
-    const body = await resp.text().catch(() => '');
-    throw new Error(`Octagon reports API ${resp.status} (GET ${VENUE}/${slug}): ${body.slice(0, 200)}`);
-  }
-
-  const data = (await resp.json()) as ReportResponse;
-  return JSON.stringify({
-    ...data,
-    latest_report: data.markdown_report ? { markdown_report: data.markdown_report, run_id: data.run_id } : undefined,
-  });
+      const data = (await resp.json()) as ReportResponse;
+      return JSON.stringify({
+        ...data,
+        latest_report: data.markdown_report
+          ? { markdown_report: data.markdown_report, run_id: data.run_id }
+          : undefined,
+      });
+    },
+  );
 }
 
 /**
@@ -180,23 +183,48 @@ async function generateReport(slug: string, variant: OctagonVariant): Promise<st
       await new Promise((r) => setTimeout(r, delay));
     }
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-    let resp: Response;
+    // The deadline has to outlive the body read, and the body read decides
+    // whether to retry — but a callback cannot `continue` the loop, so it
+    // reports back instead and the loop acts on that.
+    let outcome: { retry: Error } | { text: string };
     try {
-      resp = await fetch(`${baseUrl}/responses`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
+      outcome = await fetchWithDeadline(
+        `${baseUrl}/responses`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: reqBody,
         },
-        body: reqBody,
-        signal: controller.signal,
-      });
+        timeoutMs,
+        async (resp) => {
+          if (resp.ok) {
+            return { text: extractTextFromResponse(await resp.json()) };
+          }
+
+          const body = await safeText(resp);
+          const isHtml = body.trimStart().startsWith('<');
+          const detail = isHtml ? '' : body.slice(0, 200);
+
+          // Retry on 502/503/504 gateway errors
+          if ([502, 503, 504].includes(resp.status) && attempt < MAX_RETRIES) {
+            return {
+              retry: new Error(`${resp.status} ${resp.statusText}${detail ? ` — ${detail}` : ''}`),
+            };
+          }
+
+          // Non-retryable error or retries exhausted
+          const maskedKey = apiKey.length > 4 ? '...' + apiKey.slice(-4) : '****';
+          const curl = `curl -X POST '${baseUrl}/responses' \\\n  -H 'Authorization: Bearer ${maskedKey}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${reqBody}'`;
+          throw new Error(
+            `Octagon API error: ${resp.status} ${resp.statusText}${detail ? ` — ${detail}` : ''}\n\nReproduce with:\n${curl}`
+          );
+        },
+      );
     } catch (err) {
-      clearTimeout(timer);
-      if (err instanceof DOMException && err.name === 'AbortError') {
+      if (isAbortError(err)) {
         const secs = Math.round(timeoutMs / 1000);
         throw new Error(
           `Octagon API timed out after ${secs}s. The ${variant} report is taking longer than expected. ` +
@@ -204,33 +232,10 @@ async function generateReport(slug: string, variant: OctagonVariant): Promise<st
         );
       }
       throw err;
-    } finally {
-      clearTimeout(timer);
     }
 
-    if (resp.ok) {
-      const data = await resp.json();
-      return extractTextFromResponse(data);
-    }
-
-    // Retry on 502/503/504 gateway errors
-    if ([502, 503, 504].includes(resp.status) && attempt < MAX_RETRIES) {
-      const body = await resp.text().catch(() => '');
-      const isHtml = body.trimStart().startsWith('<');
-      const detail = isHtml ? '' : body.slice(0, 200);
-      lastError = new Error(`${resp.status} ${resp.statusText}${detail ? ` — ${detail}` : ''}`);
-      continue;
-    }
-
-    // Non-retryable error or retries exhausted
-    const body = await resp.text().catch(() => '');
-    const isHtml = body.trimStart().startsWith('<');
-    const detail = isHtml ? '' : body.slice(0, 200);
-    const maskedKey = apiKey.length > 4 ? '...' + apiKey.slice(-4) : '****';
-    const curl = `curl -X POST '${baseUrl}/responses' \\\n  -H 'Authorization: Bearer ${maskedKey}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${reqBody}'`;
-    throw new Error(
-      `Octagon API error: ${resp.status} ${resp.statusText}${detail ? ` — ${detail}` : ''}\n\nReproduce with:\n${curl}`
-    );
+    if ('text' in outcome) return outcome.text;
+    lastError = outcome.retry;
   }
 
   // Should not reach here, but satisfy TypeScript

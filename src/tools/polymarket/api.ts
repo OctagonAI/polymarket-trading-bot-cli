@@ -1,4 +1,5 @@
 import { logger } from '../../utils/logger.js';
+import { fetchWithDeadline, isAbortError, safeText } from '../../utils/http.js';
 import { auditTrail } from '../../audit/index.js';
 import { dlqWriter } from './dlq.js';
 
@@ -213,16 +214,27 @@ export async function callPolymarketApi<T = unknown>(
 
       // Without a deadline a half-open connection never settles: the promise
       // hangs, withRetry never sees an error, and every command that reads
-      // market data stalls indefinitely.
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-      let response: Response;
+      // market data stalls indefinitely. The deadline covers the body read too,
+      // so the catch below has to wrap both phases.
       try {
-        response = await fetch(url.toString(), { ...fetchOptions, signal: controller.signal });
+        return await fetchWithDeadline<T>(
+          url.toString(),
+          fetchOptions,
+          REQUEST_TIMEOUT_MS,
+          async (response) => {
+            if (!response.ok) {
+              const text = await safeText(response);
+              throw new PolymarketApiError(response.status, response.statusText, text, service);
+            }
+            if (response.status === 204) return {} as T;
+
+            return (await response.json()) as T;
+          },
+        );
       } catch (err) {
         // Surface a timeout as a retryable-looking error rather than a bare
         // AbortError, so the retry wrapper and exit codes read correctly.
-        if (err instanceof DOMException && err.name === 'AbortError') {
+        if (isAbortError(err)) {
           throw new PolymarketApiError(
             408,
             'Request Timeout',
@@ -231,17 +243,7 @@ export async function callPolymarketApi<T = unknown>(
           );
         }
         throw err;
-      } finally {
-        clearTimeout(timer);
       }
-
-      if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        throw new PolymarketApiError(response.status, response.statusText, text, service);
-      }
-      if (response.status === 204) return {} as T;
-
-      return (await response.json()) as T;
     },
     { method, path, body: options?.body }
   );
