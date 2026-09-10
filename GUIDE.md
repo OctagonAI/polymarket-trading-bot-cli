@@ -1,6 +1,11 @@
-# Kalshi Trading Bot CLI — User Guide
+# Polymarket Trading Bot CLI — User Guide
 
-AI-powered prediction market terminal for [Kalshi](https://kalshi.com). Ask natural language questions, research markets, and trade — all from your terminal.
+AI-powered prediction market terminal for [Polymarket](https://polymarket.com). Ask natural language questions and research markets from your terminal.
+
+> **⏳ Read-only for now.** Order placement is not implemented: `/buy`, `/sell` and
+> `/cancel` return an explanation rather than trading, and `/portfolio` is gated with
+> them because every view it offers needs a wallet that arrives with trading support.
+> Market data and research need no credentials. Commands marked ⏳ below are unavailable.
 
 ---
 
@@ -12,46 +17,54 @@ AI-powered prediction market terminal for [Kalshi](https://kalshi.com). Ask natu
   ```bash
   curl -fsSL https://bun.com/install | bash
   ```
-- A **Kalshi** account with API access (API key + RSA private key)
+- A **Polymarket** account (a Polygon wallet with USDC) — required for trading only
 - At least one **LLM API key** (OpenAI, Anthropic, Google, xAI, OpenRouter, or a local Ollama)
 - Optional: **[Octagon](https://app.octagonai.co)** key for AI edge analysis, **Tavily** key for web research
 
 ### Setup
 
 ```bash
-bunx kalshi-trading-bot-cli@latest
+bunx polymarket-trading-bot-cli@latest
 ```
 
-That's it — no clone required. The setup wizard runs automatically on first launch and writes your API keys to `~/.kalshi-bot/.env`.
+That's it — no clone required. The setup wizard runs automatically on first launch and writes your API keys to `~/.polymarket-bot/.env`.
+
+The wizard also asks for a **bankroll** — how much USDC position sizing should assume you have. Polymarket has no cash-balance endpoint (free USDC is an on-chain ERC-20 balance, not something the market-data APIs report), so this figure cannot be discovered and has to be set:
+
+```bash
+polymarket config risk.bankroll_usdc 1000
+```
+
+Skipping it is fine — research works without it. `analyze` will still report edge, probabilities and catalysts, but skips position sizing with *"No bankroll configured"* rather than sizing against a number it does not have. It is not a deposit; it is only the figure Kelly sizing and the risk gate work from.
 
 Other ways to run it:
 
 ```bash
-bun add -g kalshi-trading-bot-cli  # then just `kalshi`
+bun add -g polymarket-trading-bot-cli  # then just `polymarket`
 ```
 
 Or from a clone (development):
 
 ```bash
-git clone https://github.com/OctagonAI/kalshi-trading-bot-cli.git
-cd kalshi-trading-bot-cli
+git clone https://github.com/OctagonAI/polymarket-trading-bot-cli.git
+cd polymarket-trading-bot-cli
 bun install
 bun start        # or `bun run dev` for hot-reload
 ```
 
 ### Where things live
 
-- **Config, cache, SQLite DB:** `~/.kalshi-bot/`
-- **API keys (`.env`):** `~/.kalshi-bot/.env`. A `.env` in the current directory takes precedence (dev override).
+- **Config, cache, SQLite DB:** `~/.polymarket-bot/`
+- **API keys (`.env`):** `~/.polymarket-bot/.env`. A `.env` in the current directory takes precedence (dev override).
 
 ### Environment Variables
 
+Polymarket market data is public — there is no exchange key or private key to set.
+
 | Variable | Required | Description |
 |---|---|---|
-| `KALSHI_API_KEY` | Yes | Your Kalshi API key |
-| `KALSHI_PRIVATE_KEY_FILE` | Yes* | Path to RSA private key PEM file |
-| `KALSHI_PRIVATE_KEY` | Yes* | Inline RSA private key (alternative to file) |
-| `KALSHI_USE_DEMO` | No | Set `true` for demo/paper trading (no real money) |
+| `POLYMARKET_USE_STAGING` | No | Point reads at Polymarket's staging hosts (unverified) |
+| `POLYMARKET_GAMMA_URL` / `POLYMARKET_CLOB_URL` / `POLYMARKET_DATA_URL` | No | Override an individual service base URL |
 | `OPENAI_API_KEY` | One of these | OpenAI API key |
 | `ANTHROPIC_API_KEY` | One of these | Anthropic API key |
 | `GOOGLE_API_KEY` | One of these | Google AI API key |
@@ -61,7 +74,6 @@ bun start        # or `bun run dev` for hot-reload
 | `TAVILY_API_KEY` | No | Enables web search tool for background research |
 | `LANGSMITH_API_KEY` | No | LangSmith tracing for debugging |
 
-*Provide either `KALSHI_PRIVATE_KEY_FILE` or `KALSHI_PRIVATE_KEY`, not both.
 
 ---
 
@@ -80,168 +92,100 @@ Type `/model` to pick your LLM provider and model. Your choice persists across s
 
 ## Slash Commands
 
-Quick commands that bypass the AI agent and call the Kalshi or Octagon API directly.
+Quick commands that bypass the AI agent and call the exchange or Octagon API directly.
+
+⏳ marks a command that is not available yet: it is hidden from `/help` and
+autocomplete, and running it explains why.
 
 | Command | Description | Example |
 |---|---|---|
 | `/help` | Show all available commands | `/help` |
-| `/status` | Exchange open/closed status | `/status` |
-| `/balance` | Account balance | `/balance` |
-| `/positions` | Open positions with P&L | `/positions` |
-| `/orders` | Resting (open) orders | `/orders` |
-| `/markets [series]` | Browse markets, optionally filter by series ticker | `/markets KXBTC` |
-| `/market <ticker>` | Market detail + top-of-book orderbook | `/market KXBTC-26MAR-B80000` |
+| `/status` | Setup check: connectivity, API keys | `/status` |
+| `/balance` ⏳ | Account balance — **needs trading support** | `/balance` |
+| `/positions` ⏳ | Open positions with P&L — **needs trading support** | `/positions` |
+| `/orders` ⏳ | Resting (open) orders — **needs trading support** | `/orders` |
+| `/markets [series]` | Browse markets, optionally filter by series slug | `/markets bitcoin` |
+| `/market <market-slug>` | Market detail + top-of-book orderbook | `/market bitcoin-above-95k-by-april-30` |
 | `/search <query>` | Full-text market search (Octagon when key set) | `/search "bitcoin price" --min-volume 10000` |
 | `/search edge` | Edge ranking from Octagon's latest run | `/search edge --min-edge 5 --sort-by total_volume` |
-| `/similar <ticker\|"text">` | Semantic neighbors via embeddings | `/similar KXBTCD-26DEC31-T100000 --top-k 20` |
-| `/clusters [--label X]` | Browse thematic clusters | `/clusters --label fed` |
-| `/clusters <id>` | List markets inside a cluster | `/clusters 42` |
-| `/clusters --behavioral` | Behavioral clusters by 30-day return vectors | `/clusters --behavioral` |
-| `/clusters --ranked` | Rank clusters by historical basket return | `/clusters --ranked --timeframe 1y --min-return 0.2` |
-| `/peers <ticker>` | Markets in the same cluster | `/peers KXBTCD-... --limit 50` |
-| `/correlate <t1> <t2> [...]` | Pairwise correlation matrix | `/correlate KX-A KX-B KX-C --window-days 90` |
-| `/basket build` | Diversified basket (cluster + correlation caps) | `/basket build --category crypto -n 8 --max-corr 0.6` |
-| `/basket backtest` | Total return / Sharpe / max DD on a basket | `/basket backtest --tickers KX-A,KX-B --timeframe 1y` |
-| `/basket backtest --theme <name>` | Backtest an editorial theme NAV | `/basket backtest --theme "Iran Escalation"` |
-| `/basket size` | Fractional Kelly sizing for picked legs | `/basket size --bankroll 1000 --kelly 0.25 --probs KX-A:0.62` |
-| `/basket size --auto-probs` | Auto-fetch probabilities via `markets/edge` | `/basket size --auto-probs --theme "AI Race Milestones" --bankroll 1000` |
-| `/basket validate` | Portfolio diagnostics (clusters, corr, clashes, warnings) | `/basket validate --theme "Iran Escalation" --bankroll 1000` |
-| `/basket candles` | OHLC bars for a weighted basket NAV | `/basket candles --tickers KX-A,KX-B --timeframe 6m` |
-| `/series events <ticker>` | Events inside a series | `/series events KXIPO` |
-| `/correlate --sides yes,no` | Side-aware correlation (sign-flipped) | `/correlate KX-A KX-B --sides yes,no` |
-| `/correlate --cells` | Cell detail (overlap_count, reason) | `/correlate KX-A KX-B --cells` |
-| `/events` / `/events <ticker>` | Octagon events + outcome ladder | `/events KXFEDCHAIRNOM-29` |
-| `/series` / `/series <ticker>` | Kalshi series rollup | `/series KXBTCD` |
-| `/series candles <ticker>` | Series-level NAV | `/series candles KXBTCD --timeframe 3m` |
+| `/similar <slug\|"text">` | Related markets (event → series → category) | `/similar will-bitcoin-reach-110000-by-december-31-2026 --top-k 20` |
+| `/events` / `/events <event-slug>` | Octagon events + outcome ladder | `/events fed-decision-in-september-762` |
 | `/catalysts upcoming` | Markets closing soon, grouped by week | `/catalysts upcoming --days 14` |
 | `/themes` (registry) | Editorial narrative buckets | `/themes show "Iran Escalation"` |
 | `/themes report` | 25-theme dashboard with SEO + liquidity | `/themes report` |
 | `/themes audit` | Flag dead themes (high SEO + zero volume) | `/themes audit` |
 | `/themes overlap` | Cross-theme dedupe report | `/themes overlap` |
-| `/buy <ticker> <count> [price]` | Buy YES contracts (price in cents) | `/buy KXBTC-26MAR-B80000 5 56` |
-| `/sell <ticker> <count> [price]` | Sell YES contracts | `/sell KXBTC-26MAR-B80000 5 60` |
-| `/cancel <order_id>` | Cancel a resting order | `/cancel abc-123-def` |
+| `/buy <market-slug> <shares> [price]` ⏳ | Buy YES shares (price 0-1) — **not implemented** | `/buy bitcoin-above-95k-by-april-30 5 0.56` |
+| `/sell <market-slug> <shares> [price]` ⏳ | Sell YES shares — **not implemented** | `/sell bitcoin-above-95k-by-april-30 5 0.60` |
+| `/cancel <order_id>` ⏳ | Cancel a resting order — **not implemented** | `/cancel abc-123-def` |
 
-**Trade confirmation:** `/buy` and `/sell` always show a confirmation prompt before executing. Type `yes` to confirm or `no` to cancel.
+**Trading is not available yet.** These commands return an explanation instead of
+placing an order; Polymarket orders need EIP-712 wallet signing and on-chain
+USDC/CTF allowances. When they land, `/buy` and `/sell` will show a confirmation
+prompt before executing.
 
-**Price format:** Prices are always in cents. `56` = $0.56 = 56% implied probability.
+**Price format:** Prices are decimal USDC in [0, 1]. `0.56` = $0.56 per share = 56% implied probability.
 
 ---
 
 ## Discovery & Portfolio (Octagon-powered)
 
-With `OCTAGON_API_KEY` set, the bot routes searches through Octagon's typed Kalshi endpoints. This unlocks semantic similarity, thematic and behavioral clustering, pairwise correlation matrices, and one-call diversified basket construction. Without a key the bot falls back to the local SQLite index for `/search` and `/search edge`; the other commands require the key.
+With `OCTAGON_API_KEY` set, the bot routes searches through Octagon's typed endpoints. This unlocks related-market lookups, thematic and behavioral clustering, pairwise correlation matrices, and one-call diversified basket construction. Without a key the bot falls back to the local SQLite index for `/search` and `/search edge`; the other commands require the key.
 
 ### `/search` and `/search edge`
 
 ```bash
 # Server-side full-text + structured filter
-kalshi search "bitcoin price" --category crypto --min-volume 10000 --limit 20
+polymarket search "bitcoin price" --category crypto --min-volume 10000 --limit 20
 
 # Edge ranking from Octagon's latest events run
-kalshi search edge --min-edge 5 --limit 10 --sort-by total_volume
-kalshi search edge --category politics --sort-by edge_pp
+polymarket search edge --min-edge 5 --limit 10 --sort-by total_volume
+polymarket search edge --category politics --sort-by edge_pp
 ```
 
 Flags (server-side path): `--category`, `--series <ticker>`, `--min-volume <n>`, `--close-before <iso>`, `--limit <n>`, `--sort-by <edge_pp|expected_return|total_volume|model_probability>`.
 
 ### `/similar`
 
-Catches semantic matches keyword search misses ("Will Bitcoin pierce six figures" ↔ "BTC > $100k").
+Finds markets *related* to an anchor. This is not semantic search — it will not
+match "Will Bitcoin pierce six figures" to "BTC > $100k". Use `/search` for that.
 
 ```bash
-kalshi similar KXBTCD-26DEC31-T100000 --top-k 25                # anchor by ticker (no embedding call)
-kalshi similar -q "Will Bitcoin pierce six figures" --category crypto
-kalshi similar -q "ETH 2.0 staking" --category crypto --min-volume 10000 --close-before 2026-08-19T00:00:00Z
+polymarket similar will-bitcoin-reach-110000-by-december-31-2026 --top-k 25   # anchor by market slug
+polymarket similar -q "bitcoin" --category crypto
+polymarket similar -q "ethereum staking" --category crypto --min-volume 10000 --close-before 2026-08-19T00:00:00Z
 ```
 
-Lower `distance` = closer cosine similarity.
+Ordering depends on the anchor:
 
-### `/clusters`
+- **Market slug** — a taxonomy walk: markets in the anchor's own event first, then
+  its series, then its category, each tier sorted by 24h volume.
+- **`-q "text"`** — keyword relevance (the same ranking the market list uses),
+  then 24h volume.
 
-```bash
-kalshi clusters                              # thematic clusters, with sample titles
-kalshi clusters --label fed                  # find Fed-decision clusters
-kalshi clusters 42                           # markets in cluster 42 (by distance)
-kalshi clusters --behavioral                 # behavioral clusters (mean return + volatility)
-kalshi clusters --ranked --timeframe 1y --min-return 0.20 --top-k 5
-```
-
-### `/peers`
-
-One-call "show me others in the same theme" — replaces the two-step `/clusters` lookup → `/clusters <id>` dance.
-
-```bash
-kalshi peers KXBTCD-26DEC31-T100000 --limit 50      # thematic peers (default)
-kalshi peers KXBTCD-26DEC31-T100000 --behavioral    # behavioral peers
-kalshi peers KXBTCD-26DEC31-T100000 --show-cluster  # only print cluster membership
-```
-
-### `/correlate`
-
-```bash
-kalshi correlate KXBTCD-... KXETHU-... KXSOL-... --window-days 90
-```
-
-Returns the NxN matrix plus a `ranked_pairs` array sorted ascending — most-uncorrelated pairs first.
-
-### `/basket build`
-
-Pulls a candidate universe, computes correlations, greedily selects legs respecting both `--max-per-cluster` and `--max-corr`, then sizes them. Pass `--bankroll` + `--kelly` + `--probs` for Kelly sizing, omit for equal-weight.
-
-```bash
-# 8-leg crypto basket, Kelly-sized
-kalshi basket build --category crypto --min-volume 10000 \
-  -n 8 --max-per-cluster 2 --max-corr 0.6 \
-  --bankroll 1000 --kelly 0.25 \
-  --probs KXBTCD-...:0.62,KXETHU-...:0.58
-
-# 5 uncorrelated bets on macro themes
-kalshi basket build --label fed,cpi,fomc,gdp,jobs \
-  -n 5 --max-per-cluster 1 --max-corr 0.4
-```
-
-### `/basket backtest` / `/basket candles`
-
-```bash
-kalshi basket backtest --tickers KX-A,KX-B,KX-C --weights 0.4,0.4,0.2 --timeframe 1y
-kalshi basket candles  --tickers KX-A,KX-B --timeframe 6m --json
-```
-
-Read `summary.total_return`, `summary.sharpe`, `summary.max_drawdown` directly. Annualization uses calendar seconds (Kalshi trades 24/7), not 252 trading days.
-
-### `/basket size`
-
-Kelly-size legs you've already picked. Probabilities are 0–1 fractions.
-
-```bash
-kalshi basket size --bankroll 1000 --kelly 0.25 \
-  --probs KX-A:0.62,KX-B:0.55 --side yes
-```
-
-The server looks up live `yes_bid`/`no_bid` for each leg to compute edge and Kelly fraction. Legs with no edge (`prob < price`) get `kelly_fraction = 0`.
+The `distance` field in `--json` output is `row_number() / 1000`. It restates row
+order and nothing else: it is not a similarity metric and is not comparable
+across responses, so a cutoff like `distance < 0.2` just means "the first 199 rows".
 
 ### Editorial Themes — narrative registry
 
-Editorial themes are user-curated narrative buckets (e.g. "AI Race Milestones", "Iran Escalation") that map to lists of Kalshi series. Distinct from Octagon's ML clusters — these are *narratives* you define. The bot ships with a 25-theme seed dataset at `data/themes_seo.json` derived from monthly search-demand research.
+Editorial themes are user-curated narrative buckets (e.g. "AI Race Milestones", "Iran Escalation") that map to lists of event slugs. These are *narratives* you define.
+
+No seed file ships yet, so the registry starts empty — build it up with `themes create` and `themes add-series`, or import your own JSON.
 
 ```bash
-# Seed the registry from the included starter file (25 themes, ~170 series)
-kalshi themes import
-kalshi themes list
+polymarket themes list
+polymarket themes import ~/my-themes.json
 
 # Drill into one
-kalshi themes show "Iran Escalation"
+polymarket themes show "Iran Escalation"
 #  Description    Hormuz traffic, US-Iran nuclear deal, oil & gas price ladders
 #  Search volume  1.1M/month
-#  Series         12 mapped
-#  KXAAAGASD, KXAAAGASM, KXAAAGASMAX, KXBRENTW, KXHORMUZNORM, KXUSAIRANAGREEMENT, ...
+#  Series         3 mapped
+#  strait-of-hormuz-traffic-returns-to-normal-by-december-31, us-iran-nuclear-agreement, ...
 
-# THE dashboard view — 25-theme grid with SEO + liquidity
-kalshi themes report
-
-# Identify dead themes (high SEO but no Kalshi inventory)
-kalshi themes audit
+# Identify dead themes (high SEO but no inventory)
+polymarket themes audit
 #   Status keys:
 #     STALE         — high SEO, all series exist but 0 active markets
 #     NO_INVENTORY  — high SEO, no series mapped at all
@@ -249,59 +193,47 @@ kalshi themes audit
 #     TRADEABLE     — ready to act on
 
 # Cross-theme dedupe — same series in two themes
-kalshi themes overlap
-#   KXUSAIRANAGREEMENT  Iran Escalation · Nuclear Renaissance
-#   KXMORTGAGERATE      Fed Cuts Aggressively · Housing / Mortgage Crisis
+polymarket themes overlap
+#   us-iran-nuclear-agreement    Iran Escalation · Nuclear Renaissance
+#   fed-decision-in-september    Fed Cuts Aggressively · Housing / Mortgage Crisis
 ```
 
 #### Build your own themes
 
 ```bash
-kalshi themes create "My Macro Hedge" --label "Recession + inflation tail" --tickers KXRECSSNBER,KXCPIYOY
-kalshi themes add-series "My Macro Hedge" KXFEDDECISION,KXU3,KXMORTGAGERATE
-kalshi themes set-search-volume "My Macro Hedge" 50000
-kalshi themes export ~/my-themes.json    # version-control or share
-kalshi themes import ~/my-themes.json    # restore on another machine
-kalshi themes delete "My Macro Hedge"
+polymarket themes create "My Macro Hedge" --label "Recession + inflation tail" --tickers us-recession-2027,cpi-above-3-in-2027
+polymarket themes add-series "My Macro Hedge" fed-decision-in-september,unemployment-above-5-in-2027
+polymarket themes set-search-volume "My Macro Hedge" 50000
+polymarket themes export ~/my-themes.json    # version-control or share
+polymarket themes import ~/my-themes.json    # restore on another machine
+polymarket themes delete "My Macro Hedge"
 ```
 
 #### Compose with baskets
 
 ```bash
 # Backtest the entire theme as an equal-weight NAV (top market per series)
-kalshi basket backtest --theme "Iran Escalation" --timeframe 3m
+polymarket basket backtest --theme "Iran Escalation" --timeframe 3m
 
 # OHLC bars for theme momentum
-kalshi basket candles --theme "Fed Cuts Aggressively" --timeframe 1y --json
-```
-
-### Series rollups
-
-`series` aggregates Octagon's market-level data to the series level — the canonical Kalshi grouping above individual markets.
-
-```bash
-kalshi series                              # all liquid series, sorted by 24h vol
-kalshi series list --min-volume 10000      # liquidity filter
-kalshi series KXBTCD                       # sub-markets in one series
-kalshi series search bitcoin               # keyword → rollup
-kalshi series candles KXBTCD --timeframe 3m   # series NAV = basket of top sub-markets
+polymarket basket candles --theme "Fed Cuts Aggressively" --timeframe 1y --json
 ```
 
 ### Events — outcome ladders
 
-`events` exposes Octagon's event-level rollups, where each event is a multi-market Kalshi question (e.g. "Who will Trump nominate as Fed Chair?") with per-outcome model probabilities.
+`events` exposes Octagon's event-level rollups, where each event is a multi-market question (e.g. "Who will Trump nominate as Fed Chair?") with per-outcome model probabilities.
 
 ```bash
-kalshi events --category Politics --limit 10
-kalshi events KXFEDCHAIRNOM-29     # outcome ladder with per-contract edge
+polymarket events --category Politics --limit 10
+polymarket events fed-decision-in-september-762   # outcome ladder with per-contract edge
 ```
 
 ### Catalyst calendar
 
 ```bash
-kalshi catalysts upcoming                              # next 30 days
-kalshi catalysts upcoming --days 7 --min-volume 5000   # liquid markets, next week
-kalshi catalysts upcoming --category Politics
+polymarket catalysts upcoming                              # next 30 days
+polymarket catalysts upcoming --days 7 --min-volume 5000   # liquid markets, next week
+polymarket catalysts upcoming --category Politics
 ```
 
 Groups markets by ISO week of `close_time` so you can see catalyst clustering and position before risk concentration.
@@ -321,8 +253,8 @@ This is the primary way to use the bot. The AI agent has access to all the tools
 - "Find markets related to AI regulation"
 
 **Price and data:**
-- "What's the current price of KXBTC-26MAR-B80000?"
-- "Show me the orderbook for KXBTC-26MAR-B80000"
+- "What's the current price of bitcoin-above-95k-by-april-30?"
+- "Show me the orderbook for bitcoin-above-95k-by-april-30"
 - "Give me a price history chart for this market over the last week"
 
 **Portfolio:**
@@ -332,10 +264,10 @@ This is the primary way to use the bot. The AI agent has access to all the tools
 - "Do I have any resting orders?"
 
 **Trading (requires confirmation):**
-- "Buy 10 YES contracts of KXBTC-26MAR-B80000 at 55 cents"
-- "Sell my position in KXBTC-26MAR-B80000"
+- "Buy 10 YES shares of bitcoin-above-95k-by-april-30 at $0.55"
+- "Sell my position in bitcoin-above-95k-by-april-30"
 - "Cancel all my resting orders"
-- "Place a limit order: 5 YES on KXPRES-28-DJT at 30 cents"
+- "Place a limit order: 5 YES on presidential-election-winner-2028 at $0.30"
 
 **Web research:**
 - "What's the latest news about the 2028 presidential race?"
@@ -347,9 +279,9 @@ This is the primary way to use the bot. The AI agent has access to all the tools
 
 The agent has access to the following tools. You never call these directly — the agent selects them based on your query.
 
-### kalshi_search (Market Research Router)
+### polymarket_search (Market Research Router)
 
-The primary research tool. Takes your natural language query and automatically routes to the right Kalshi API endpoints across up to **3 iterations** (browse → drill down → analyze).
+The primary research tool. Takes your natural language query and automatically routes to the right Polymarket API endpoints (Gamma / CLOB / Data) across up to **3 iterations** (browse → drill down → analyze).
 
 **How it works:**
 1. An LLM reads your query and decides which sub-tools to call
@@ -404,27 +336,34 @@ The primary research tool. Takes your natural language query and automatically r
 | `get_exchange_status` | Is the exchange open/trading? | *(none)* |
 | `get_exchange_schedule` | Trading hours and maintenance windows | *(none)* |
 
-### kalshi_trade (Trade Execution Router)
+### polymarket_trade (Trade Execution Router)
 
 Routes natural language trade instructions to the appropriate trading action. **Always requires user approval** before executing.
+
+> **⏳ Not implemented yet.** Order placement is deferred; this tool currently returns an
+> explanatory error. Polymarket orders need EIP-712 wallet signing and on-chain allowances.
 
 **Sub-tools:**
 
 | Tool | Purpose | Key Parameters |
 |---|---|---|
-| `place_order` | Place a single order | `ticker`, `action` (buy/sell), `side` (yes/no), `type` (limit/market), `count`, `yes_price` (1-99 cents) |
+| `place_order` | Place a single order | `slug`, `action` (buy/sell), `side` (yes/no), `type` (limit/market), `shares`, `price` (0-1 USDC) |
 | `amend_order` | Modify a resting order | `order_id`, `count`, `yes_price`, `expiration_ts` |
 | `cancel_order` | Cancel one order | `order_id` |
 | `cancel_orders` | Batch cancel | `order_ids[]` |
 | `place_batch_orders` | Place multiple orders at once | `orders[]` (array of order specs) |
 
-### portfolio_overview
+### portfolio_overview ⏳
 
-Quick composite tool that fetches balance + all positions in a single call. Used when the agent needs a fast portfolio snapshot.
+Quick composite tool that fetches balance + all positions in a single call.
+**Not registered yet** — it reads positions through a wallet, which arrives with
+trading support, so the agent is not offered it. `portfolio_review` is
+unregistered for the same reason.
 
 ### exchange_status
 
-Checks whether the Kalshi exchange is currently open and trading is active.
+Reachability check against the Polymarket CLOB. Polymarket trades 24/7, so there
+are no exchange hours to report.
 
 ### web_search
 
@@ -436,17 +375,23 @@ Fetches and parses content from a specific URL. Used for reading articles, press
 
 ---
 
-## Ticker Formats
+## Identifiers
 
-Kalshi uses a hierarchical ticker system:
+Polymarket identifies things by **slug**, not by a ticker code. There are four levels:
 
-| Level | Format | Example | Description |
-|---|---|---|---|
-| Series | `KXBTC` | `KXBTC` | A recurring topic (e.g., Bitcoin price) |
-| Event | `KXBTC-26MAR` | `KXPRES-28` | A specific occurrence (e.g., March 2026 BTC, 2028 election) |
-| Market | `KXBTC-26MAR-B80000` | `KXPRES-28-DJT` | A single yes/no contract within an event |
+| Level | Example | Description |
+|---|---|---|
+| Series | `nfl` | A recurring topic |
+| Event | `fed-decision-in-september-762` | A specific occurrence, and the `polymarket.com/event/<slug>` path |
+| Market | `will-the-fed-decrease-interest-rates-by-25-bps-…` | One outcome question within an event |
+| Outcome token | `71321045679252212594626385532706912750332728571942532289631379312455583992563` | The YES or NO side of a market, as a uint256 decimal string |
 
-**Price interpretation:** All prices are in **cents** (1-99). A price of `56` means $0.56, which implies a **56% probability** of the YES outcome. YES + NO prices always sum to approximately 100 cents.
+A market also has a `conditionId` (`0x…`), which commands accept anywhere a market slug is accepted.
+An outcome token id is what identifies a side of a market — never parse it as a JavaScript number, it exceeds Number.MAX_SAFE_INTEGER.
+
+**Price interpretation:** prices are **decimal USDC in [0, 1]**. A price of `0.56` means $0.56 per
+share, which implies a **56% probability** of that outcome. YES + NO prices sum to approximately
+`1.00`. Tick size is `0.01` or `0.001` depending on the market, and the minimum order is 5 shares.
 
 ---
 
@@ -463,8 +408,8 @@ Kalshi uses a hierarchical ticker system:
 
 ## Tips
 
-- **Demo mode**: Set `KALSHI_USE_DEMO=true` to trade with fake money while learning
+- **Staging**: Set `POLYMARKET_USE_STAGING=true` to point reads at Polymarket's staging hosts (currently unverified — the documented hostnames do not resolve)
 - **Multi-step research**: The search router automatically drills down — ask "what's the implied probability of X" and it will find the event, then fetch contract-level prices
 - **Be specific**: "BTC markets closing this week" works better than "crypto"
-- **Trade safely**: All trades require explicit confirmation. The agent will show you the order details and ask for approval
-- **Web + Kalshi**: Combine web search with market data — "what's the latest polling for 2028 and how do Kalshi odds compare?"
+- **Trade safely**: when trading lands, all orders will require explicit confirmation — the agent shows the order details and asks for approval
+- **Web + Markets**: Combine web search with market data — "what's the latest polling for 2028 and how do market odds compare?"

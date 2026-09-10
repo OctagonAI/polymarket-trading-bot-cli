@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite';
-import { callKalshiApi } from '../tools/kalshi/api.js';
-import type { KalshiMarket } from '../tools/kalshi/types.js';
+import { fetchEventBySlug } from '../tools/polymarket/events.js';
+import type { PolymarketMarket } from '../tools/polymarket/types.js';
 import { fetchAllOctagonEvents } from '../scan/octagon-events-api.js';
 
 const CONCURRENCY = 10;
@@ -78,8 +78,8 @@ export async function resolveUniverse(
  */
 export async function fetchEventPayloads(
   universe: UniverseEntry[],
-): Promise<Map<string, KalshiMarket[]>> {
-  const out = new Map<string, KalshiMarket[]>();
+): Promise<Map<string, PolymarketMarket[]>> {
+  const out = new Map<string, PolymarketMarket[]>();
   await parallelMap(universe, async (entry) => {
     const markets = await fetchEventMarkets(entry.event_ticker);
     out.set(entry.event_ticker, markets);
@@ -107,38 +107,26 @@ export interface OpenMarket {
   volume_24h: number;         // 24-hour volume (liquidity-now gate)
 }
 
-/** Parse market price from Kalshi response (handles both cents and dollars formats). */
-function parsePrice(m: KalshiMarket): number {
-  const dollars = parseFloat(m.last_price_dollars ?? '');
-  if (Number.isFinite(dollars)) return dollars;
-  return typeof m.last_price === 'number' ? m.last_price / 100 : 0;
+/** Last traded price as a decimal probability (0-1). */
+function parsePrice(m: PolymarketMarket): number {
+  return Number.isFinite(m.last_price) ? m.last_price : 0;
 }
 
-/** Parse lifetime volume (prefers volume_fp string from new API). */
-function parseVolume(m: KalshiMarket): number {
-  const fp = parseFloat(m.volume_fp ?? '');
-  if (Number.isFinite(fp)) return fp;
-  return typeof m.volume === 'number' ? m.volume : 0;
+/** Lifetime traded volume, USDC. */
+function parseVolume(m: PolymarketMarket): number {
+  return Number.isFinite(m.volume) ? m.volume : 0;
 }
 
-/** Parse 24h volume (prefers volume_24h_fp string from new API). */
-function parseVolume24h(m: KalshiMarket): number {
-  const fp = parseFloat(m.volume_24h_fp ?? '');
-  if (Number.isFinite(fp)) return fp;
-  return typeof m.volume_24h === 'number' ? m.volume_24h : 0;
+/** 24-hour traded volume, USDC. */
+function parseVolume24h(m: PolymarketMarket): number {
+  return Number.isFinite(m.volume_24h) ? m.volume_24h : 0;
 }
 
-/** Fetch event markets from Kalshi, returning empty array on error. */
-async function fetchEventMarkets(eventTicker: string): Promise<KalshiMarket[]> {
+/** Fetch event markets from Gamma, returning empty array on error. */
+async function fetchEventMarkets(eventTicker: string): Promise<PolymarketMarket[]> {
   try {
-    const response = await callKalshiApi('GET', `/events/${eventTicker}`, {
-      params: { with_nested_markets: true },
-    });
-    if (!response || typeof response !== 'object') return [];
-    const obj = response as Record<string, unknown>;
-    const event = (obj.event ?? obj) as Record<string, unknown>;
-    const markets = event.markets;
-    return Array.isArray(markets) ? markets as KalshiMarket[] : [];
+    const event = await fetchEventBySlug(eventTicker);
+    return event?.markets ?? [];
   } catch {
     return [];
   }
@@ -190,7 +178,7 @@ export async function discoverSettledMarkets(
     category?: string;
     /** Pre-resolved universe + payloads (Phase 4 path). When omitted, falls back to the legacy local SQL path. */
     universe?: Universe;
-    payloads?: Map<string, KalshiMarket[]>;
+    payloads?: Map<string, PolymarketMarket[]>;
   },
 ): Promise<SettledMarket[]> {
   let events: Array<{ event_ticker: string; category: string | null }>;
@@ -233,7 +221,7 @@ export async function discoverOpenMarkets(
   opts?: {
     category?: string;
     universe?: Universe;
-    payloads?: Map<string, KalshiMarket[]>;
+    payloads?: Map<string, PolymarketMarket[]>;
   },
 ): Promise<OpenMarket[]> {
   let events2: Array<{ event_ticker: string; category: string | null }>;

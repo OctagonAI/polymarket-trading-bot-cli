@@ -12,14 +12,13 @@
  *   themes add-series <name> KX-A,KX-B
  *   themes remove-series <name> KX-A
  *   themes set-search-volume <name> N
- *   themes import [<path>]               Default: data/themes_seo.json
+ *   themes import <path>                 Load themes from a JSON file
  *   themes export <path>
  *   themes report [--min-volume N] [--min-search N]   25-theme dashboard
  *   themes audit                         Flag dead themes (high SEO / zero vol)
  *   themes overlap                       Cross-theme dedupe report
  */
 import { readFileSync, writeFileSync } from 'fs';
-import { resolve as resolvePath } from 'path';
 import { wrapSuccess, wrapError } from './json.js';
 import type { CLIResponse } from './json.js';
 import type { ParsedArgs } from './parse-args.js';
@@ -37,7 +36,8 @@ import {
   type EditorialThemeWithSeries,
 } from '../db/editorial-themes.js';
 import { type SeriesRollup } from './series.js';
-import { listKalshiSeries, type SeriesRollupRow } from '../scan/octagon-kalshi-api.js';
+import { listKalshiSeries, type SeriesRollupRow } from '../scan/octagon-api.js';
+import { octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 import { formatTable } from './scan-formatters.js';
 
 function truncate(s: string, max: number): string {
@@ -117,7 +117,7 @@ function listHandler(db: ReturnType<typeof getDb>, fellThroughBare: boolean): CL
   const themes = listEditorialThemes(db);
   // If user typed bare `themes` and registry is empty, suggest the import command.
   if (fellThroughBare && themes.length === 0) {
-    return wrapError('themes', 'EMPTY_REGISTRY', 'No editorial themes registered. Run `themes import` to seed from data/themes_seo.json, or `themes create <name>` to add one.');
+    return wrapError('themes', 'EMPTY_REGISTRY', 'No editorial themes registered. Run `themes create <name>` to add one, or `themes import <path>` to load a JSON file.');
   }
   return wrapSuccess('themes', { kind: 'list', data: themes });
 }
@@ -209,7 +209,12 @@ interface ThemesImportFile {
 }
 
 function importHandler(db: ReturnType<typeof getDb>, path?: string): CLIResponse<EditorialThemeResult> {
-  const importPath = path ?? resolvePath(import.meta.dir, '..', '..', 'data', 'themes_seo.json');
+  // No seed file ships, so there is no default to fall back to — themes are
+  // whatever the user curates.
+  if (!path) {
+    return wrapError('themes', 'MISSING_PATH', 'Usage: themes import <path>  (expects { "themes": [...] } JSON)');
+  }
+  const importPath = path;
   let raw: string;
   try {
     raw = readFileSync(importPath, 'utf-8');
@@ -281,6 +286,13 @@ async function reportHandler(db: ReturnType<typeof getDb>, args: ParsedArgs): Pr
     return wrapError('themes', 'EMPTY_REGISTRY', 'No editorial themes registered. Run `themes import` first.');
   }
   // Single server-side rollup call instead of the old paginate-then-reduce.
+  // The liquidity half of this dashboard comes from Octagon's series rollup,
+  // which exists for Kalshi only — calling it here would price Polymarket themes
+  // off Kalshi series.
+  if (!octagonSupports('series-rollup')) {
+    return wrapError('themes', 'UNAVAILABLE', octagonUnavailableMessage('series-rollup', 'themes report'));
+  }
+
   // Pull a generous page (most universes < 200 series).
   const allRollups: SeriesRollupRow[] = [];
   let cursor: string | undefined;
@@ -290,7 +302,7 @@ async function reportHandler(db: ReturnType<typeof getDb>, args: ParsedArgs): Pr
     if (!page.has_more || !page.next_cursor) break;
     cursor = page.next_cursor;
   }
-  const rollupByTicker = new Map(allRollups.map((r) => [r.series_ticker, {
+  const rollupByTicker = new Map(allRollups.map((r) => [r.series_ticker.toLowerCase(), {
     series_ticker: r.series_ticker,
     market_count: r.market_count,
     active_count: r.active_count,
@@ -323,7 +335,7 @@ async function reportHandler(db: ReturnType<typeof getDb>, args: ParsedArgs): Pr
     let activeMarkets = 0;
     let totalVolume = 0;
     for (const seriesTicker of detail?.series ?? []) {
-      const r = rollupByTicker.get(seriesTicker.toUpperCase());
+      const r = rollupByTicker.get(seriesTicker.toLowerCase());
       if (r) {
         seriesList.push({ ...r, theme_match: true });
         activeMarkets += r.active_count;
@@ -331,7 +343,7 @@ async function reportHandler(db: ReturnType<typeof getDb>, args: ParsedArgs): Pr
       } else {
         // Theme references a series with no current active markets — record a stub
         seriesList.push({
-          series_ticker: seriesTicker.toUpperCase(),
+          series_ticker: seriesTicker.toLowerCase(),
           market_count: 0,
           active_count: 0,
           total_volume_24h: 0,
@@ -413,7 +425,7 @@ function formatList(themes: EditorialThemeRow[]): string {
   lines.push(`Editorial themes — ${themes.length}`);
   lines.push('');
   if (themes.length === 0) {
-    lines.push('No themes registered. Run `themes import` to seed from data/themes_seo.json.');
+    lines.push('No themes registered. Run `themes create <name>` to add one.');
     return lines.join('\n');
   }
   const rows: string[][] = themes.map((t) => [

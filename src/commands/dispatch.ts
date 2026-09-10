@@ -4,26 +4,19 @@ import type { CLIResponse } from './json.js';
 import { handleEdge, formatEdgeHuman } from './edge.js';
 import { handleAnalyze, formatAnalyzeHuman, promptAnalyzeActions } from './analyze.js';
 import { formatRawReport } from '../controllers/browse.js';
-import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
 import { handleConfig, formatConfigHuman } from './config.js';
 import { handleAlerts, formatAlertsHuman } from './alerts.js';
 import { handleStatus } from './status.js';
 import { handleThemes, formatThemesHuman } from './themes.js';
 import { handleWatch } from './watch.js';
 import { handleBacktest, formatBacktestHuman } from './backtest.js';
-import { callKalshiApi } from '../tools/kalshi/api.js';
-import {
-  formatBalance,
-  formatPositions,
-  formatOrders,
-} from './formatters.js';
-import type { KalshiOrder, KalshiPosition } from '../tools/kalshi/types.js';
-import { buildHelp, validateTradeArgs } from './help.js';
-import { fetchMarketQuote } from './helpers.js';
-import { ensureIndex, forceRefreshIndex } from '../tools/kalshi/search-index.js';
+import { TRADING_UNAVAILABLE_MESSAGE, isTradingCommand } from '../tools/polymarket/polymarket-trade.js';
+import { buildHelp } from './help.js';
+import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
+import { ensureIndex, forceRefreshIndex } from '../tools/polymarket/search-index.js';
 import { searchEventIndex } from '../db/event-index.js';
 import { scanEdges, formatEdgeScanHuman } from './search-edge.js';
-import type { KalshiBalanceResponse } from './formatters.js';
+
 import { ExitCode, exitCodeFromError } from '../utils/errors.js';
 import { trackEvent } from '../utils/telemetry.js';
 import { handleSimilar, formatSimilarHuman } from './similar.js';
@@ -31,8 +24,9 @@ import { handleClusters, formatClustersHuman } from './clusters.js';
 import { handlePeers, formatPeersHuman } from './peers.js';
 import { handleCorrelate, formatCorrelationHuman } from './correlate.js';
 import { handleBasket, formatBasketHuman } from './basket.js';
-import { searchKalshiMarkets, getMarketsWithEdge } from '../scan/octagon-kalshi-api.js';
-import { formatMarketSearchHuman, formatMarketsWithEdgeHuman } from './search-remote.js';
+import { searchOctagonMarkets, searchOctagonEvents, EVENT_SEARCH_TEXT_TIMEOUT_MS, getEventsWithEdge } from '../scan/octagon-api.js';
+import { formatMarketSearchHuman, formatEventSearchHuman, formatMarketsWithEdgeHuman } from './search-remote.js';
+import { findTheme } from '../scan/theme-registry.js';
 import { handleEvents, formatEventsHuman } from './events.js';
 import { handleTrust, formatTrustHuman } from './trust.js';
 import { handleReport, formatReportHuman } from './report.js';
@@ -59,7 +53,7 @@ function resolveAlias(subcommand: Subcommand, positionalArgs: string[]): Resolve
       return { canonical: 'portfolio', subview: 'status' };
 
     // `themes` is now the editorial-themes registry (curated narrative buckets).
-    // Legacy "kalshi search themes" (Kalshi category labels) is still reachable
+    // Legacy "polymarket search themes" (Kalshi category labels) is still reachable
     // via `search themes`.
 
     // basket sub-routing (build/backtest/size/candles) — exposed for telemetry granularity
@@ -102,7 +96,7 @@ function modeFlagsFor(canonical: Subcommand, args: ParsedArgs): Record<string, s
  *
  * Heuristic: --json + non-TTY stdout + BUN_INSTALL_CACHE_DIR set (bunx sets
  * this; `bun add -g` installs don't). Silenced after first emit by touching
- * a sentinel file under ~/.kalshi-bot/.
+ * a sentinel file under ~/.polymarket-bot/.
  */
 async function maybeEmitBunxHint(args: ParsedArgs): Promise<void> {
   if (!args.json) return;
@@ -115,10 +109,10 @@ async function maybeEmitBunxHint(args: ParsedArgs): Promise<void> {
     const sentinel = appPath('.bunx-hint-shown');
     if (existsSync(sentinel)) return;
     process.stderr.write(
-      '[kalshi] Tip: for clean JSON output and parallel-safe scripting, install once with\n' +
-      '[kalshi]   bun add -g kalshi-trading-bot-cli\n' +
-      '[kalshi] then call `kalshi …` directly. Or use `bunx --silent` to suppress install\n' +
-      '[kalshi] chatter from this invocation. See README → Scripting & Parallel Use.\n',
+      '[polymarket] Tip: for clean JSON output and parallel-safe scripting, install once with\n' +
+      '[polymarket]   bun add -g polymarket-trading-bot-cli\n' +
+      '[polymarket] then call `polymarket …` directly. Or use `bunx --silent` to suppress install\n' +
+      '[polymarket] chatter from this invocation. See README → Scripting & Parallel Use.\n',
     );
     const dir = appPath('.');
     mkdirSync(dir, { recursive: true });
@@ -163,6 +157,37 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       return;
     }
 
+    // ─── Commands that need wallet/trading support ────────────────────
+    // Order placement and every account read depend on a configured wallet,
+    // which is part of trading setup that does not exist yet. `status` is the
+    // exception: it resolves to a portfolio subview for historical reasons but
+    // only checks setup and CLOB reachability, neither of which needs a wallet.
+    if (isTradingCommand(resolved.canonical) && resolved.subview !== 'status') {
+      if (json) {
+        console.log(JSON.stringify(wrapError(resolved.canonical, 'NOT_AVAILABLE', TRADING_UNAVAILABLE_MESSAGE)));
+      } else {
+        console.error(TRADING_UNAVAILABLE_MESSAGE);
+      }
+      process.exit(ExitCode.USER_ERROR);
+      return;
+    }
+
+    // ─── Octagon-backed commands that cannot serve Polymarket yet ─────
+    // Gated rather than left to return Kalshi rows under a Polymarket banner.
+    if (isDeferredCommand(resolved.canonical)) {
+      const feature = COMMAND_FEATURE[resolved.canonical]!;
+      if (!octagonSupports(feature)) {
+        const msg = octagonUnavailableMessage(feature, resolved.canonical);
+        if (json) {
+          console.log(JSON.stringify(wrapError(resolved.canonical, 'NOT_AVAILABLE', msg)));
+        } else {
+          console.error(msg);
+        }
+        process.exit(ExitCode.USER_ERROR);
+        return;
+      }
+    }
+
     // ─── search ────────────────────────────────────────────────────────
     if (resolved.canonical === 'search') {
       const sub = resolved.subview ?? args.positionalArgs[0];
@@ -181,7 +206,7 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
         if (process.env.OCTAGON_API_KEY) {
           // edge_pp_min is asymmetric (only filters lower bound). Skip when
           // user passes --min-edge 0 so they see the full distribution.
-          const data = await getMarketsWithEdge({
+          const data = await getEventsWithEdge({
             category: args.category,
             ...(minEdgePp > 0 ? { edge_pp_min: minEdgePp } : {}),
             sort_by: (args.sortBy as 'edge_pp' | 'expected_return' | 'total_volume' | 'model_probability' | undefined) ?? 'edge_pp',
@@ -219,8 +244,10 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       }
       const query = args.positionalArgs.join(' ');
 
-      // Octagon-powered server-side search: broader universe, full-text + structured filters.
-      if (process.env.OCTAGON_API_KEY) {
+      // Octagon server-side search is skipped until the client is repointed:
+      // its Kalshi-scoped route returns Kalshi markets regardless of the query.
+      // The local Gamma-backed index below is venue-correct.
+      if (process.env.OCTAGON_API_KEY && octagonSupports('market-search')) {
         // --aggregate-by series → route to series rollup
         if (args.aggregateBy === 'series') {
           const { handleSeries, formatSeriesHuman } = await import('./series.js');
@@ -236,12 +263,42 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
           process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
           return;
         }
-        // sort_by is now server-side (true top-N across the whole universe);
-        // series_prefix lets us tree-browse (KXBTC matches all Bitcoin series).
+        // Route by what the user actually typed.
+        //
+        // Market-level filters only exist on /markets/search, so a query using
+        // them stays there (it also keeps the Closes column, which the events
+        // route cannot populate). Everything else — a theme name or free text —
+        // goes to the event route, because Polymarket market titles are outcome
+        // labels ("Yes", "76,000") while the subject lives on the event.
+        const usesMarketFilters =
+          args.minVolume !== undefined ||
+          args.closeBefore !== undefined ||
+          args.sortBy !== undefined ||
+          args.category !== undefined ||
+          args.seriesTicker !== undefined ||
+          args.seriesPrefix !== undefined;
+
+        const theme = findTheme(query);
+        if (theme && !usesMarketFilters) {
+          // meta_category is case-sensitive and a closed set — it comes from
+          // the registry, never from the raw query string.
+          const page = await searchOctagonEvents({
+            meta_category: theme.metaCategory,
+            limit: args.limit ?? 30,
+          });
+          if (json) {
+            console.log(JSON.stringify(wrapSuccess('search', page)));
+          } else {
+            console.log(formatEventSearchHuman(`theme ${theme.id}`, page));
+          }
+          return;
+        }
+
+        // sort_by is server-side (true top-N across the whole universe).
         const serverSortBy = (args.sortBy === 'volume_24h' || args.sortBy === 'close_time' || args.sortBy === 'last_price')
           ? args.sortBy
           : undefined;
-        const page = await searchKalshiMarkets({
+        const page = await searchOctagonMarkets({
           q: query,
           category: args.category,
           series_ticker: args.seriesTicker,
@@ -256,6 +313,33 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
           ? page.data.filter((m) => m.status === 'active' || m.status === 'open')
           : page.data;
         const filteredPage = { ...page, data: rows };
+
+        // Market titles are outcome labels ("Yes", "76,000"), so a query naming
+        // the subject — "government shutdown" — matches no market even when the
+        // event exists. Retry at event level, but only on a miss: the event
+        // route is erratic on high-match free text (q=bitcoin and q=election
+        // both exceeded 30s while /markets/search answered in ~1s), and those
+        // are exactly the queries this path already answered. Short leash, and
+        // a failure leaves the market result standing.
+        if (filteredPage.data.length === 0 && !usesMarketFilters) {
+          try {
+            const events = await searchOctagonEvents(
+              { q: query, limit: args.limit ?? 30 },
+              { timeoutMs: EVENT_SEARCH_TEXT_TIMEOUT_MS },
+            );
+            if (events.data.length > 0) {
+              if (json) {
+                console.log(JSON.stringify(wrapSuccess('search', events)));
+              } else {
+                console.log(formatEventSearchHuman(`"${query}"`, events));
+              }
+              return;
+            }
+          } catch {
+            // Slow or unavailable — fall through to the empty market result.
+          }
+        }
+
         if (json) {
           console.log(JSON.stringify(wrapSuccess('search', filteredPage)));
         } else {
@@ -289,68 +373,18 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       return;
     }
 
-    // ─── portfolio (with subviews) ─────────────────────────────────────
-    if (resolved.canonical === 'portfolio') {
-      const subview = resolved.subview ?? args.positionalArgs[0] ?? 'overview';
-
-      if (subview === 'positions') {
-        const data = await callKalshiApi('GET', '/portfolio/positions');
-        const allPositions = (data.market_positions ?? data.positions ?? []) as KalshiPosition[];
-        const positions = allPositions.filter((p) => {
-          const pos = parseFloat(String(p.position ?? '0'));
-          return pos !== 0;
-        });
-        if (json) {
-          console.log(JSON.stringify(wrapSuccess('portfolio:positions', { positions })));
-        } else {
-          console.log(formatPositions(positions));
-        }
-        return;
-      }
-
-      if (subview === 'orders') {
-        const data = await callKalshiApi('GET', '/portfolio/orders', { params: { status: 'resting' } });
-        const orders = (data.orders ?? []) as KalshiOrder[];
-        if (json) {
-          console.log(JSON.stringify(wrapSuccess('portfolio:orders', { orders })));
-        } else {
-          console.log(formatOrders(orders));
-        }
-        return;
-      }
-
-      if (subview === 'balance') {
-        const data = await callKalshiApi('GET', '/portfolio/balance') as unknown as KalshiBalanceResponse;
-        if (json) {
-          console.log(JSON.stringify(wrapSuccess('portfolio:balance', data)));
-        } else {
-          console.log(formatBalance(data));
-        }
-        return;
-      }
-
-      if (subview === 'status') {
-        const output = await handleStatus();
-        if (json) {
-          console.log(JSON.stringify({ ok: true, output }));
-        } else {
-          console.log(output);
-        }
-        return;
-      }
-
-      // Default: full portfolio overview
-      const resp = await handlePortfolio(args);
+    // ─── status ────────────────────────────────────────────────────────
+    // `status` resolves to a portfolio subview for historical reasons. It is the
+    // only one still reachable: the trading gate above returns for every other
+    // portfolio view, so their handlers were dead code and have been removed.
+    // They come back with the wallet phase.
+    if (resolved.canonical === 'portfolio' && resolved.subview === 'status') {
+      const output = await handleStatus();
       if (json) {
-        console.log(JSON.stringify(resp));
+        console.log(JSON.stringify({ ok: true, output }));
       } else {
-        console.log(formatPortfolioHuman(resp.data));
-        const warnings = (resp.meta as Record<string, unknown>)?.warnings;
-        if (Array.isArray(warnings) && warnings.length > 0) {
-          for (const w of warnings) console.error(`  ⚠ ${String(w)}`);
-        }
+        console.log(output);
       }
-      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
       return;
     }
 
@@ -591,107 +625,6 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       return;
     }
 
-    // ─── buy / sell ────────────────────────────────────────────────────
-    if (subcommand === 'buy' || subcommand === 'sell') {
-      const [ticker, countStr, priceStr] = args.positionalArgs;
-      if (!ticker || !countStr) {
-        const usage = `Usage: ${subcommand} <ticker> <count> [price_in_cents] [--side yes|no]`;
-        const errResp = wrapError(subcommand, 'MISSING_ARGS', usage);
-        if (json) {
-          console.log(JSON.stringify(errResp));
-          process.exit(ExitCode.USER_ERROR);
-        } else {
-          console.error(usage);
-          process.exit(ExitCode.USER_ERROR);
-        }
-        return;
-      }
-      const validated = validateTradeArgs(countStr, priceStr);
-      if ('error' in validated) {
-        const errResp = wrapError(subcommand, 'INVALID_ARGS', validated.error);
-        if (json) {
-          console.log(JSON.stringify(errResp));
-          process.exit(ExitCode.USER_ERROR);
-        } else {
-          console.error(validated.error);
-          process.exit(ExitCode.USER_ERROR);
-        }
-        return;
-      }
-      let effectivePrice = validated.price;
-      // When no price given, fetch best quote to simulate a market order
-      // (Kalshi API requires a price field even for market-like orders)
-      const tradeSide = args.side ?? 'yes';
-      if (effectivePrice === undefined) {
-        const quoteResult = await fetchMarketQuote(ticker.toUpperCase(), subcommand as 'buy' | 'sell', tradeSide);
-        if ('error' in quoteResult) {
-          if (json) {
-            console.log(JSON.stringify(wrapError(subcommand, 'NO_QUOTE', quoteResult.error)));
-            process.exit(ExitCode.EXTERNAL_ERROR);
-          } else {
-            console.error(quoteResult.error);
-            process.exit(ExitCode.EXTERNAL_ERROR);
-          }
-          return;
-        }
-        effectivePrice = quoteResult.cents;
-      }
-      const body: Record<string, unknown> = {
-        ticker: ticker.toUpperCase(),
-        action: subcommand,
-        side: tradeSide,
-        type: 'limit',
-        count: validated.count,
-        ...(tradeSide === 'no'
-          ? { no_price: effectivePrice }
-          : { yes_price: effectivePrice }),
-      };
-      const data = await callKalshiApi('POST', '/portfolio/orders', { body });
-      if (json) {
-        console.log(JSON.stringify(wrapSuccess(subcommand, data)));
-      } else {
-        const order = data.order as Record<string, unknown> | undefined;
-        console.log(order ? `Order placed. ID: ${order.order_id} | Status: ${order.status}` : `Order submitted.`);
-      }
-      return;
-    }
-
-    // ─── cancel ────────────────────────────────────────────────────────
-    if (subcommand === 'cancel') {
-      const orderId = args.positionalArgs[0];
-      if (!orderId) {
-        const errResp = wrapError('cancel', 'MISSING_ARGS', 'Usage: cancel <order_id>');
-        if (json) {
-          console.log(JSON.stringify(errResp));
-          process.exit(ExitCode.USER_ERROR);
-        } else {
-          console.error('Usage: cancel <order_id>');
-          process.exit(ExitCode.USER_ERROR);
-        }
-        return;
-      }
-      try {
-        await callKalshiApi('DELETE', `/portfolio/orders/${orderId}`);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const hint = msg.includes('404') ? ' (order not found or already filled)' : '';
-        const code = exitCodeFromError(err);
-        if (json) {
-          console.log(JSON.stringify(wrapError('cancel', 'CANCEL_FAILED', msg + hint)));
-          process.exit(code);
-        } else {
-          console.error(`Cancel failed: ${msg}${hint}`);
-          process.exit(code);
-        }
-        return;
-      }
-      if (json) {
-        console.log(JSON.stringify(wrapSuccess('cancel', { orderId, canceled: true })));
-      } else {
-        console.log(`Order ${orderId} canceled.`);
-      }
-      return;
-    }
 
     // ─── help ──────────────────────────────────────────────────────────
     if (subcommand === 'help') {

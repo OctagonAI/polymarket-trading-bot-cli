@@ -1,50 +1,63 @@
 import type { Database } from 'bun:sqlite';
 import type { AuditTrail } from '../audit/trail.js';
-import { callKalshiApi, fetchAllPages } from '../tools/kalshi/api.js';
-import type { KalshiEvent, KalshiMarket, KalshiSeries } from '../tools/kalshi/types.js';
-import { ensureIndex, getRefreshPromise } from '../tools/kalshi/search-index.js';
+import { fetchAllMarkets } from '../tools/polymarket/markets.js';
+import { ensureIndex, getRefreshPromise } from '../tools/polymarket/search-index.js';
 import { upsertEvent, deactivateExpired } from '../db/events.js';
 import { getThemeTickers } from '../db/themes.js';
-
-/** Maps lowercase theme IDs → exact Kalshi category labels */
-export const CATEGORY_MAP: Record<string, string> = {
-  'climate': 'Climate and Weather',
-  'companies': 'Companies',
-  'crypto': 'Crypto',
-  'economics': 'Economics',
-  'elections': 'Elections',
-  'entertainment': 'Entertainment',
-  'financials': 'Financials',
-  'health': 'Health',
-  'mentions': 'Mentions',
-  'politics': 'Politics',
-  'science': 'Science and Technology',
-  'social': 'Social',
-  'sports': 'Sports',
-  'transportation': 'Transportation',
-  'world': 'World',
-};
+import { findTheme, themeTagLabels } from './theme-registry.js';
 
 /**
- * Fetch all series from Kalshi and build a map of category → sorted subcategory tags.
- * Each series has a `tags` field; we collect unique tags per category.
+ * Theme id → Polymarket tag labels, matched against the `category` and `tags`
+ * columns of the local event index.
+ *
+ * Derived from the shared registry in theme-registry.ts so the ids a user sees
+ * are the same ones `search` accepts. A theme can carry several tag labels
+ * because Gamma splits some of Octagon's categories — "Tech & Science" is two
+ * separate Gamma tags, and Octagon's "Climate" is tagged "Weather" here.
+ *
+ * Deliberately NOT using Octagon's `meta_category` for this path: resolving
+ * against the local Gamma index covers the whole active universe at a finer
+ * grain and needs no API key. `search` uses meta_category because it queries
+ * Octagon directly; that split is why registry entries carry both.
+ */
+export const CATEGORY_MAP: Record<string, string[]> = themeTagLabels();
+
+/**
+ * Build a map of category → sorted subcategory tags from the local event index.
+ * Gamma has no endpoint that returns the tag taxonomy, so it is derived from the
+ * tags already stored on indexed events.
  */
 export async function fetchSubcategories(): Promise<Record<string, string[]>> {
-  const allSeries = await fetchAllPages<KalshiSeries>('/series', {}, 'series', 50);
-  const catTags: Record<string, Set<string>> = {};
+  const { getDb } = await import('../db/index.js');
+  await ensureIndex();
+  const pending = getRefreshPromise();
+  if (pending) await pending;
+
+  const rows = getDb()
+    .query(`SELECT category, tags FROM event_index WHERE tags IS NOT NULL AND tags != ''`)
+    .all() as Array<{ category: string | null; tags: string | null }>;
+
+  const allSeries = rows.map((r) => ({ category: r.category ?? '', tags: (r.tags ?? '').split(',').filter(Boolean) }));
+  const catTags: Record<string, Map<string, number>> = {};
 
   for (const s of allSeries) {
     const cat = s.category;
     if (!cat) continue;
-    if (!catTags[cat]) catTags[cat] = new Set();
+    if (!catTags[cat]) catTags[cat] = new Map();
     for (const tag of s.tags ?? []) {
-      catTags[cat].add(tag);
+      catTags[cat].set(tag, (catTags[cat].get(tag) ?? 0) + 1);
     }
   }
 
+  // Ranked by how many events carry the tag, not alphabetically. Polymarket
+  // tags are free-form and long-tailed — a single category can carry 170+ of
+  // them, most matching one event and some being artefacts ("Rewards 20, 4.5,
+  // 50") — so an A-Z list buries the tags anyone would actually browse.
   const result: Record<string, string[]> = {};
   for (const [cat, tags] of Object.entries(catTags)) {
-    result[cat] = [...tags].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    result[cat] = [...tags.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], undefined, { sensitivity: 'base' }))
+      .map(([tag]) => tag);
   }
   return result;
 }
@@ -67,7 +80,7 @@ export class ThemeResolver {
     } else if (themeName.includes(':')) {
       // Subcategory filter: "crypto:btc", "sports:football"
       eventTickers = await this.resolveSubcategory(themeName);
-    } else if (CATEGORY_MAP[themeName]) {
+    } else if (findTheme(themeName)) {
       eventTickers = await this.resolveCategory(themeName);
     } else {
       eventTickers = getThemeTickers(this.db, themeName);
@@ -92,12 +105,7 @@ export class ThemeResolver {
   }
 
   private async resolveTop50(): Promise<string[]> {
-    const markets = await fetchAllPages<KalshiMarket>(
-      '/markets',
-      { status: 'open', limit: 200 },
-      'markets',
-      3
-    );
+    const markets = await fetchAllMarkets({ closed: false, order: 'volume24hr', ascending: false }, 3);
 
     // Sort by volume_24h descending
     markets.sort((a, b) => (b.volume_24h ?? 0) - (a.volume_24h ?? 0));
@@ -116,61 +124,67 @@ export class ThemeResolver {
   }
 
   private async resolveCategory(themeName: string): Promise<string[]> {
-    const categoryLabel = CATEGORY_MAP[themeName];
-    // Kalshi /events API does not support server-side category filtering,
-    // so query the local SQLite index instead of fetching all open events
+    const labels = findTheme(themeName)?.tags ?? [];
+    if (labels.length === 0) return [];
+    // Gamma has no server-side category filter, so query the local SQLite index
+    // instead of paging every open event
     await ensureIndex();
     // If ensureIndex kicked off a background refresh (first run / empty index),
     // await it so we don't query an unpopulated event_index table
     const pending = getRefreshPromise();
     if (pending) await pending;
-    const rows = this.db.query(
-      `SELECT event_ticker FROM event_index WHERE category = ?`,
-    ).all(categoryLabel) as { event_ticker: string }[];
-    return rows.map((r) => r.event_ticker);
+    // `category` holds tags[0], which is often a narrow label ("Bitcoin",
+    // "Price Milestone") rather than the broad one, so matching it alone drops
+    // most of a category. Also match the label as a whole tag: wrapping both
+    // sides in commas makes this exact-token, so "Crypto" does not match on
+    // "Crypto Prices" by accident (SQLite LIKE is ASCII case-insensitive).
+    const seen = new Set<string>();
+    for (const label of labels) {
+      const rows = this.db.query(
+        `SELECT event_ticker FROM event_index
+          WHERE category = ?1 OR ',' || COALESCE(tags, '') || ',' LIKE ?2`,
+      ).all(label, `%,${label},%`) as { event_ticker: string }[];
+      for (const row of rows) seen.add(row.event_ticker);
+    }
+    return [...seen];
   }
 
   private async resolveSubcategory(themeName: string): Promise<string[]> {
     const [catKey, ...subParts] = themeName.split(':');
     const subTag = subParts.join(':').toLowerCase();
-    const categoryLabel = CATEGORY_MAP[catKey];
-    if (!categoryLabel) return [];
+    const labels = findTheme(catKey ?? '')?.tags ?? [];
+    if (labels.length === 0) return [];
 
-    // Find series in this category with matching tag
-    const allSeries = await fetchAllPages<KalshiSeries>('/series', { category: categoryLabel }, 'series', 50);
-    const matchingSeries = new Set<string>();
-    for (const s of allSeries) {
-      if (s.category !== categoryLabel) continue;
-      const hasTag = (s.tags ?? []).some((t) => {
+    await ensureIndex();
+    const pending = getRefreshPromise();
+    if (pending) await pending;
+
+    // Tags are stored comma-joined on the index row; match either the raw label
+    // or its kebab-cased form so "pop-culture" and "Pop Culture" both resolve.
+    const rows: Array<{ event_ticker: string; tags: string | null }> = [];
+    for (const label of labels) {
+      rows.push(
+        ...(this.db
+          .query(
+            `SELECT event_ticker, tags FROM event_index
+              WHERE category = ?1 OR ',' || COALESCE(tags, '') || ',' LIKE ?2`,
+          )
+          .all(label, `%,${label},%`) as Array<{ event_ticker: string; tags: string | null }>),
+      );
+    }
+
+    const seen = new Set<string>();
+    const eventTickers: string[] = [];
+    for (const row of rows) {
+      const tags = (row.tags ?? '').split(',').filter(Boolean);
+      const hasTag = tags.some((t) => {
         const tagLower = t.toLowerCase();
         const tagKebab = tagLower.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
         return tagLower === subTag || tagKebab === subTag;
       });
-      if (hasTag) matchingSeries.add(s.ticker);
-    }
-
-    if (matchingSeries.size === 0) return [];
-
-    // Fetch open events for matching series in parallel (server-side filtered)
-    const results = await Promise.all(
-      [...matchingSeries].map((seriesTicker) =>
-        fetchAllPages<KalshiEvent>(
-          '/events',
-          { status: 'open', series_ticker: seriesTicker },
-          'events',
-          50
-        )
-      )
-    );
-
-    const seen = new Set<string>();
-    const eventTickers: string[] = [];
-    for (const events of results) {
-      for (const e of events) {
-        if (!seen.has(e.event_ticker)) {
-          seen.add(e.event_ticker);
-          eventTickers.push(e.event_ticker);
-        }
+      if (hasTag && !seen.has(row.event_ticker)) {
+        seen.add(row.event_ticker);
+        eventTickers.push(row.event_ticker);
       }
     }
 

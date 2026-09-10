@@ -18,26 +18,35 @@ export interface ThemesResult {
   themes: ThemeInfo[];
 }
 
+/** Per-theme cap on the subcategories listed by `search themes`. */
+const MAX_SUBCATEGORIES = 10;
+
 export async function handleThemes(args: ParsedArgs): Promise<CLIResponse<ThemesResult>> {
   const themes: ThemeInfo[] = [];
 
   // Special built-in theme
   themes.push({ id: 'top50', name: 'Top 50 markets by 24h volume', type: 'built-in' });
 
-  // Fetch subcategories from Kalshi API
+  // Subcategory tags, keyed by Polymarket tag label
   let subcatMap: Record<string, string[]> = {};
   try {
     subcatMap = await fetchSubcategories();
   } catch {
-    // API unavailable — show categories without subcategories
+    // Index unavailable — show categories without subcategories
   }
 
-  // All Kalshi categories with their subcategories
-  for (const [id, label] of Object.entries(CATEGORY_MAP)) {
-    const subs = subcatMap[label] ?? [];
+  // One row per theme. A theme may cover several Polymarket tag labels, so
+  // gather the subcategories of all of them.
+  for (const [id, labels] of Object.entries(CATEGORY_MAP)) {
+    // Already ranked by event count; keep the head. The full tag list runs to
+    // the hundreds, which turns this table into pages of scrollback.
+    const subs = [...new Set(labels.flatMap((label) => subcatMap[label] ?? []))].slice(
+      0,
+      MAX_SUBCATEGORIES,
+    );
     themes.push({
       id,
-      name: label,
+      name: labels.join(', '),
       type: 'category',
       ...(subs.length > 0 ? { subcategories: subs } : {}),
     });

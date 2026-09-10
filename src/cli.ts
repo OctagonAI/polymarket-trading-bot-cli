@@ -7,6 +7,7 @@ import type {
   ToolStartEvent,
 } from './agent/index.js';
 import { checkApiKeyExists, getApiKeyNameForProvider, getProviderDisplayName } from './utils/env.js';
+import { PROVIDERS } from './providers.js';
 import { logger } from './utils/logger.js';
 import {
   AgentRunnerController,
@@ -33,9 +34,11 @@ import { editorTheme, theme } from './theme.js';
 import { handleSlashCommand, executePendingTrade } from './commands/index.js';
 import type { CommandResult } from './commands/index.js';
 import { formatResponse } from './utils/markdown-table.js';
-import { ensureIndex, onIndexProgress, getRefreshPromise } from './tools/kalshi/search-index.js';
-import { callKalshiApi } from './tools/kalshi/api.js';
-import type { KalshiMarket } from './tools/kalshi/types.js';
+import { ensureIndex, onIndexProgress, getRefreshPromise } from './tools/polymarket/search-index.js';
+import { TRADING_UNAVAILABLE_MESSAGE } from './tools/polymarket/polymarket-trade.js';
+import { isDeferredCommand } from './scan/octagon-capabilities.js';
+import { allThemeIds } from './scan/theme-registry.js';
+import { isTradingCommand } from './tools/polymarket/polymarket-trade.js';
 import { SetupWizardController } from './setup/wizard.js';
 import { trackEvent } from './utils/telemetry.js';
 
@@ -59,10 +62,10 @@ function summarizeToolResult(tool: string, args: Record<string, unknown>, result
       }
       if (typeof parsed.data === 'object') {
         const keys = Object.keys(parsed.data).filter((key) => !key.startsWith('_'));
-        if (tool === 'kalshi_search') {
+        if (tool === 'polymarket_search') {
           return keys.length === 1 ? 'Called 1 data source' : `Called ${keys.length} data sources`;
         }
-        if (tool === 'kalshi_trade') {
+        if (tool === 'polymarket_trade') {
           return 'Trade executed';
         }
         if (tool === 'portfolio_overview') {
@@ -202,13 +205,18 @@ export async function runCli(options?: { forceSetup?: boolean }) {
   });
 
   // Slash command autocomplete — start with top-level themes, load subcategories in background
-  const baseThemes = ['top50', 'climate', 'companies', 'crypto', 'economics', 'elections', 'entertainment', 'financials', 'health', 'mentions', 'politics', 'science', 'social', 'sports', 'transportation', 'world'];
+  const baseThemes = allThemeIds();
   let allThemes = baseThemes.map((t) => ({ value: t, label: t }));
 
   // Pre-warm the event index on startup (non-blocking, only if credentials exist)
   let indexStatusMessage: string | null = null;
-  const hasKalshiCreds = checkApiKeyExists('KALSHI_API_KEY') &&
-    (checkApiKeyExists('KALSHI_PRIVATE_KEY_FILE') || checkApiKeyExists('KALSHI_PRIVATE_KEY'));
+  // Polymarket reads need no credentials, so the wizard exists to collect an LLM
+  // key (and optionally an Octagon one). Gating on exchange credentials — as the
+  // Kalshi original did — would relaunch the wizard on every start, because there
+  // is no Polymarket API key to hold.
+  // Ollama is deliberately excluded: it has no apiKeyEnvVar, so counting it would
+  // make this always true and the wizard would never run.
+  const hasLlmKey = PROVIDERS.some((p) => p.apiKeyEnvVar && checkApiKeyExists(p.apiKeyEnvVar));
   const unsubIndexProgress = onIndexProgress((info) => {
     if (info.phase === 'fetching_events') {
       indexStatusMessage = `Indexing markets... ${info.fetchedItems} fetched (page ${info.page}/${info.maxPages})`;
@@ -234,8 +242,8 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       try {
         const { fetchSubcategories, CATEGORY_MAP } = await import('./scan/theme-resolver.js');
         const labelToKey: Record<string, string> = {};
-        for (const [key, label] of Object.entries(CATEGORY_MAP)) {
-          labelToKey[label] = key;
+        for (const [key, labels] of Object.entries(CATEGORY_MAP)) {
+          for (const label of labels) labelToKey[label] = key;
         }
         const subcats = await fetchSubcategories();
         const subEntries: Array<{ value: string; label: string }> = [];
@@ -258,7 +266,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     })();
   };
 
-  if (hasKalshiCreds) initPostCredentials();
+  if (hasLlmKey) initPostCredentials();
 
 
   const agentRunner = new AgentRunnerController(
@@ -336,7 +344,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
 
   const watchSubcommands = (typed: string): AutocompleteItem[] | null => {
     const themeFlag = { value: '--theme', label: '--theme', description: 'Continuous theme scan (e.g. --theme crypto)' };
-    if (!typed) return [{ value: '', label: '<ticker>', description: 'Live price/orderbook feed (e.g. KXBTC-26MAR14-T50049)' }, themeFlag];
+    if (!typed) return [{ value: '', label: '<market-slug>', description: 'Live price/orderbook feed (e.g. bitcoin-above-88k-on-september-11-2026)' }, themeFlag];
     const lower = typed.toLowerCase();
     // After --theme, complete with theme names
     if (lower.startsWith('--theme ')) {
@@ -354,7 +362,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
   const helpTopicCompletions = (typed: string): AutocompleteItem[] | null => {
     const topics = [
       { value: 'search', label: 'search', description: 'Discovery commands' },
-      { value: 'similar', label: 'similar', description: 'Semantic market search (Octagon)' },
+      { value: 'similar', label: 'similar', description: 'Related markets (Octagon)' },
       { value: 'clusters', label: 'clusters', description: 'Browse thematic & behavioral clusters' },
       { value: 'peers', label: 'peers', description: 'Cluster peers for a ticker' },
       { value: 'correlate', label: 'correlate', description: 'Pairwise correlation matrix' },
@@ -385,10 +393,10 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     // Core 6 commands
     { name: 'search', description: 'Search events by theme, ticker, or free-text (use "themes" to list)', getArgumentCompletions: searchSubcommands },
     { name: 'portfolio', description: 'Portfolio overview, positions, orders, balance, status', getArgumentCompletions: portfolioSubcommands },
-    { name: 'analyze', description: 'Full market analysis: edge, research, Kelly sizing', getArgumentCompletions: usageHint('<ticker>', 'e.g. KXBTC-26MAR14-T50049') },
+    { name: 'analyze', description: 'Full market analysis: edge, research, Kelly sizing', getArgumentCompletions: usageHint('<market-slug>', 'e.g. bitcoin-above-88k-on-september-11-2026') },
     { name: 'watch', description: 'Live monitoring: ticker feed or continuous theme scan', getArgumentCompletions: watchSubcommands },
-    { name: 'buy', description: 'Buy contracts (defaults to YES side)', getArgumentCompletions: usageHint('<ticker> <count> [price] [yes|no]', 'e.g. KXBTC-26MAR14-T50049 10 56') },
-    { name: 'sell', description: 'Sell contracts (defaults to YES side)', getArgumentCompletions: usageHint('<ticker> <count> [price] [yes|no]', 'e.g. KXBTC-26MAR14-T50049 10 56') },
+    { name: 'buy', description: 'Buy contracts (defaults to YES side)', getArgumentCompletions: usageHint('<market-slug> <shares> [price] [yes|no]', 'e.g. bitcoin-above-88k-on-september-11-2026 10 0.56') },
+    { name: 'sell', description: 'Sell contracts (defaults to YES side)', getArgumentCompletions: usageHint('<market-slug> <shares> [price] [yes|no]', 'e.g. bitcoin-above-88k-on-september-11-2026 10 0.56') },
     { name: 'cancel', description: 'Cancel a resting order', getArgumentCompletions: usageHint('<order_id>', 'the order UUID') },
     // Analysis
     { name: 'backtest', description: 'Model accuracy scorecard + live edge scanner', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
@@ -407,9 +415,9 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       return opts.filter(o => o.value.toLowerCase().includes(lower));
     }},
     // Octagon Kalshi search/clusters/basket
-    { name: 'similar', description: 'Semantic market search by ticker or query', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
+    { name: 'similar', description: 'Related markets by slug or keyword query', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
       const opts = [
-        { value: '<ticker>', label: '<ticker>', description: 'Anchor by ticker (no embedding call)' },
+        { value: '<market-slug>', label: '<market-slug>', description: 'Anchor by market slug' },
         { value: '-q "query text"', label: '-q "query text"', description: 'Anchor by free-text (server-side embed)' },
         { value: '--top-k 25', label: '--top-k 25', description: 'Number of neighbors (default 25)' },
         { value: '--category crypto', label: '--category crypto', description: 'Filter by category' },
@@ -429,14 +437,14 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       if (!typed) return opts;
       return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
     }},
-    { name: 'peers', description: 'Find markets in the same cluster as a ticker', getArgumentCompletions: usageHint('<ticker> [--behavioral] [--limit N] [--show-cluster]', 'e.g. KXBTCD-26DEC31-T100000 --limit 20') },
-    { name: 'correlate', description: 'Pairwise correlation matrix (2-100 tickers)', getArgumentCompletions: usageHint('<ticker1> <ticker2> [...] [--window-days N]', 'e.g. KXA KXB KXC --window-days 90') },
-    { name: 'events', description: 'Octagon events — outcome ladder per event', getArgumentCompletions: usageHint('<event_ticker> | --category Politics | --min-volume 10000', 'e.g. KXFEDCHAIRNOM-29 to drill in') },
-    { name: 'trust', description: 'Trader Trust scorecard (per-market integrity scores)', getArgumentCompletions: usageHint('<event_ticker> [--market <market_ticker>] [--verbose]', 'e.g. KXMENWORLDCUP-26 --market KXMENWORLDCUP-26-FR') },
-    { name: 'report', description: 'Print the full Octagon markdown report for an event', getArgumentCompletions: usageHint('<event_ticker | market_ticker | series_ticker | kalshi_url> [--refresh]', 'e.g. KXAAPLCEOCHANGE --refresh') },
-    { name: 'series', description: 'Kalshi series rollup (24h vol, market count)', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
+    { name: 'peers', description: 'Find markets in the same cluster as a ticker', getArgumentCompletions: usageHint('<market-slug> [--behavioral] [--limit N] [--show-cluster]', 'e.g. will-btc-hit-100k --limit 20') },
+    { name: 'correlate', description: 'Pairwise correlation matrix (2-100 tickers)', getArgumentCompletions: usageHint('<slug1> <slug2> [...] [--window-days N]', 'e.g. slug-a slug-b slug-c --window-days 90') },
+    { name: 'events', description: 'Octagon events — outcome ladder per event', getArgumentCompletions: usageHint('<event-slug> | --category Politics | --min-volume 10000', 'e.g. fed-decision-in-september-762 to drill in') },
+    { name: 'trust', description: 'Trader Trust scorecard (per-market integrity scores)', getArgumentCompletions: usageHint('<event-slug> [--market <market-slug>] [--verbose]', 'e.g. epl-2027-champion --market will-arsenal-win-the-2026-27-english-premier-league-championship') },
+    { name: 'report', description: 'Print the full Octagon markdown report for an event', getArgumentCompletions: usageHint('<event-slug | market-slug | polymarket url> [--refresh]', 'e.g. fed-decision-in-september-762 --refresh') },
+    { name: 'series', description: 'Series rollup (24h vol, market count)', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
       const opts = [
-        { value: '<series_ticker>', label: '<series_ticker>', description: 'Drill into one series (e.g. KXBTCD)' },
+        { value: '<series-slug>', label: '<series-slug>', description: 'Drill into one series' },
         { value: 'search <query>', label: 'search <query>', description: 'Keyword search rolled up by series' },
         { value: 'candles <series_ticker> --timeframe 3m', label: 'candles <SERIES>', description: 'Series NAV basket' },
         { value: '--min-volume 10000', label: '--min-volume 10000', description: 'Liquidity floor' },
@@ -458,7 +466,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     { name: 'themes', description: 'Editorial themes registry: import, report, audit, overlap', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
       const opts = [
         { value: 'list', label: 'list', description: 'List registered themes' },
-        { value: 'import', label: 'import', description: 'Seed from data/themes_seo.json' },
+        { value: 'import', label: 'import', description: 'Load themes from a JSON file' },
         { value: 'report', label: 'report', description: '25-theme dashboard with SEO + liquidity' },
         { value: 'audit', label: 'audit', description: 'Flag STALE/NO_INVENTORY/THIN themes' },
         { value: 'overlap', label: 'overlap', description: 'Cross-theme dedupe' },
@@ -492,7 +500,9 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     { name: 'model', description: 'Change LLM model/provider', getArgumentCompletions: usageHint('<provider:model>', 'e.g. anthropic:sonnet') },
     { name: 'setup', description: 'Re-run the setup wizard to configure API keys' },
     { name: 'quit', description: 'Quit CLI session' },
-  ];
+    // Commands gated by octagon-capabilities are hidden from autocomplete but
+    // still reachable by typing, where they explain why they are unavailable.
+  ].filter((c) => !isDeferredCommand(c.name) && !isTradingCommand(c.name));
   editor.setAutocompleteProvider(new CombinedAutocompleteProvider(slashCommands));
 
   tui.addChild(root);
@@ -815,32 +825,9 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       if (ticker) {
         refreshError();
         renderMainView();
-        // Fetch live prices then show trade prompt
-        void (async () => {
-          let priceInfo = '';
-          try {
-            const res = await callKalshiApi('GET', `/markets/${ticker}`);
-            const mkt = (res.market ?? res) as KalshiMarket;
-            const yesBid = mkt.yes_bid ?? Math.round((parseFloat(mkt.yes_bid_dollars ?? mkt.dollar_yes_bid ?? '0') || 0) * 100);
-            const yesAsk = mkt.yes_ask ?? Math.round((parseFloat(mkt.yes_ask_dollars ?? mkt.dollar_yes_ask ?? '0') || 0) * 100);
-            const noBid = mkt.no_bid ?? (Math.round((parseFloat(mkt.no_bid_dollars ?? mkt.dollar_no_bid ?? '0') || 0) * 100) || (100 - yesAsk));
-            const noAsk = mkt.no_ask ?? (Math.round((parseFloat(mkt.no_ask_dollars ?? mkt.dollar_no_ask ?? '0') || 0) * 100) || (100 - yesBid));
-            priceInfo = `**Current market prices:**\n` +
-              `  YES: ${yesBid}c bid / ${yesAsk}c ask\n` +
-              `  NO:  ${noBid}c bid / ${noAsk}c ask\n\n`;
-          } catch {
-            // Skip price info on error
-          }
-          chatLog.finalizeAnswer(
-            `Trade **${ticker}**\n\n` +
-            priceInfo +
-            `**Examples** (count = number of contracts):\n` +
-            `  /buy ${ticker} 10        ← buy 10 YES contracts at market price\n` +
-            `  /buy ${ticker} 10 no     ← buy 10 NO contracts at market price\n` +
-            `  /buy ${ticker} 10 50     ← buy 10 YES contracts, limit 50c each\n` +
-            `  /sell ${ticker} 10 no    ← sell 10 NO contracts at market price`);
-          tui.requestRender();
-        })();
+        // Trading is deferred until wallet signing lands.
+        chatLog.finalizeAnswer(`Trade **${ticker}**\n\n${TRADING_UNAVAILABLE_MESSAGE}`);
+        tui.requestRender();
         return;
       }
     }
@@ -1015,8 +1002,8 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     editor.addToHistory(msg);
   }
 
-  // Auto-launch setup wizard if credentials are missing or `kalshi init` was used
-  if (!hasKalshiCreds || options?.forceSetup) {
+  // Auto-launch setup wizard if credentials are missing or `polymarket init` was used
+  if (!hasLlmKey || options?.forceSetup) {
     setupWizard.start();
   }
 

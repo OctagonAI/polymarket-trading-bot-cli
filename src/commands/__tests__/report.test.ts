@@ -28,7 +28,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-// Other suites in the project unset KALSHI_PRIVATE_KEY in their afterEach
+// Other suites in the project unset POLYMARKET_PRIVATE_KEY in their afterEach
 // (see hardening.test.ts). Some report paths flow into the Octagon invoker,
 // which signs Kalshi requests — so the report suite must restore credentials
 // in its own beforeEach to stay order-independent.
@@ -67,15 +67,15 @@ describe('handleReport', () => {
   let originalFetch: typeof globalThis.fetch;
   beforeEach(() => {
     process.env.OCTAGON_API_KEY = 'sk_test';
-    process.env.KALSHI_API_KEY = 'test-key';
-    process.env.KALSHI_PRIVATE_KEY = TEST_PRIVATE_KEY;
+    process.env.POLYMARKET_API_KEY = 'test-key';
+    process.env.POLYMARKET_PRIVATE_KEY = TEST_PRIVATE_KEY;
     originalFetch = globalThis.fetch;
   });
   afterEach(() => {
     globalThis.fetch = originalFetch;
     delete process.env.OCTAGON_API_KEY;
-    delete process.env.KALSHI_API_KEY;
-    delete process.env.KALSHI_PRIVATE_KEY;
+    delete process.env.POLYMARKET_API_KEY;
+    delete process.env.POLYMARKET_PRIVATE_KEY;
   });
 
   test('missing ticker → MISSING_TICKER', async () => {
@@ -86,9 +86,9 @@ describe('handleReport', () => {
     expect(resp.error?.code).toBe('MISSING_TICKER');
   });
 
-  test('Octagon event lookup 404 + Kalshi resolver failure → EVENT_NOT_FOUND', async () => {
+  test('Octagon event lookup 404 + market resolver failure → EVENT_NOT_FOUND', async () => {
     installFetchMock((url) => {
-      // Octagon events endpoint 404; Kalshi /markets, /events, series all 404
+      // Octagon events endpoint 404; Gamma /markets, /events all 404
       return new Response(JSON.stringify({ error: { code: 'not_found' } }), { status: 404 });
     });
     const resp = await handleReport(makeArgs({ positionalArgs: ['KX-BOGUS'] }));
@@ -97,15 +97,15 @@ describe('handleReport', () => {
     expect(resp.error?.code).toBe('EVENT_NOT_FOUND');
   });
 
-  test('normalizes URL + lowercase before lookup', async () => {
+  test('normalizes a Polymarket URL to a slug before lookup', async () => {
     let eventLookupUrl = '';
     installFetchMock((url) => {
-      if (url.includes('/v1/prediction-markets/events/')) {
+      if (url.includes('/v1/predictions/events/')) {
         // Capture the FIRST lookup (the user-input → event), not the later
         // re-lookup with the canonical event_ticker.
         if (!eventLookupUrl) eventLookupUrl = url;
         return jsonResponse({
-          event_ticker: 'KXMEASLES-26',
+          event_ticker: 'measles-cases-2026',
           name: 'Measles cases in 2026',
         });
       }
@@ -114,49 +114,59 @@ describe('handleReport', () => {
     // Call but ignore the eventual "no report body" branch — we only
     // care that the input got normalized before being sent to Octagon.
     await handleReport(makeArgs({
-      positionalArgs: ['https://kalshi.com/markets/kxmeasles/measles-cases/kxmeasles-26'],
+      positionalArgs: ['https://polymarket.com/event/measles-cases-2026?ref=share'],
     }));
-    expect(eventLookupUrl).toContain('/KXMEASLES-26');
+    expect(eventLookupUrl).toContain('/measles-cases-2026');
   });
 
   test('uses outcome_probabilities market_ticker for the Octagon invoker URL', async () => {
-    // Verifies the bug fix: when fetchOctagonEventDirect returns an event_ticker
-    // that isn't itself a valid Kalshi /markets/{ticker} (e.g. series-style
-    // event tickers like KXAAPLCEOCHANGE), the report command must pick a real
-    // market_ticker from outcome_probabilities before hitting the invoker.
-    const kalshiMarketCalls: string[] = [];
+    // When the Octagon event_ticker is an event slug that is not itself a
+    // market, the report command must pick a real market slug from
+    // outcome_probabilities before handing it to the invoker.
+    const gammaMarketCalls: string[] = [];
     installFetchMock((url) => {
-      if (url.includes('/v1/prediction-markets/events/')) {
+      if (url.includes('/v1/predictions/events/')) {
         return jsonResponse({
-          event_ticker: 'KXAAPLCEOCHANGE',
+          event_ticker: 'when-will-tim-cook-leave-apple',
           name: 'When will Tim Cook leave Apple?',
           outcome_probabilities: [
-            { market_ticker: 'KXAAPLCEOCHANGE-T2027', model_probability: 30, market_probability: 25 },
+            { market_ticker: 'tim-cook-out-by-2027', model_probability: 30, market_probability: 25 },
           ],
         });
       }
-      if (url.match(/\/trade-api\/v2\/markets\/[^?/]+$/)) {
-        kalshiMarketCalls.push(url);
-        return jsonResponse({ market: { ticker: 'KXAAPLCEOCHANGE-T2027', event_ticker: 'KXAAPLCEOCHANGE' } });
+      if (url.includes('gamma-api.polymarket.com/markets')) {
+        gammaMarketCalls.push(url);
+        return jsonResponse([
+          {
+            slug: 'tim-cook-out-by-2027',
+            conditionId: '0x' + 'b'.repeat(64),
+            question: 'Tim Cook out by 2027?',
+            outcomes: '["Yes", "No"]',
+            outcomePrices: '["0.25", "0.75"]',
+            clobTokenIds: '["1", "2"]',
+            events: [{ slug: 'when-will-tim-cook-leave-apple' }],
+            active: true,
+            closed: false,
+          },
+        ]);
       }
-      if (url.includes('/trade-api/v2/events/')) {
-        return jsonResponse({ event: { series_ticker: 'KXAAPLCEOCHANGE' } });
-      }
-      if (url.includes('/trade-api/v2/series/')) {
-        return jsonResponse({ series: { title: 'Apple CEO Change' } });
-      }
-      if (url.includes('/responses')) {
-        return jsonResponse({ output_text: '# Report body' });
+      // Cached reports are read straight from the Reports API, not the agent.
+      if (url.includes('/predictions/reports/polymarket/')) {
+        return jsonResponse({
+          event_ticker: 'when-will-tim-cook-leave-apple',
+          venue: 'polymarket',
+          versions: [{ run_id: 'r1' }],
+          markdown_report: '# Report body',
+          run_id: 'r1',
+        });
       }
       return jsonResponse({});
     });
-    const resp = await handleReport(makeArgs({ positionalArgs: ['KXAAPLCEOCHANGE'] }));
+    const resp = await handleReport(makeArgs({ positionalArgs: ['when-will-tim-cook-leave-apple'] }));
     expect(resp.ok).toBe(true);
-    // The first Kalshi /markets/{ticker} call from the invoker must use the
-    // market_ticker, NOT the bare event_ticker (which would 404).
-    expect(kalshiMarketCalls.length).toBeGreaterThan(0);
-    expect(kalshiMarketCalls[0]).toContain('/markets/KXAAPLCEOCHANGE-T2027');
-    expect(kalshiMarketCalls[0]).not.toMatch(/\/markets\/KXAAPLCEOCHANGE$/);
+    // The invoker's market lookup must use the market slug, not the event slug.
+    expect(gammaMarketCalls.length).toBeGreaterThan(0);
+    expect(gammaMarketCalls[0]).toContain('slug=tim-cook-out-by-2027');
   });
 });
 

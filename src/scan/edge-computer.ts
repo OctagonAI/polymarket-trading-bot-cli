@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import type { AuditTrail } from '../audit/trail.js';
-import { callKalshiApi } from '../tools/kalshi/api.js';
-import type { KalshiMarket } from '../tools/kalshi/types.js';
+import { fetchEventBySlug } from '../tools/polymarket/events.js';
+import type { PolymarketMarket } from '../tools/polymarket/types.js';
 import { insertEdge } from '../db/edge.js';
 import { OctagonClient } from './octagon-client.js';
 import type { OctagonReport, OctagonVariant, ConfidenceLevel, EdgeSnapshot } from './types.js';
@@ -53,7 +53,7 @@ export class EdgeComputer {
 
     // Phase A: Collect all market tasks (Kalshi API calls are fast, keep sequential for rate limits)
     interface MarketTask {
-      market: KalshiMarket;
+      market: PolymarketMarket;
       eventTicker: string;
       marketProb: number;
       variant: OctagonVariant;
@@ -62,12 +62,8 @@ export class EdgeComputer {
 
     for (const eventTicker of tickers) {
       try {
-        const response = await callKalshiApi('GET', `/events/${eventTicker}`, {
-          params: { with_nested_markets: true },
-        });
-
-        const event = response.event as { markets?: KalshiMarket[] } | undefined;
-        const markets = (event?.markets ?? response.markets ?? []) as KalshiMarket[];
+        const event = await fetchEventBySlug(eventTicker);
+        const markets = event?.markets ?? [];
 
         for (const market of markets) {
           if (!isMarketActive(market)) continue;

@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { KalshiEvent, KalshiMarket } from '../tools/kalshi/types.js';
+import type { PolymarketEvent, PolymarketMarket } from '../tools/polymarket/types.js';
 
 export interface IndexedEvent {
   event_ticker: string;
@@ -154,14 +154,22 @@ export function clearAndPopulateIndex(
     strike_date?: string;
     sub_title?: string;
     tags?: string[];
-    markets?: KalshiMarket[];
+    markets?: PolymarketMarket[];
   }>,
-  lastPriceMap?: Map<string, { last_price?: number; dollar_last_price?: string; volume_24h_fp?: string }>,
 ): void {
   const now = Date.now();
 
+  // An empty fetch is a failed refresh, not an empty universe. Populating from
+  // it would DELETE a good index and leave the CLI answering every search with
+  // "no results" until the next refresh window.
+  if (events.length === 0) {
+    throw new Error('refusing to populate the event index from an empty result set');
+  }
+
+  // OR REPLACE because Gamma pages with limit/offset over a volume-ordered set:
+  // rows shift between requests, so the same event can arrive on two pages.
   const insert = db.prepare(`
-    INSERT INTO event_index (event_ticker, series_ticker, title, category, strike_date, sub_title, tags, markets_json, indexed_at)
+    INSERT OR REPLACE INTO event_index (event_ticker, series_ticker, title, category, strike_date, sub_title, tags, markets_json, indexed_at)
     VALUES ($event_ticker, $series_ticker, $title, $category, $strike_date, $sub_title, $tags, $markets_json, $indexed_at)
   `);
 
@@ -169,31 +177,25 @@ export function clearAndPopulateIndex(
     db.exec('DELETE FROM event_index');
 
     for (const event of events) {
-      const compactMarkets = event.markets?.map((m) => {
-        const ticker = m.ticker as string;
-        const priceData = lastPriceMap?.get(ticker);
-        return {
-          ticker,
-          title: m.title,
-          yes_sub_title: m.yes_sub_title,
-          yes_bid: m.yes_bid,
-          yes_ask: m.yes_ask,
-          yes_bid_dollars: m.yes_bid_dollars,
-          yes_ask_dollars: m.yes_ask_dollars,
-          no_bid: m.no_bid,
-          no_ask: m.no_ask,
-          no_bid_dollars: m.no_bid_dollars,
-          no_ask_dollars: m.no_ask_dollars,
-          last_price: priceData?.last_price ?? m.last_price,
-          last_price_dollars: priceData?.dollar_last_price ?? m.last_price_dollars,
-          dollar_last_price: priceData?.dollar_last_price ?? m.dollar_last_price,
-          volume: m.volume_fp ?? m.volume ?? 0,
-          volume_24h: parseFloat(priceData?.volume_24h_fp ?? String(m.volume_24h_fp ?? m.volume_24h ?? 0)),
-          close_time: m.close_time,
-          status: m.status,
-          result: m.result,
-        };
-      });
+      // Prices here are decimal 0-1. Keep token_ids so the book is reachable
+      // from an index hit without a round-trip to Gamma.
+      const compactMarkets = event.markets?.map((m) => ({
+        ticker: m.ticker,
+        condition_id: m.condition_id,
+        token_ids: m.token_ids,
+        title: m.title,
+        yes_sub_title: m.yes_sub_title,
+        yes_bid: m.yes_bid,
+        yes_ask: m.yes_ask,
+        no_bid: m.no_bid,
+        no_ask: m.no_ask,
+        last_price: m.last_price,
+        volume: m.volume ?? 0,
+        volume_24h: m.volume_24h ?? 0,
+        close_time: m.close_time,
+        status: m.status,
+        result: m.result,
+      }));
 
       insert.run({
         $event_ticker: event.event_ticker,
@@ -211,85 +213,6 @@ export function clearAndPopulateIndex(
 }
 
 /**
- * Enrich existing index rows with market price/volume data from the API.
- * Groups market data by event_ticker and upserts markets_json for each event,
- * creating it from scratch if it was NULL (e.g. after Phase 1 index build).
- */
-export function enrichIndexPrices(
-  db: Database,
-  priceMap: Map<string, { last_price?: number; dollar_last_price?: string; volume_24h_fp?: string }>,
-  marketsByEvent?: Map<string, Array<Record<string, unknown>>>,
-): void {
-  if (priceMap.size === 0 && (!marketsByEvent || marketsByEvent.size === 0)) return;
-
-  const update = db.prepare('UPDATE event_index SET markets_json = $markets_json WHERE event_ticker = $event_ticker');
-
-  db.transaction(() => {
-    if (marketsByEvent) {
-      // Build markets_json from full market data, enriched with prices
-      for (const [eventTicker, markets] of marketsByEvent) {
-        const compactMarkets = markets.map((m) => {
-          const ticker = m.ticker as string;
-          const priceData = priceMap.get(ticker);
-          return {
-            ticker,
-            title: m.title,
-            yes_sub_title: m.yes_sub_title,
-            yes_bid: m.yes_bid,
-            yes_ask: m.yes_ask,
-            yes_bid_dollars: m.yes_bid_dollars,
-            yes_ask_dollars: m.yes_ask_dollars,
-            no_bid: m.no_bid,
-            no_ask: m.no_ask,
-            no_bid_dollars: m.no_bid_dollars,
-            no_ask_dollars: m.no_ask_dollars,
-            last_price: priceData?.last_price ?? m.last_price,
-            dollar_last_price: priceData?.dollar_last_price ?? m.dollar_last_price,
-            last_price_dollars: priceData?.dollar_last_price ?? m.last_price_dollars,
-            volume: m.volume_fp ?? m.volume ?? 0,
-            volume_24h: parseFloat(priceData?.volume_24h_fp ?? String(m.volume_24h_fp ?? m.volume_24h ?? 0)),
-            close_time: m.close_time,
-            status: m.status,
-            result: m.result,
-          };
-        });
-        update.run({ $markets_json: JSON.stringify(compactMarkets), $event_ticker: eventTicker });
-      }
-    } else {
-      // Fallback: update existing markets_json rows with price data
-      const rows = db.query('SELECT event_ticker, markets_json FROM event_index WHERE markets_json IS NOT NULL').all() as Array<{
-        event_ticker: string;
-        markets_json: string;
-      }>;
-
-      for (const row of rows) {
-        let markets: Array<Record<string, unknown>>;
-        try {
-          markets = JSON.parse(row.markets_json);
-        } catch {
-          continue;
-        }
-
-        let changed = false;
-        for (const m of markets) {
-          const ticker = m.ticker as string;
-          const priceData = priceMap.get(ticker);
-          if (!priceData) continue;
-          if (priceData.last_price != null) m.last_price = priceData.last_price;
-          if (priceData.dollar_last_price != null) m.dollar_last_price = priceData.dollar_last_price;
-          if (priceData.volume_24h_fp != null) m.volume_24h = parseFloat(priceData.volume_24h_fp);
-          changed = true;
-        }
-
-        if (changed) {
-          update.run({ $markets_json: JSON.stringify(markets), $event_ticker: row.event_ticker });
-        }
-      }
-    }
-  })();
-}
-
-/**
  * Get the timestamp of the last successful index refresh, or null if never refreshed.
  */
 export function getLastRefresh(db: Database): number | null {
@@ -302,6 +225,12 @@ export function getLastRefresh(db: Database): number | null {
 /**
  * Set the last refresh timestamp.
  */
+/** How many events the index currently holds. */
+export function countIndexedEvents(db: Database): number {
+  const row = db.query('SELECT COUNT(*) AS c FROM event_index').get() as { c: number };
+  return row.c;
+}
+
 export function setLastRefresh(db: Database, timestamp: number): void {
   db.query("INSERT OR REPLACE INTO event_index_meta (key, value) VALUES ('last_refresh', $ts)").run({
     $ts: String(timestamp),
@@ -309,7 +238,7 @@ export function setLastRefresh(db: Database, timestamp: number): void {
 }
 
 /**
- * Reconstruct KalshiEvent[] from the local index for given event tickers.
+ * Reconstruct PolymarketEvent[] from the local index for given event tickers.
  * Parses markets_json back into nested market objects.
  *
  * By default, expired markets (status not open/active, or past close_time) are
@@ -319,7 +248,7 @@ export function getEventsFromIndex(
   db: Database,
   eventTickers: string[],
   options: { includeExpired?: boolean } = {},
-): KalshiEvent[] {
+): PolymarketEvent[] {
   if (eventTickers.length === 0) return [];
 
   const { includeExpired = false } = options;
@@ -347,8 +276,8 @@ export function getEventsFromIndex(
       sub_title: r.sub_title ?? '',
       strike_date: r.strike_date ?? '',
       mutually_exclusive: false,
-      markets: markets as unknown as KalshiMarket[],
-    } as KalshiEvent;
+      markets: markets as unknown as PolymarketMarket[],
+    } as PolymarketEvent;
   });
 }
 
@@ -356,7 +285,7 @@ export function getEventsFromIndex(
  * Get top N events by total market volume from the index.
  * Parses markets_json, sums volume per event, sorts descending.
  */
-export function getTopEventsByVolume(db: Database, limit: number): KalshiEvent[] {
+export function getTopEventsByVolume(db: Database, limit: number): PolymarketEvent[] {
   const rows = db
     .query(
       `SELECT event_ticker, series_ticker, title, category, strike_date, sub_title, markets_json
@@ -365,11 +294,11 @@ export function getTopEventsByVolume(db: Database, limit: number): KalshiEvent[]
     )
     .all() as IndexedEvent[];
 
-  const events: Array<{ event: KalshiEvent; totalVolume: number }> = [];
+  const events: Array<{ event: PolymarketEvent; totalVolume: number }> = [];
   for (const r of rows) {
     const markets = parseMarketsJsonSafe(r.markets_json);
     const totalVolume = markets.reduce(
-      (sum, m) => sum + (parseFloat(String(m.volume ?? '')) || parseFloat(String(m.volume_fp ?? '')) || 0),
+      (sum, m) => sum + (parseFloat(String(m.volume ?? '')) || 0),
       0,
     );
     events.push({
@@ -381,8 +310,8 @@ export function getTopEventsByVolume(db: Database, limit: number): KalshiEvent[]
         sub_title: r.sub_title ?? '',
         strike_date: r.strike_date ?? '',
         mutually_exclusive: false,
-        markets: markets as unknown as KalshiMarket[],
-      } as KalshiEvent,
+        markets: markets as unknown as PolymarketMarket[],
+      } as PolymarketEvent,
       totalVolume,
     });
   }

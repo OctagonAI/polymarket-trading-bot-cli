@@ -125,8 +125,8 @@ Query edge signals and mispricing data from the local scan database.
 - Filtering edges: "show moderate edges", "skip trump", "exclude crypto"
 
 ## When NOT to Use
-- For live market data from Kalshi (use kalshi_search)
-- For placing trades (use kalshi_trade)
+- For live market data from Polymarket (use polymarket_search)
+- For placing trades (use polymarket_trade)
 
 ## Parameters
 - **minConfidence**: Returns edges at this level AND above. "high" → high + very_high.

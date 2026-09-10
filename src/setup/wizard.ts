@@ -4,18 +4,17 @@ import { ApiKeyInputComponent, createProviderSelector } from '../components/inde
 import { VimSelectList } from '../components/select-list.js';
 import { selectListTheme, theme } from '../theme.js';
 import { checkApiKeyExists, saveApiKeyToEnv, ENV_PATH } from '../utils/env.js';
-import { callKalshiApi } from '../tools/kalshi/api.js';
-import { loadBotConfig, saveBotConfig } from '../utils/bot-config.js';
+import { fetchExchangeStatus } from '../tools/polymarket/exchange.js';
+import { loadBotConfig, saveBotConfig, setBotSetting } from '../utils/bot-config.js';
 import { appPath } from '../utils/paths.js';
 import type { SelectItem } from '@mariozechner/pi-tui';
 
 export type WizardState =
   | 'welcome'
-  | 'kalshi_api_key'
-  | 'kalshi_private_key'
   | 'octagon_api_key'
   | 'llm_provider_select'
   | 'llm_api_key'
+  | 'bankroll'
   | 'testing'
   | 'complete';
 
@@ -32,10 +31,12 @@ export class SetupWizardController {
   private testResults: TestResult[] = [];
   private configWritten = false;
   private selectedProvider: string | null = null;
+  /** Staged like the env keys — written only when the user confirms the wizard. */
+  private pendingBankroll: string | null = null;
+  private bankrollError: string | null = null;
   private readonly onComplete: () => void;
   private readonly onChange: () => void;
   private active = false;
-  private stepError: string | null = null;
 
   // Reusable UI components for the current step
   private currentInput: ApiKeyInputComponent | null = null;
@@ -62,6 +63,8 @@ export class SetupWizardController {
     this.testResults = [];
     this.configWritten = false;
     this.selectedProvider = null;
+    this.pendingBankroll = null;
+    this.bankrollError = null;
     this.currentInput = null;
     this.currentSelector = null;
     this.onChange();
@@ -104,17 +107,15 @@ export class SetupWizardController {
   getTitle(): string {
     switch (this.wizardState) {
       case 'welcome':
-        return 'Welcome to Kalshi Trading Bot CLI';
-      case 'kalshi_api_key':
-        return 'Step 1/5: Kalshi API Key';
-      case 'kalshi_private_key':
-        return 'Step 2/5: Kalshi Private Key';
+        return 'Welcome to Polymarket Trading Bot CLI';
       case 'octagon_api_key':
-        return 'Step 3/5: Octagon API Key';
+        return 'Step 1/4: Octagon API Key';
       case 'llm_provider_select':
-        return 'Step 4/5: LLM Provider';
+        return 'Step 2/4: LLM Provider';
       case 'llm_api_key':
-        return `Step 5/5: ${this.selectedProvider ?? 'LLM'} API Key`;
+        return `Step 3/4: ${this.selectedProvider ?? 'LLM'} API Key`;
+      case 'bankroll':
+        return 'Step 4/4: Bankroll';
       case 'testing':
         return 'Testing connections...';
       case 'complete':
@@ -125,20 +126,22 @@ export class SetupWizardController {
   getDescription(): string {
     switch (this.wizardState) {
       case 'welcome':
-        return "Let's get you set up. This takes ~2 minutes.\nYou'll need your Kalshi API credentials and at least one LLM API key.";
-      case 'kalshi_api_key':
-        return 'Paste your Kalshi API key below.\nGet one at: https://kalshi.com/account/api';
-      case 'kalshi_private_key': {
-        let desc = 'Paste your Kalshi private key below.\nCopy it from the Kalshi API key creation screen.\nYou can also enter a path to a .pem file.';
-        if (this.stepError) desc += `\n\n${this.stepError}`;
-        return desc;
-      }
+        return "Let's get you set up. This takes about a minute.\nPolymarket market data needs no credentials — you only need an LLM API key,\nplus an Octagon key if you want deep research.";
       case 'octagon_api_key':
         return 'Paste your Octagon API key (recommended for deep research).\nGet one at: https://app.octagonai.co\nLeave empty and press Enter to skip.';
       case 'llm_provider_select':
         return 'Select your LLM provider. You can change this later with /model.';
       case 'llm_api_key':
         return `Paste your ${this.selectedProvider ?? 'LLM'} API key below.`;
+      case 'bankroll':
+        // Polymarket has no cash-balance endpoint — free USDC is an on-chain
+        // ERC-20 balance, not something the read APIs report — so this number
+        // cannot be discovered and has to be told to us.
+        return 'How much USDC should position sizing assume you have?\n'
+          + 'Used by Kelly sizing and the risk gate; without it, analyze reports\n'
+          + 'edge but skips sizing. Not a deposit — just a number, change it any\n'
+          + 'time with: polymarket config risk.bankroll_usdc <amount>\n'
+          + 'Leave empty and press Enter to skip.';
       case 'testing':
         return '';
       case 'complete':
@@ -152,10 +155,9 @@ export class SetupWizardController {
     switch (this.wizardState) {
       case 'welcome':
         return 'Enter to continue';
-      case 'kalshi_api_key':
-      case 'kalshi_private_key':
       case 'octagon_api_key':
       case 'llm_api_key':
+      case 'bankroll':
         return 'Enter to confirm · Esc to cancel setup';
       case 'llm_provider_select':
         return 'Enter to confirm · Esc to cancel setup';
@@ -182,6 +184,9 @@ export class SetupWizardController {
 
   /** Returns extra body lines for states without an interactive component */
   getBodyLines(): string[] {
+    if (this.wizardState === 'bankroll') {
+      return this.bankrollError ? ['', theme.error(`  ${this.bankrollError}`)] : [];
+    }
     if (this.wizardState === 'testing') {
       return this.testResults.map((r) => {
         const icon =
@@ -199,16 +204,26 @@ export class SetupWizardController {
         const msg = r.message ? theme.muted(` ${r.message}`) : '';
         return `${icon}  ${r.name}${msg}`;
       });
+      lines.push('');
+      if (this.pendingBankroll !== null) {
+        lines.push(theme.success(`  OK`) + `  Bankroll set to $${this.pendingBankroll} USDC`);
+      } else {
+        lines.push(
+          theme.muted('  --') +
+            '  Bankroll not set — analyze will report edge but skip position sizing.',
+        );
+        lines.push(theme.muted('      Set it later: polymarket config risk.bankroll_usdc 1000'));
+      }
       if (this.configWritten) {
         lines.push('');
         lines.push(theme.muted('  Default thresholds (to customize, run the command shown):'));
-        lines.push(`    min_edge_threshold  = 5%     ${theme.muted('e.g. kalshi config risk.min_edge_threshold 0.10')}`);
-        lines.push(`    kelly_multiplier    = 0.5    ${theme.muted('e.g. kalshi config risk.kelly_multiplier 0.25')}`);
-        lines.push(`    max_position_pct    = 10%    ${theme.muted('e.g. kalshi config risk.max_position_pct 0.05')}`);
-        lines.push(`    daily_loss_limit    = $200   ${theme.muted('e.g. kalshi config risk.daily_loss_limit 100')}`);
-        lines.push(`    max_positions       = 10     ${theme.muted('e.g. kalshi config risk.max_positions 5')}`);
+        lines.push(`    min_edge_threshold  = 5%     ${theme.muted('e.g. polymarket config risk.min_edge_threshold 0.10')}`);
+        lines.push(`    kelly_multiplier    = 0.5    ${theme.muted('e.g. polymarket config risk.kelly_multiplier 0.25')}`);
+        lines.push(`    max_position_pct    = 10%    ${theme.muted('e.g. polymarket config risk.max_position_pct 0.05')}`);
+        lines.push(`    daily_loss_limit    = $200   ${theme.muted('e.g. polymarket config risk.daily_loss_limit 100')}`);
+        lines.push(`    max_positions       = 10     ${theme.muted('e.g. polymarket config risk.max_positions 5')}`);
         lines.push('');
-        lines.push(theme.muted('  Run "kalshi config" to see all settings.'));
+        lines.push(theme.muted('  Run "polymarket config" to see all settings.'));
       }
       return lines;
     }
@@ -218,24 +233,6 @@ export class SetupWizardController {
   /** Create the input/selector component for the current step (called by cli.ts during render) */
   ensureComponent(): ApiKeyInputComponent | VimSelectList | null {
     switch (this.wizardState) {
-      case 'kalshi_api_key': {
-        if (!this.currentInput) {
-          const input = new ApiKeyInputComponent(true);
-          input.onSubmit = (value) => this.handleApiKeySubmit('KALSHI_API_KEY', value, 'kalshi_private_key');
-          input.onCancel = () => this.cancel();
-          this.currentInput = input;
-        }
-        return this.currentInput;
-      }
-      case 'kalshi_private_key': {
-        if (!this.currentInput) {
-          const input = new ApiKeyInputComponent(true); // Masked — it's a private key
-          input.onSubmit = (value) => this.handlePrivateKeySubmit(value);
-          input.onCancel = () => this.cancel();
-          this.currentInput = input;
-        }
-        return this.currentInput;
-      }
       case 'octagon_api_key': {
         if (!this.currentInput) {
           const input = new ApiKeyInputComponent(true);
@@ -273,6 +270,17 @@ export class SetupWizardController {
         }
         return this.currentInput;
       }
+      case 'bankroll': {
+        if (!this.currentInput) {
+          // Unmasked — an amount is not a secret, and echoing it lets the user
+          // catch a typo before it silently changes every position size.
+          const input = new ApiKeyInputComponent(false);
+          input.onSubmit = (value) => this.handleBankrollSubmit(value);
+          input.onCancel = () => this.cancel();
+          this.currentInput = input;
+        }
+        return this.currentInput;
+      }
       default:
         return null;
     }
@@ -282,7 +290,7 @@ export class SetupWizardController {
   handleInput(keyData: string): void {
     if (keyData === '\r') {
       if (this.wizardState === 'welcome') {
-        this.transition('kalshi_api_key');
+        this.transition('octagon_api_key');
         return;
       }
       if (this.wizardState === 'complete') {
@@ -301,7 +309,7 @@ export class SetupWizardController {
       if (this.testResults.some((r) => r.status === 'fail')) {
         this.restoreStagedEnv();
         this.testResults = [];
-        this.transition('kalshi_api_key');
+        this.transition('octagon_api_key');
         return;
       }
     }
@@ -333,6 +341,15 @@ export class SetupWizardController {
         failed.push(key);
       }
     }
+    // Bankroll lives in settings.json rather than .env, but it is staged the
+    // same way: nothing is written unless the user confirms the wizard.
+    if (this.pendingBankroll !== null) {
+      try {
+        setBotSetting('risk.bankroll_usdc', this.pendingBankroll);
+      } catch {
+        failed.push('risk.bankroll_usdc');
+      }
+    }
     return failed;
   }
 
@@ -340,76 +357,9 @@ export class SetupWizardController {
 
   private transition(next: WizardState) {
     this.wizardState = next;
-    this.stepError = null;
     this.currentInput = null;
     this.currentSelector = null;
     this.onChange();
-  }
-
-  private handleApiKeySubmit(envName: string, value: string | null, nextState: WizardState) {
-    if (!value) {
-      // Required key — don't advance
-      return;
-    }
-    this.stageEnv(envName, value);
-    this.transition(nextState);
-  }
-
-  private handlePrivateKeySubmit(value: string | null) {
-    if (!value) return; // Required
-
-    const trimmed = value.trim();
-
-    // Check if it's a file path
-    if (trimmed.endsWith('.pem') || trimmed.startsWith('/') || trimmed.startsWith('~') || trimmed.startsWith('.')) {
-      // Expand ~ to home
-      const expanded = trimmed.startsWith('~')
-        ? trimmed.replace('~', process.env.HOME ?? '')
-        : trimmed;
-
-      if (!existsSync(expanded)) {
-        this.stepError = `File not found: ${expanded}`;
-        this.onChange();
-        return;
-      }
-      this.stageEnv('KALSHI_PRIVATE_KEY_FILE', expanded);
-    } else {
-      // Raw PEM content pasted — the single-line input strips newlines,
-      // so reconstruct PEM structure: header, base64 body in 64-char lines, footer
-      let pem = trimmed;
-      const pemHeaderRe = /^(-----BEGIN [A-Z ]+-----)(.*?)(-----END [A-Z ]+-----)$/;
-      const match = pem.match(pemHeaderRe);
-      if (!match) {
-        this.stepError = 'Invalid private key. Expected PEM format starting with -----BEGIN RSA PRIVATE KEY-----';
-        this.onChange();
-        return;
-      }
-      if (match) {
-        const header = match[1];
-        const body = match[2].replace(/\s+/g, '');
-        const footer = match[3];
-        // Split base64 body into 64-character lines (standard PEM format)
-        const bodyLines: string[] = [];
-        for (let i = 0; i < body.length; i += 64) {
-          bodyLines.push(body.slice(i, i + 64));
-        }
-        pem = [header, ...bodyLines, footer].join('\n');
-      }
-      // Encode newlines for .env compatibility — dotenv expands \n in double-quoted values
-      const encoded = `"${pem.replace(/\n/g, '\\n')}"`;
-      this.collectedKeys['KALSHI_PRIVATE_KEY'] = encoded;
-      // Store actual PEM (with real newlines) in process.env so API clients can use it directly
-      if (!(('KALSHI_PRIVATE_KEY') in this.originalEnvValues)) {
-        this.originalEnvValues['KALSHI_PRIVATE_KEY'] = process.env['KALSHI_PRIVATE_KEY'];
-      }
-      process.env['KALSHI_PRIVATE_KEY'] = pem;
-    }
-
-    // Only set KALSHI_USE_DEMO default if not already configured
-    if (!process.env.KALSHI_USE_DEMO) {
-      this.stageEnv('KALSHI_USE_DEMO', 'false');
-    }
-    this.transition('octagon_api_key');
   }
 
   private handleOptionalKeySubmit(envName: string, value: string | null, nextState: WizardState) {
@@ -432,21 +382,13 @@ export class SetupWizardController {
   private handleProviderSelect(providerId: string) {
     if (providerId === 'skip') {
       this.selectedProvider = null;
-      this.runTests().catch((err) => {
-        this.testResults = [{ name: 'Setup error', status: 'fail', message: String(err) }];
-        this.wizardState = 'complete';
-        this.onChange();
-      });
+      this.transition('bankroll');
       return;
     }
     if (providerId === 'ollama') {
       // Ollama runs locally — no API key needed, but track the selection
       this.selectedProvider = 'ollama';
-      this.runTests().catch((err) => {
-        this.testResults = [{ name: 'Setup error', status: 'fail', message: String(err) }];
-        this.wizardState = 'complete';
-        this.onChange();
-      });
+      this.transition('bankroll');
       return;
     }
     this.selectedProvider = providerId;
@@ -457,11 +399,7 @@ export class SetupWizardController {
     if (!value || !value.trim()) {
       // Empty submission — treat as skip
       this.selectedProvider = null;
-      this.runTests().catch((err) => {
-        this.testResults = [{ name: 'Setup error', status: 'fail', message: String(err) }];
-        this.wizardState = 'complete';
-        this.onChange();
-      });
+      this.transition('bankroll');
       return;
     }
     if (this.selectedProvider) {
@@ -470,6 +408,38 @@ export class SetupWizardController {
         this.stageEnv(envName, value);
       }
     }
+    this.transition('bankroll');
+  }
+
+  /**
+   * Bankroll is optional: empty skips it, and sizing then reports why rather
+   * than guessing. A bad number keeps the user on this step instead of being
+   * dropped, because a silently ignored bankroll looks exactly like the "no
+   * bankroll configured" state it was meant to fix.
+   */
+  private handleBankrollSubmit(value: string | null) {
+    const raw = value?.trim() ?? '';
+    if (raw === '') {
+      this.pendingBankroll = null;
+      this.bankrollError = null;
+      this.startTests();
+      return;
+    }
+
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      this.bankrollError = `"${raw}" is not a non-negative number. Enter an amount like 1000, or leave empty to skip.`;
+      this.currentInput = null;
+      this.onChange();
+      return;
+    }
+
+    this.pendingBankroll = String(parsed);
+    this.bankrollError = null;
+    this.startTests();
+  }
+
+  private startTests() {
     this.runTests().catch((err) => {
       this.testResults = [{ name: 'Setup error', status: 'fail', message: String(err) }];
       this.wizardState = 'complete';
@@ -500,7 +470,7 @@ export class SetupWizardController {
 
   private async runTests() {
     this.testResults = [
-      { name: 'Kalshi API', status: 'pending' },
+      { name: 'Polymarket CLOB', status: 'pending' },
       { name: 'Octagon API', status: 'pending' },
       { name: 'LLM API', status: 'pending' },
     ];
@@ -509,13 +479,18 @@ export class SetupWizardController {
     // Reload env from .env (non-overwriting so staged process.env values are preserved)
     config({ path: ENV_PATH, quiet: true });
 
-    // Test Kalshi
+    // Test Polymarket — public endpoint, no credentials involved.
+    // fetchExchangeStatus swallows its own errors and reports the outcome in
+    // `exchange_active`, so the flag must be read; a try/catch here would never
+    // fire and the wizard would claim "Connected" with the CLOB down.
     try {
-      await callKalshiApi('GET', '/exchange/status');
-      this.testResults[0] = { name: 'Kalshi API', status: 'ok', message: 'Connected' };
+      const status = await fetchExchangeStatus();
+      this.testResults[0] = status.exchange_active
+        ? { name: 'Polymarket CLOB', status: 'ok', message: 'Connected' }
+        : { name: 'Polymarket CLOB', status: 'fail', message: 'Unreachable' };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.testResults[0] = { name: 'Kalshi API', status: 'fail', message: msg.slice(0, 60) };
+      this.testResults[0] = { name: 'Polymarket CLOB', status: 'fail', message: msg.slice(0, 60) };
     }
     this.onChange();
 

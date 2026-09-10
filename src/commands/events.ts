@@ -3,7 +3,7 @@ import type { CLIResponse } from './json.js';
 import type { ParsedArgs } from './parse-args.js';
 import {
   fetchOctagonEventsPage,
-  fetchOctagonEventByTicker,
+  resolveOctagonEvent,
   type OctagonEventEntry,
 } from '../scan/octagon-events-api.js';
 import { formatTable } from './scan-formatters.js';
@@ -27,11 +27,13 @@ export async function handleEvents(args: ParsedArgs): Promise<CLIResponse<Events
   const positional = args.positionalArgs[0];
 
   try {
-    // events <event_ticker> — drill into one
-    if (positional && positional.toUpperCase().startsWith('KX')) {
-      const ev = await fetchOctagonEventByTicker(positional.toUpperCase());
+    // events <slug|event_ticker|url> — drill into one. Anything that is not the
+    // bare `list` subcommand is an event key; the Kalshi-era check for a `KX`
+    // prefix has no Polymarket analogue, since every key is a slug.
+    if (positional && positional.toLowerCase() !== 'list') {
+      const ev = await resolveOctagonEvent(positional);
       if (!ev) {
-        return wrapError('events', 'EVENT_NOT_FOUND', `No event found for ticker ${positional}`);
+        return wrapError('events', 'EVENT_NOT_FOUND', `No event found for ${positional}`);
       }
       return wrapSuccess('events', { kind: 'detail', event: ev });
     }
@@ -53,7 +55,7 @@ export async function handleEvents(args: ParsedArgs): Promise<CLIResponse<Events
     let filtered = all;
     if (args.category) {
       const cat = args.category.toLowerCase();
-      filtered = filtered.filter((e) => (e.series_category ?? '').toLowerCase().includes(cat));
+      filtered = filtered.filter((e) => (`${e.series_category ?? ''} ${e.meta_category ?? ''}`).toLowerCase().includes(cat));
     }
     if (args.minVolume !== undefined) {
       const floor = args.minVolume;

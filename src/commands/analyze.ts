@@ -1,5 +1,5 @@
 import { getDb } from '../db/index.js';
-import { formatBoxHeader } from './formatters.js';
+import { formatBoxHeader, fmtPrice, fmtUsd } from './formatters.js';
 import { insertEdge } from '../db/edge.js';
 import { getLatestReport } from '../db/octagon-cache.js';
 import { auditTrail } from '../audit/index.js';
@@ -7,11 +7,14 @@ import { EdgeComputer } from '../scan/edge-computer.js';
 import { OctagonClient } from '../scan/octagon-client.js';
 import { createOctagonInvoker } from '../scan/invoker.js';
 import * as readline from 'node:readline';
-import { callKalshiApi, KalshiApiError } from '../tools/kalshi/api.js';
-import type { KalshiMarket, KalshiEvent, KalshiOrder, KalshiPosition } from '../tools/kalshi/types.js';
+import { lookupMarket, normalizePolymarketInput } from '../tools/polymarket/markets.js';
+import { fetchEventBySlug, searchEvents } from '../tools/polymarket/events.js';
+import { fetchPositions } from '../tools/polymarket/portfolio.js';
+import { TRADING_UNAVAILABLE_MESSAGE } from '../tools/polymarket/polymarket-trade.js';
+import type { PolymarketMarket } from '../tools/polymarket/types.js';
 import { openPosition, closePosition, getOpenPositions } from '../db/positions.js';
 import { logTrade } from '../db/trades.js';
-import { formatRawReport, parseMarketProb, parsePriceField } from '../controllers/browse.js';
+import { formatRawReport, parseMarketProb } from '../controllers/browse.js';
 import type { PriceDriver, Catalyst, Source } from '../scan/types.js';
 import { formatAge } from '../utils/time.js';
 import { kellySize, getVolume24h } from '../risk/kelly.js';
@@ -88,9 +91,9 @@ export interface AnalyzeData {
 }
 
 
-function deriveLiquidityGrade(market: KalshiMarket): string {
-  const bid = parsePriceField(market.yes_bid_dollars, market.dollar_yes_bid, market.yes_bid);
-  const ask = parsePriceField(market.yes_ask_dollars, market.dollar_yes_ask, market.yes_ask);
+function deriveLiquidityGrade(market: PolymarketMarket): string {
+  const bid = market.yes_bid;
+  const ask = market.yes_ask;
   const spreadCents = Number.isFinite(bid) && Number.isFinite(ask) ? Math.round((ask - bid) * 100) : 99;
   const volume = getVolume24h(market);
   if (spreadCents <= 2 && volume >= 5000) return 'Excellent';
@@ -99,109 +102,59 @@ function deriveLiquidityGrade(market: KalshiMarket): string {
 }
 
 
-function getVolume(m: KalshiMarket): number {
-  if (m.volume_fp != null) {
-    const v = parseFloat(m.volume_fp);
-    if (Number.isFinite(v)) return v;
-  }
-  return m.volume || 0;
+function getVolume(m: PolymarketMarket): number {
+  return Number.isFinite(m.volume) ? m.volume : 0;
 }
 
 /**
- * Normalize user input into a canonical Kalshi ticker.
+ * Normalize user input into a canonical Polymarket slug.
  *
  * Accepts any of:
- *   - Bare ticker, any case: `kxmeasles-26`, `KXMEASLES-26`, `KxMeAsLeS-26`
- *   - Kalshi URL: `https://kalshi.com/markets/kxmeasles/measles-cases/kxmeasles-26`
- *   - URL without protocol: `kalshi.com/markets/kxmeasles-26`
- *   - URL with query / fragment: `…/kxmeasles-26?ref=foo#yes`
+ *   - Bare slug: `xi-jinping-out-before-2027`
+ *   - Condition id: `0x…`
+ *   - Polymarket URL: `https://polymarket.com/event/world-cup-winner`
+ *   - Event URL with market: `polymarket.com/event/<event>/<market>?ref=foo`
  *
- * Strategy: detect URL-shaped input, extract the last non-empty path segment
- * (which by Kalshi convention is the ticker), then uppercase. Bare tickers
- * are simply uppercased. Kalshi's path is case-sensitive — without this
- * `/markets/kxmeasles-26` 404s even though the ticker exists.
+ * Unlike the Kalshi equivalent this does NOT uppercase: Polymarket slugs are
+ * lowercase and the API is case-sensitive.
  */
-export function normalizeKalshiInput(input: string): string {
-  const trimmed = input.trim();
-  const looksLikeUrl =
-    /^https?:\/\//i.test(trimmed) || /^(www\.)?kalshi\.com\//i.test(trimmed);
-  if (looksLikeUrl) {
-    const noProto = trimmed
-      .replace(/^https?:\/\/[^/]+/i, '')
-      .replace(/^(www\.)?kalshi\.com/i, '');
-    const path = noProto.replace(/[?#].*$/, '').replace(/\/+$/, '');
-    const segments = path.split('/').filter(Boolean);
-    const last = segments[segments.length - 1] ?? '';
-    if (last) return last.toUpperCase();
-  }
-  return trimmed.toUpperCase();
+export function normalizeMarketInput(input: string): string {
+  return normalizePolymarketInput(input);
 }
 
 /**
- * Resolve a user-provided ticker to a market ticker.
- * Accepts: market ticker, event ticker, series ticker, or Kalshi URL.
- * Returns the resolved KalshiMarket (picking the most active open market for events/series).
+ * Resolve user input to a market.
+ * Accepts: market slug, condition id, event slug, Polymarket URL, or free text.
+ * For events (and text search) the most liquid active market is chosen.
  */
-export async function resolveMarket(rawInput: string): Promise<KalshiMarket> {
-  const input = normalizeKalshiInput(rawInput);
-  // 1. Try as a market ticker first
-  try {
-    const res = await callKalshiApi('GET', `/markets/${input}`);
-    const m = (res.market ?? res) as KalshiMarket;
-    if (m.ticker) return m;
-  } catch (err) {
-    if (!(err instanceof KalshiApiError && err.statusCode === 404)) throw err;
-  }
+export async function resolveMarket(rawInput: string): Promise<PolymarketMarket> {
+  const input = normalizeMarketInput(rawInput);
 
-  // 2. Try as an event ticker
-  try {
-    const res = await callKalshiApi('GET', `/events/${input}`, {
-      params: { with_nested_markets: true },
-    });
-    const ev = (res.event ?? res) as KalshiEvent;
-    const markets = (ev.markets ?? []).filter(
-      (m: KalshiMarket) => m.status === 'open' || m.status === 'active',
-    );
-    if (markets.length > 0) {
-      markets.sort((a, b) => getVolume(b) - getVolume(a));
-      return markets[0];
-    }
-  } catch (err) {
-    if (!(err instanceof KalshiApiError && err.statusCode === 404)) throw err;
-  }
+  const pickBest = (markets: PolymarketMarket[]): PolymarketMarket | undefined => {
+    const active = markets.filter((m) => m.status === 'active');
+    const pool = active.length > 0 ? active : markets;
+    return [...pool].sort((a, b) => getVolume(b) - getVolume(a))[0];
+  };
 
-  // 3. Try as a series ticker — fetch recent events, then get their markets
-  try {
-    const res = await callKalshiApi('GET', '/events', {
-      params: { series_ticker: input, status: 'open', limit: 5 },
-    });
-    const events = (res.events ?? []) as KalshiEvent[];
-    const allMarkets: KalshiMarket[] = [];
-    for (const ev of events) {
-      if (!ev.event_ticker) continue;
-      try {
-        const evRes = await callKalshiApi('GET', `/events/${ev.event_ticker}`, {
-          params: { with_nested_markets: true },
-        });
-        const fullEv = (evRes.event ?? evRes) as KalshiEvent;
-        for (const m of (fullEv.markets ?? []) as KalshiMarket[]) {
-          if (m.status === 'open' || m.status === 'active') {
-            allMarkets.push(m);
-          }
-        }
-      } catch {
-        // skip events that fail to fetch
-      }
-    }
-    if (allMarkets.length > 0) {
-      allMarkets.sort((a, b) => getVolume(b) - getVolume(a));
-      return allMarkets[0];
-    }
-  } catch (err) {
-    if (!(err instanceof KalshiApiError && err.statusCode === 404)) throw err;
-  }
+  // 1. Try as a market slug or condition id
+  const market = await lookupMarket(input);
+  if (market?.ticker) return market;
 
-  throw new Error(`Could not find a market for "${rawInput}" (normalized to "${input}"). Try a market ticker (e.g. KXBTC-26MAR14-T50049), event ticker (e.g. KXBTC-26MAR14), series ticker (e.g. KXBTC), or a Kalshi URL like https://kalshi.com/markets/<series>/<slug>/<event>.`);
+  // 2. Try as an event slug — pick the most liquid active market inside it
+  const event = await fetchEventBySlug(input);
+  const fromEvent = pickBest(event?.markets ?? []);
+  if (fromEvent) return fromEvent;
+
+  // 3. Fall back to keyword search. Polymarket has no series-ticker prefix
+  //    convention like Kalshi's KXBTC, so free text is the useful last resort.
+  const results = await searchEvents(input.replace(/-/g, ' '), 5);
+  const fromSearch = pickBest(results.flatMap((e) => e.markets ?? []));
+  if (fromSearch) return fromSearch;
+
+  throw new Error(
+    `Could not find a market for "${rawInput}". Try a market slug (e.g. xi-jinping-out-before-2027), ` +
+    `an event slug (e.g. world-cup-winner), a condition id (0x…), or a polymarket.com URL.`
+  );
 }
 
 export async function handleAnalyze(
@@ -300,9 +253,9 @@ export async function handleAnalyze(
     side: snapshot.edge >= 0 ? 'yes' : 'no',
     fraction: 0,
     adjustedFraction: 0,
-    contracts: 0,
-    dollarAmountCents: 0,
-    entryPriceCents: 0,
+    shares: 0,
+    notionalUsdc: 0,
+    entryPrice: 0,
     availableBankroll: 0,
     openExposure: 0,
     cashBalance: 0,
@@ -336,31 +289,23 @@ export async function handleAnalyze(
     providedPosition !== undefined ? (providedPosition ?? null) : null;
   if (providedPosition === undefined) {
     try {
-      const posData = await callKalshiApi('GET', '/portfolio/positions', {
-        params: { ticker: resolvedTicker },
-      });
-      const positions = (posData.market_positions ?? posData.positions ?? []) as KalshiPosition[];
-      const match = positions.find((p) => p.ticker === resolvedTicker);
+      const positions = await fetchPositions();
+      const match = positions.find((p) => p.ticker === resolvedTicker && p.size !== 0);
       if (match) {
-        const rawPos = parseFloat(String(match.position ?? '0'));
-        if (rawPos !== 0) {
-          existingPosition = {
-            direction: rawPos > 0 ? 'yes' : 'no',
-            size: Math.abs(Math.round(rawPos)),
-          };
-        }
+        existingPosition = {
+          // Positions are per outcome token, so direction is the outcome label.
+          direction: match.outcome.toLowerCase() === 'no' ? 'no' : 'yes',
+          size: Math.abs(match.size),
+        };
       }
     } catch {
-      // Position fetch failed (e.g. demo mode) — continue without
+      // No wallet configured or Data API unavailable — continue without
     }
   }
 
   // Build signal — position-aware
   const side = snapshot.edge > 0 ? 'YES' : 'NO';
-  const yesAsk = parsePriceField(market.yes_ask_dollars, market.dollar_yes_ask, market.yes_ask);
-  const noAsk = parsePriceField(market.no_ask_dollars, market.dollar_no_ask, market.no_ask);
-  const yesBid = parsePriceField(market.yes_bid_dollars, market.dollar_yes_bid, market.yes_bid);
-  const noBid = parsePriceField(market.no_bid_dollars, market.dollar_no_bid, market.no_bid);
+  const { yes_ask: yesAsk, no_ask: noAsk, yes_bid: yesBid, no_bid: noBid } = market;
   const entryPrice = (snapshot.edge > 0 ? yesAsk : noAsk);
 
   let signal: string;
@@ -403,7 +348,7 @@ export async function handleAnalyze(
     type: 'RECOMMENDATION',
     ticker: resolvedTicker,
     action: signal,
-    size: kelly.contracts,
+    size: kelly.shares,
     kelly: kelly.adjustedFraction,
     risk_gate: gate.passed ? 'PASSED' : 'FAILED',
   });
@@ -473,7 +418,7 @@ export async function handleAnalyze(
     ticker: resolvedTicker,
     eventTicker,
     title: market.title || market.subtitle || resolvedTicker,
-    expirationTime: market.expiration_time || market.expected_expiration_time || market.close_time || null,
+    expirationTime: market.expiration_time || market.expiration_time || market.close_time || null,
     refreshedAt,
     modelRunAt,
     staleUpstream,
@@ -577,13 +522,15 @@ export function formatAnalyzeHuman(data: AnalyzeData): string {
   if (!data.hasMarketPrice) {
     lines.push('    ⚠ Skipped — market has no last traded price; no sizing reference available.');
   } else {
+    // All money here is already USDC and all prices are decimals in [0,1];
+    // the /100 these lines used to carry was Kalshi's integer-cents unit.
     lines.push(`    Side:         ${data.kelly.side.toUpperCase()}`);
-    lines.push(`    Cash Balance: $${(data.kelly.cashBalance / 100).toFixed(2)}`);
-    lines.push(`    Open Exposure: $${(data.kelly.openExposure / 100).toFixed(2)}`);
-    lines.push(`    Available:    $${(data.kelly.availableBankroll / 100).toFixed(2)}`);
-    lines.push(`    Contracts:    ${data.kelly.contracts}`);
-    lines.push(`    Dollar Amount: $${(data.kelly.dollarAmountCents / 100).toFixed(2)}`);
-    lines.push(`    Entry Price:  ${data.kelly.entryPriceCents}¢`);
+    lines.push(`    Cash Balance: ${fmtUsd(data.kelly.cashBalance)}`);
+    lines.push(`    Open Exposure: ${fmtUsd(data.kelly.openExposure)}`);
+    lines.push(`    Available:    ${fmtUsd(data.kelly.availableBankroll)}`);
+    lines.push(`    Shares:       ${data.kelly.shares}`);
+    lines.push(`    Notional:     ${fmtUsd(data.kelly.notionalUsdc)}`);
+    lines.push(`    Entry Price:  ${fmtPrice(data.kelly.entryPrice)}`);
     lines.push(`    Kelly f*:     ${(data.kelly.fraction * 100).toFixed(1)}%`);
     lines.push(`    Adjusted f:   ${(data.kelly.adjustedFraction * 100).toFixed(1)}%`);
     if (data.kelly.liquidityAdjusted) {
@@ -700,170 +647,11 @@ export async function promptAnalyzeActions(data: AnalyzeData): Promise<void> {
       }
 
       case '3': {
-        // Determine if this is a SELL (close position) or BUY (open position)
-        const isSell = data.signal.startsWith('SELL');
-        const isHold = data.signal.startsWith('HOLD');
-
-        if (isHold) {
-          console.log('  Signal is HOLD — no trade suggested.');
-          break;
-        }
-
-        if (isSell && data.existingPosition) {
-          // Close position: sell what we hold
-          const sellSide = data.existingPosition.direction;
-          const sellSize = data.existingPosition.size;
-          // marketProb is guaranteed when isSell is reachable (we got a SELL
-          // recommendation, which requires a price), but type system can't
-          // see that — fall back to 50 if data was tampered with.
-          const mp = data.marketProb ?? 0.5;
-          const closePrice = data.closePriceCents ?? Math.round(
-            (sellSide === 'yes' ? mp : 1 - mp) * 100
-          );
-
-          console.log(`  Signal: SELL ${sellSize} ${sellSide.toUpperCase()} @ ${closePrice}¢ (close position)`);
-          const confirm = await ask('  Execute? [y/n] ');
-          if (confirm.toLowerCase() !== 'y' && confirm.toLowerCase() !== 'yes') {
-            console.log('  Trade cancelled.');
-            break;
-          }
-
-          try {
-            const orderPayload: Record<string, unknown> = {
-              ticker: data.ticker,
-              action: 'sell',
-              side: sellSide,
-              type: 'limit',
-              count: sellSize,
-            };
-            if (sellSide === 'yes') orderPayload.yes_price = closePrice;
-            else orderPayload.no_price = closePrice;
-
-            const orderRes = await callKalshiApi('POST', '/portfolio/orders', { body: orderPayload });
-            const order = (orderRes.order ?? orderRes) as KalshiOrder;
-
-            const db = getDb();
-            const now = Math.floor(Date.now() / 1000);
-
-            // Find matching open DB position for this ticker to close
-            const dbPositions = getOpenPositions(db);
-            const dbMatch = dbPositions.find(
-              (p) => p.ticker === data.ticker && p.direction === sellSide,
-            );
-
-            logTrade(db, {
-              trade_id: crypto.randomUUID(),
-              position_id: dbMatch?.position_id ?? '',
-              order_id: order.order_id,
-              ticker: data.ticker,
-              action: 'sell',
-              side: sellSide,
-              size: sellSize,
-              price: closePrice,
-              fill_status: order.status,
-              kalshi_response: JSON.stringify(order),
-              created_at: now,
-            });
-
-            auditTrail.log({
-              type: 'TRADE_EXECUTED',
-              ticker: data.ticker,
-              order_id: order.order_id,
-              fill_price: closePrice,
-              size: sellSize,
-            });
-
-            // If order filled immediately, close the DB position
-            if (dbMatch && order.status === 'filled') {
-              closePosition(db, dbMatch.position_id, now);
-            }
-
-            console.log(`  Sell order placed: ${order.order_id} (${order.status})`);
-          } catch (err) {
-            console.error(`  Trade failed: ${err instanceof Error ? err.message : String(err)}`);
-          }
-          break;
-        }
-
-        if (!data.riskGate.passed) {
-          console.log('  Risk gate FAILED — trade blocked.');
-          break;
-        }
-        if (data.kelly.contracts === 0) {
-          console.log(`  Kelly sizing produced 0 contracts${data.kelly.skippedReason ? `: ${data.kelly.skippedReason}` : ''}.`);
-          break;
-        }
-
-        const side = (data.edge ?? 0) > 0 ? 'yes' : 'no';
-        const price = data.kelly.entryPriceCents;
-        console.log(`  Signal: BUY ${data.kelly.contracts} ${side.toUpperCase()} @ ${price}¢`);
-        const confirm = await ask('  Execute? [y/n] ');
-        if (confirm.toLowerCase() !== 'y' && confirm.toLowerCase() !== 'yes') {
-          console.log('  Trade cancelled.');
-          break;
-        }
-
-        try {
-          const orderPayload: Record<string, unknown> = {
-            ticker: data.ticker,
-            action: 'buy',
-            side,
-            type: 'limit',
-            count: data.kelly.contracts,
-          };
-          if (side === 'yes') orderPayload.yes_price = price;
-          else orderPayload.no_price = price;
-
-          const orderRes = await callKalshiApi('POST', '/portfolio/orders', { body: orderPayload });
-          const order = (orderRes.order ?? orderRes) as KalshiOrder;
-
-          const db = getDb();
-          const positionId = crypto.randomUUID();
-          const now = Math.floor(Date.now() / 1000);
-
-          openPosition(db, {
-            position_id: positionId,
-            ticker: data.ticker,
-            event_ticker: data.eventTicker,
-            direction: side,
-            size: data.kelly.contracts,
-            entry_price: price,
-            entry_edge: data.edge,
-            entry_kelly: data.kelly.adjustedFraction,
-            current_pnl: 0,
-            status: 'open',
-            opened_at: now,
-          });
-
-          logTrade(db, {
-            trade_id: crypto.randomUUID(),
-            position_id: positionId,
-            order_id: order.order_id,
-            ticker: data.ticker,
-            action: 'buy',
-            side,
-            size: data.kelly.contracts,
-            price,
-            fill_status: order.status,
-            kalshi_response: JSON.stringify(order),
-            created_at: now,
-          });
-
-          auditTrail.log({
-            type: 'TRADE_EXECUTED',
-            ticker: data.ticker,
-            order_id: order.order_id,
-            fill_price: price,
-            size: data.kelly.contracts,
-          });
-
-          console.log(`  Order placed: ${order.order_id} (${order.status})`);
-        } catch (err) {
-          console.error(`  Trade failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
+        // Order placement is deferred until wallet signing lands; the analysis
+        // above is still fully usable, so only this action is blocked.
+        console.log(`  ${TRADING_UNAVAILABLE_MESSAGE}`);
         break;
       }
-
       case '4':
       default:
         running = false;

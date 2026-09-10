@@ -44,87 +44,54 @@ describe('ScanLoop', () => {
     audit = a.audit;
     auditPath = a.path;
 
-    // Set required env vars for Kalshi API auth
-    process.env.KALSHI_API_KEY = 'test-key';
-    process.env.KALSHI_PRIVATE_KEY = [
-      '-----BEGIN PRIVATE KEY-----',
-      'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCRFVyyjP3KGX63',
-      '0/qa6kWsCdNJTbKMBaqTaYzCVKYWr3fA4UcA3Wx9+mXwYQ0+jULQP9Y1qWBpWTmb',
-      'vnZaejJaywFK6LESStChcXuqN8uBcF13+CfwxVdbTboAbaHaNsOjHwl6JuYW0Nz+',
-      'jOQmN0v/nT/SSq8BOLN7S408VW5yR3sC+W9oJ0qb6gVNJTHazxuEvCjz8k5w+a+D',
-      'otAVUg/Y9WVIJqKhIhvQnD2pAN5J20RI4YXfz31GTaKzwMmg/ByoGrtkeJw4StFW',
-      'HSVfo2/j9H1EdMTEHyjLyGyXjfiQOTSp/gK0BjaMHGzdltFueCOss8RoQjv2n+2m',
-      'OL+aNv7tAgMBAAECggEAEkm0DpmxH/mIvJlO3JotQBtY88OEfxvzvXMvmAtdiDyE',
-      'Bt8euSAwHc0jbmJ9beYWhvOVB9ya14y0s0oV1x/SGxm9xvh/4YNmuwL4CKPR1jYY',
-      'wheYyUPG2C57BLTNExmWHYi7BBfFJxka0kdmNt7/iHAE7HgXiTrhfOgwHGvUaTki',
-      'zDuq/I2rUaG4bDHA8EK19DdFCb2+TuqGYnc7vkMgwz2NajGZNXqOWCJabMVLeQR2',
-      'niVRsFo2kY1uXB6Oy+nEixVnTxWRQhT//UWbLr4iJZnlJGpwPGKZZHhNADbx+w+0',
-      'ig3iqVnYY11s7cceGTV7C9fGr+H9pERtTp3e1cPmLQKBgQDIP2WoJVz12wUd4ANM',
-      'Jz1xpxsYg3txnTST01OidaWxeaDHg/mjzsdKPdMa7eBREJYy4HUllLZrvI9KWp/4',
-      'wLCB0aCuytGf6Z2u/bOoTs87HMf13PzC0ksD1Ri9wEECN5NlVnL9NNcnpPE+6gGY',
-      '2OzJtzfdr5JwPC5U12IDQVEAWwKBgQC5eiZhZKwHHeQQzJqgURDd3hZJpQdFDcFp',
-      'QSH1dNHNdNutTLZ7JakSQcoz9P4Fuu4AEPGCi94xH4NoIq7fPY4ABX0a3vp9guJ+',
-      'txChCHusjwVGGcraGSiognyxBnewpt+lzv1xDWBmmGaDqSVayS9eQaEiMypHbaah',
-      '2vsiQBWgVwKBgC/EN6qZZwhae2j5869puNVwiB0b2Als94q/oTaim6ivG7Qb/iOe',
-      'ApnqD35f+d88dqeiNS+GvtEKRJ/26Cv9Qt1ktNCdHs3ney6v4/gk/HfcULKMSVrr',
-      'sOs0HNe+kYNG4IkOyxUtUplpVgas6T6dmDYx10ixRdwx7tdcHUwre3f7AoGARkWP',
-      'UQsRWkjq5ap/Uwojt8uy6ggKbxE9HCG/Of4elxcVO916rcGhAvfGIlVKAOXH0mKY',
-      '/fr8HeRwpv2s/4uUx1FNCuc8RF1YbuXw+PH72W7+cobHIkax7tYxY+itZFJ1HZ8E',
-      'ytZklbpb7LojGvhqZ+25nPmBpTpYDa6nw1xAVVUCgYEAqKcg/QSJIcj+qODjtZZ8',
-      'aCqNvagzw74Hruh9jmd3tLvqpzKN72GqdtuzRoGi2BzmjUkrTXhEugf4/AaxfLMy',
-      'yk6j0nzHRSVi1GUzx/P/q6gsR8bEvhhBSZEwQxcQDL+1Toamz1nmFXLZo0w3hi6q',
-      'wZ0ONbXRO/Hcg1MzeK10biQ=',
-      '-----END PRIVATE KEY-----',
-    ].join('\n');
+    // Set, but deliberately inert: getWalletAddress ignores it until the wallet
+    // phase. Kept here so this test fails loudly if that ever silently changes.
+    process.env.POLYMARKET_WALLET_ADDRESS = '0x' + '1'.repeat(40);
 
     // Seed theme with one event ticker
     upsertTheme(db, { theme_id: 'test-theme', name: 'Test', tickers: '["EV-1"]' });
 
-    // Mock fetch for all Kalshi API calls
+    // Mock fetch for Gamma (events) and the Data API (portfolio)
     originalFetch = globalThis.fetch;
     globalThis.fetch = mock(async (url: string | URL | Request) => {
       const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
+      const json = (body: unknown) =>
+        new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
-      // Extract path from full URL
-      const match = urlStr.match(/\/trade-api\/v2(\/[^?]*)/);
-      const path = match?.[1] ?? '';
-
-      // Events endpoint
-      if (path === '/events/EV-1' || urlStr.includes('/events/EV-1')) {
-        return new Response(JSON.stringify({
-          event: {
-            event_ticker: 'EV-1',
-            markets: [{
-              ticker: 'MKT-YES',
-              event_ticker: 'EV-1',
-              status: 'open',
-              last_price: 58,
-              yes_bid: 55,
-              yes_ask: 61,
-              volume_24h: 1000,
-            }],
-          },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      // Gamma events — prices are decimal probabilities
+      if (urlStr.includes('gamma-api.polymarket.com/events')) {
+        return json([{
+          slug: 'EV-1',
+          title: 'Test event',
+          tags: [{ label: 'politics' }],
+          endDate: '',
+          markets: [{
+            slug: 'MKT-YES',
+            conditionId: '0x' + 'a'.repeat(64),
+            question: 'Test market',
+            outcomes: '["Yes", "No"]',
+            outcomePrices: '["0.58", "0.42"]',
+            clobTokenIds: '["1", "2"]',
+            lastTradePrice: 0.58,
+            bestBid: 0.55,
+            bestAsk: 0.61,
+            volume24hr: 1000,
+            active: true,
+            closed: false,
+            events: [{ slug: 'EV-1' }],
+          }],
+        }]);
       }
 
-      // Portfolio balance
-      if (path === '/portfolio/balance') {
-        return new Response(JSON.stringify({
-          balance: 100_000,
-          payout: 20_000,
-          reserved_fees: 0,
-          fees: 0,
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      // Data API portfolio value + positions (USDC)
+      if (urlStr.includes('data-api.polymarket.com/value')) {
+        return json([{ user: '0x1', value: 1000 }]);
+      }
+      if (urlStr.includes('data-api.polymarket.com/positions')) {
+        return json([{ slug: 'MKT-OTHER', conditionId: '0xb', size: 100, curPrice: 0.5, currentValue: 200 }]);
       }
 
-      // Portfolio positions
-      if (path === '/portfolio/positions') {
-        return new Response(JSON.stringify({
-          market_positions: [{ market_exposure: 20_000 }],
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-      }
-
-      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return json({});
     }) as unknown as typeof fetch;
 
     loop = new ScanLoop(db, audit, makeMockInvoker());
@@ -133,8 +100,7 @@ describe('ScanLoop', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     loop.stop();
-    delete process.env.KALSHI_API_KEY;
-    delete process.env.KALSHI_PRIVATE_KEY;
+    delete process.env.POLYMARKET_WALLET_ADDRESS;
   });
 
   test('runs one full scan cycle', async () => {
@@ -154,12 +120,33 @@ describe('ScanLoop', () => {
     expect(rows[0].ticker).toBe('MKT-YES');
   });
 
-  test('creates risk_snapshots with bankroll data', async () => {
+  test('risk_snapshots record no account data while the wallet path is disabled', async () => {
     await loop.runOnce({ theme: 'test-theme' });
 
     const snapshot = getLatestSnapshot(db);
     expect(snapshot).not.toBeNull();
-    expect(snapshot!.cash_balance).toBe(100_000);
+    // The wallet is off until the trading phase, so the Data API is never read
+    // even though POLYMARKET_WALLET_ADDRESS is set above. Both of these are
+    // wallet-derived, so both stay 0.
+    expect(snapshot!.portfolio_value).toBe(0);
+    expect(snapshot!.open_exposure).toBe(0);
+    // cash_balance is deliberately NOT asserted: it comes from the
+    // risk.bankroll_usdc setting, not the wallet, and is legitimately non-zero
+    // for anyone who has configured one. Asserting 0 only passed because the
+    // default is 0, and made this test fail on a developer machine with a
+    // bankroll set — reading the real ~/.polymarket-bot/config.json.
+  });
+
+  test('drawdown stays 0 so the risk gate cannot trip on a phantom loss', async () => {
+    // portfolio_value is mark-to-market position value with no cash term, so if
+    // the wallet were live, closing positions would read as a ~100% drawdown and
+    // fail every later analyze. With the wallet off the high-water mark stays 0
+    // and the drawdown branch is never taken. Guards the regression directly.
+    await loop.runOnce({ theme: 'test-theme' });
+
+    const snapshot = getLatestSnapshot(db);
+    expect(snapshot!.drawdown_current).toBe(0);
+    expect(snapshot!.drawdown_max).toBe(0);
   });
 
   test('audit trail has SCAN_START and SCAN_COMPLETE', async () => {

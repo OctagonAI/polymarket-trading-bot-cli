@@ -42,7 +42,7 @@ interface HistoryPage {
   has_more: boolean;
 }
 
-const EVENTS_API_BASE = 'https://api.octagonai.co/v1';
+const EVENTS_API_BASE = 'https://api.octagonai.co/v1/predictions';
 const PAGE_LIMIT = 200;
 const TIMEOUT_MS = 60_000;
 
@@ -74,7 +74,7 @@ export async function fetchEventHistory(
     let resp: Response;
     try {
       resp = await fetch(
-        `${EVENTS_API_BASE}/prediction-markets/events/${encodeURIComponent(eventTicker)}/history?${params}`,
+        `${EVENTS_API_BASE}/events/${encodeURIComponent(eventTicker)}/history?${params}`,
         { headers: { Authorization: `Bearer ${apiKey}` }, signal: controller.signal },
       );
     } finally {

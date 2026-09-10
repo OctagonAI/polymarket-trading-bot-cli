@@ -65,10 +65,10 @@ export function formatPortfolioForWhatsApp(data: PortfolioData): string {
 
   const acct = data.accountSummary;
   if (acct) {
-    lines.push(`Cash: $${(acct.cashBalance / 100).toFixed(2)}`);
-    lines.push(`Portfolio: $${(acct.portfolioValue / 100).toFixed(2)}`);
-    lines.push(`Exposure: $${(acct.openExposure / 100).toFixed(2)}`);
-    lines.push(`Available: $${(acct.available / 100).toFixed(2)}`);
+    lines.push(`Cash: $${acct.cashBalance.toFixed(2)}`);
+    lines.push(`Portfolio: $${acct.portfolioValue.toFixed(2)}`);
+    lines.push(`Exposure: $${acct.openExposure.toFixed(2)}`);
+    lines.push(`Available: $${acct.available.toFixed(2)}`);
   } else {
     lines.push(`Account data unavailable`);
   }
@@ -80,7 +80,7 @@ export function formatPortfolioForWhatsApp(data: PortfolioData): string {
     lines.push(`*Positions (${data.positions.length}):*`);
     for (const p of data.positions.slice(0, MAX_ITEMS)) {
       const edgeTxt = p.currentEdge !== null ? `${(p.currentEdge * 100).toFixed(1)}%` : '-';
-      const pnlTxt = p.unrealizedPnl !== null ? `$${(p.unrealizedPnl / 100).toFixed(2)}` : '-';
+      const pnlTxt = p.unrealizedPnl !== null ? `$${p.unrealizedPnl.toFixed(2)}` : '-';
       lines.push(`• *${p.ticker}* ${p.direction.toUpperCase()} x${p.size} | Edge: ${edgeTxt} | P&L: ${pnlTxt}`);
     }
     if (data.positions.length > MAX_ITEMS) {

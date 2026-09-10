@@ -11,7 +11,7 @@ import { wrapSuccess, wrapError } from './json.js';
 import type { CLIResponse } from './json.js';
 import type { ParsedArgs } from './parse-args.js';
 import {
-  searchKalshiMarkets,
+  searchOctagonMarkets,
   getBasketCandles,
   listKalshiSeries,
   getSeriesEvents,
@@ -19,7 +19,7 @@ import {
   type BasketCandlesResponse,
   type SeriesRollupRow,
   type SeriesEventRow,
-} from '../scan/octagon-kalshi-api.js';
+} from '../scan/octagon-api.js';
 import { formatTable } from './scan-formatters.js';
 
 const UNIVERSE_PAGE_LIMIT = 200;
@@ -139,7 +139,7 @@ async function fetchUniverse(opts: {
   let cursor: string | undefined;
   const cap = opts.maxMarkets ?? 5000;
   for (let i = 0; i < MAX_PAGES; i++) {
-    const page = await searchKalshiMarkets({
+    const page = await searchOctagonMarkets({
       q: opts.q,
       category: opts.category,
       series_ticker: opts.series_ticker,
@@ -176,7 +176,7 @@ export async function handleSeries(args: ParsedArgs): Promise<CLIResponse<Series
       }
       // Server-side prefix match — replaces the old paginate-then-filter dance.
       const topN = args.topK ?? 20;
-      const page = await searchKalshiMarkets({
+      const page = await searchOctagonMarkets({
         series_prefix: seriesTicker,
         sort_by: 'volume_24h',
         limit: topN,
@@ -217,7 +217,7 @@ export async function handleSeries(args: ParsedArgs): Promise<CLIResponse<Series
     if (args.positionalArgs[0] && args.positionalArgs[0].toUpperCase().startsWith('KX')) {
       const seriesTicker = args.positionalArgs[0].toUpperCase();
       const limit = args.limit ?? 30;
-      const page = await searchKalshiMarkets({
+      const page = await searchOctagonMarkets({
         series_prefix: seriesTicker,
         sort_by: 'volume_24h',
         limit,

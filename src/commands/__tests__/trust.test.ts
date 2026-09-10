@@ -18,48 +18,53 @@ function makeArgs(o: Partial<ParsedArgs>): ParsedArgs {
 }
 
 function makeCard(overrides?: Partial<TraderTrustCard>): TraderTrustCard {
-  const score = (value: number) => ({
+  const score = (value: number | null) => ({
     value,
-    label: value >= 70 ? 'High' : value >= 40 ? 'Moderate' : 'Low',
-    drivers: [
-      { name: 'depth_score', sub_score: value, points: 12.5 },
-      { name: 'spread_pp', sub_score: value - 5, points: 7.3 },
-      { name: 'fill_consistency', sub_score: value - 10, points: 4.2 },
-    ],
-    evidence: [{ metric: 'avg_spread_cents', value: 1.2 }],
+    label: value === null ? 'Not scored' : value >= 70 ? 'High' : value >= 40 ? 'Tradeable' : 'Thin',
+    drivers: ['24h traded notional $4,090', 'spread 1c', 'book present'],
+    evidence: [{ text: 'avg spread', metric: 'avg_spread_cents', value: 1.2, window: '24h' }],
     confidence: 'high' as const,
-    data_freshness: 'point_in_time' as const,
+    suppressed: false,
+    not_applicable: value === null,
   });
   return {
-    calculation_version: 'trust_dashboard_v1.0',
+    calculation_version: 'trader_dashboard_lean_v1.14',
     computed_at: '2026-06-22T15:30:00Z',
-    event_ticker: 'KX-EVT',
-    rollup: { median_trader_trust: 70, min_trader_trust: 55, markets_scored: 3 },
+    event_ticker: 'world-cup-winner',
+    venue: 'polymarket',
+    event: { event_quality: { value: 70, label: 'Healthy', confidence: 'high' }, structure: 'partition', coverage: 100 },
+    scope: { total_markets: 3, scored_markets: 2 },
     markets: [
       {
-        market_ticker: 'KX-EVT-A',
+        market_ticker: 'will-france-win-the-world-cup',
         title: 'France',
         is_primary: true,
+        lifecycle_status: 'active',
+        fair_cents: 53,
+        best_bid_cents: 52,
+        best_ask_cents: 53,
+        spread_cents: 1,
         scores: {
-          trader_trust: score(85),
-          liquidity_quality: score(80),
+          market_quality: score(85),
+          liquidity: score(80),
           move_quality: score(75),
-          market_avoid: score(15),
-          quote_risk: score(20),
-          resolution_risk: score(90),
+          resolution_clarity: score(90),
         },
       },
       {
-        market_ticker: 'KX-EVT-B',
+        market_ticker: 'will-brazil-win-the-world-cup',
         title: 'Brazil',
         is_primary: false,
+        lifecycle_status: 'active',
+        fair_cents: 21,
+        best_bid_cents: 20,
+        best_ask_cents: 22,
+        spread_cents: 2,
         scores: {
-          trader_trust: score(55),
-          liquidity_quality: score(50),
-          move_quality: score(60),
-          market_avoid: score(30),
-          quote_risk: score(40),
-          resolution_risk: score(70),
+          market_quality: score(55),
+          liquidity: score(50),
+          move_quality: score(null),
+          resolution_clarity: score(70),
         },
       },
     ],
@@ -100,7 +105,7 @@ describe('handleTrust', () => {
 
   test('event 404 → EVENT_NOT_FOUND', async () => {
     installFetchMock(() => new Response('{}', { status: 404 }));
-    const resp = await handleTrust(makeArgs({ positionalArgs: ['KX-EVT'] }));
+    const resp = await handleTrust(makeArgs({ positionalArgs: ['world-cup-winner'] }));
     expect(resp.ok).toBe(false);
     if (resp.ok) return;
     expect(resp.error?.code).toBe('EVENT_NOT_FOUND');
@@ -108,9 +113,9 @@ describe('handleTrust', () => {
 
   test('trader_trust_json null → NO_SCORECARD (graceful, not crash)', async () => {
     installFetchMock(() => jsonResponse({
-      event_ticker: 'KX-EVT', name: 'Test', trader_trust_json: null,
+      event_ticker: 'world-cup-winner', name: 'Test', trader_trust_json: null,
     }));
-    const resp = await handleTrust(makeArgs({ positionalArgs: ['KX-EVT'] }));
+    const resp = await handleTrust(makeArgs({ positionalArgs: ['world-cup-winner'] }));
     expect(resp.ok).toBe(false);
     if (resp.ok) return;
     expect(resp.error?.code).toBe('NO_SCORECARD');
@@ -119,9 +124,9 @@ describe('handleTrust', () => {
 
   test('malformed trader_trust_json → PARSE_ERROR', async () => {
     installFetchMock(() => jsonResponse({
-      event_ticker: 'KX-EVT', name: 'Test', trader_trust_json: 'not json',
+      event_ticker: 'world-cup-winner', name: 'Test', trader_trust_json: 'not json',
     }));
-    const resp = await handleTrust(makeArgs({ positionalArgs: ['KX-EVT'] }));
+    const resp = await handleTrust(makeArgs({ positionalArgs: ['world-cup-winner'] }));
     expect(resp.ok).toBe(false);
     if (resp.ok) return;
     expect(resp.error?.code).toBe('PARSE_ERROR');
@@ -130,10 +135,10 @@ describe('handleTrust', () => {
   test('valid event returns table result', async () => {
     const card = makeCard();
     installFetchMock(() => jsonResponse({
-      event_ticker: 'KX-EVT', name: 'Test event',
+      event_ticker: 'world-cup-winner', name: 'Test event',
       trader_trust_json: JSON.stringify(card),
     }));
-    const resp = await handleTrust(makeArgs({ positionalArgs: ['KX-EVT'] }));
+    const resp = await handleTrust(makeArgs({ positionalArgs: ['world-cup-winner'] }));
     expect(resp.ok).toBe(true);
     if (!resp.ok) return;
     if (resp.data.kind !== 'table') throw new Error();
@@ -144,23 +149,23 @@ describe('handleTrust', () => {
   test('--market drills into one market', async () => {
     const card = makeCard();
     installFetchMock(() => jsonResponse({
-      event_ticker: 'KX-EVT', name: 'Test',
+      event_ticker: 'world-cup-winner', name: 'Test',
       trader_trust_json: JSON.stringify(card),
     }));
-    const resp = await handleTrust(makeArgs({ positionalArgs: ['KX-EVT'], market: 'KX-EVT-A' }));
+    const resp = await handleTrust(makeArgs({ positionalArgs: ['world-cup-winner'], market: 'will-france-win-the-world-cup' }));
     expect(resp.ok).toBe(true);
     if (!resp.ok) return;
     if (resp.data.kind !== 'detail') throw new Error();
-    expect(resp.data.market.market_ticker).toBe('KX-EVT-A');
+    expect(resp.data.market.market_ticker).toBe('will-france-win-the-world-cup');
     expect(resp.data.verbose).toBe(false);
   });
 
   test('--market with unknown ticker → MARKET_NOT_IN_SCORECARD', async () => {
     const card = makeCard();
     installFetchMock(() => jsonResponse({
-      event_ticker: 'KX-EVT', trader_trust_json: JSON.stringify(card),
+      event_ticker: 'world-cup-winner', trader_trust_json: JSON.stringify(card),
     }));
-    const resp = await handleTrust(makeArgs({ positionalArgs: ['KX-EVT'], market: 'KX-EVT-Z' }));
+    const resp = await handleTrust(makeArgs({ positionalArgs: ['world-cup-winner'], market: 'KX-EVT-Z' }));
     expect(resp.ok).toBe(false);
     if (resp.ok) return;
     expect(resp.error?.code).toBe('MARKET_NOT_IN_SCORECARD');
@@ -169,18 +174,18 @@ describe('handleTrust', () => {
   test('case-insensitive ticker matching for --market', async () => {
     const card = makeCard();
     installFetchMock(() => jsonResponse({
-      event_ticker: 'KX-EVT', trader_trust_json: JSON.stringify(card),
+      event_ticker: 'world-cup-winner', trader_trust_json: JSON.stringify(card),
     }));
-    const resp = await handleTrust(makeArgs({ positionalArgs: ['kx-evt'], market: 'kx-evt-a' }));
+    const resp = await handleTrust(makeArgs({ positionalArgs: ['WORLD-CUP-WINNER'], market: 'WILL-FRANCE-WIN-THE-WORLD-CUP' }));
     expect(resp.ok).toBe(true);
   });
 
   test('--verbose propagates into detail result', async () => {
     const card = makeCard();
     installFetchMock(() => jsonResponse({
-      event_ticker: 'KX-EVT', trader_trust_json: JSON.stringify(card),
+      event_ticker: 'world-cup-winner', trader_trust_json: JSON.stringify(card),
     }));
-    const resp = await handleTrust(makeArgs({ positionalArgs: ['KX-EVT'], market: 'KX-EVT-A', verbose: true }));
+    const resp = await handleTrust(makeArgs({ positionalArgs: ['world-cup-winner'], market: 'will-france-win-the-world-cup', verbose: true }));
     expect(resp.ok).toBe(true);
     if (!resp.ok || resp.data.kind !== 'detail') throw new Error();
     expect(resp.data.verbose).toBe(true);
@@ -188,66 +193,69 @@ describe('handleTrust', () => {
 });
 
 describe('formatTrustHuman', () => {
-  test('table view contains rollup, header, both markets, and legend', () => {
+  test('table view contains event roll-up, header, both markets, and legend', () => {
     const card = makeCard();
     const result: TrustResult = { kind: 'table', card, event_name: 'Test event' };
     const out = formatTrustHuman(result);
-    expect(out).toContain('Trader Trust scorecard for KX-EVT');
+    expect(out).toContain('Trader Trust scorecard for world-cup-winner');
     expect(out).toContain('Test event');
-    expect(out).toContain('Median trust 70');
-    expect(out).toContain('trust_dashboard_v1.0');
-    expect(out).toContain('KX-EVT-A');
-    expect(out).toContain('KX-EVT-B');
+    // Roll-up now comes from event.event_quality + scope, not a rollup object
+    expect(out).toContain('Event quality');
+    expect(out).toContain('2/3 markets scored');
+    expect(out).toContain('trader_dashboard_lean_v1.14');
+    expect(out).toContain('will-france-win-the-world-cup');
+    expect(out).toContain('will-brazil-win-the-world-cup');
     expect(out).toContain('France');
     expect(out).toContain('Brazil');
     // is_primary mark
     expect(out).toContain('*');
-    // Legend mentions both directions of "good"
-    expect(out).toMatch(/Higher is (better|worse)/i);
+    expect(out).toMatch(/Higher is better/i);
   });
 
-  test('table sorted by liquidity_quality desc', () => {
+  test('table sorted by liquidity desc', () => {
     const card = makeCard();
     // Make B have higher liquidity than A
-    card.markets[0].scores.liquidity_quality.value = 30;
-    card.markets[1].scores.liquidity_quality.value = 90;
+    card.markets[0].scores.liquidity.value = 30;
+    card.markets[1].scores.liquidity.value = 90;
     const out = formatTrustHuman({ kind: 'table', card, event_name: null });
-    const aIdx = out.indexOf('KX-EVT-A');
-    const bIdx = out.indexOf('KX-EVT-B');
+    const aIdx = out.indexOf('will-france-win-the-world-cup');
+    const bIdx = out.indexOf('will-brazil-win-the-world-cup');
     expect(bIdx).toBeGreaterThan(0);
     expect(bIdx).toBeLessThan(aIdx);
+  });
+
+  test('a null score renders as em dash, never as zero', () => {
+    const card = makeCard();
+    const out = formatTrustHuman({ kind: 'detail', card, market: card.markets[1], verbose: false });
+    expect(out).toContain('—');
+    expect(out).toContain('not applicable');
+    // A null must never be rendered as a damning 0/100
+    expect(out).not.toMatch(/Move\s+\u001b?\[?[0-9;]*m?\s*0\/100/);
   });
 
   test('detail view shows each score with label and top drivers', () => {
     const card = makeCard();
     const out = formatTrustHuman({ kind: 'detail', card, market: card.markets[0], verbose: false });
-    expect(out).toContain('KX-EVT-A');
+    expect(out).toContain('will-france-win-the-world-cup');
     expect(out).toContain('(primary)');
-    // Each of the six score keys appears
-    expect(out).toContain('Trust');
+    // Each of the four score keys appears
+    expect(out).toContain('Quality');
     expect(out).toContain('Liquidity');
     expect(out).toContain('Move');
-    expect(out).toContain('Avoid');
-    expect(out).toContain('Quote');
     expect(out).toContain('Resol');
-    // Driver names present
-    expect(out).toContain('depth_score');
-    expect(out).toContain('spread_pp');
-    expect(out).toContain('fill_consistency');
-    // Risk-metric annotation on market_avoid / quote_risk
-    expect(out).toContain('risk metric');
-    // point_in_time → "as of report time" annotation
-    expect(out).toContain('as of report time');
+    // Quote context from the card
+    expect(out).toContain('53¢');
+    // Drivers are pre-rendered strings now
+    expect(out).toContain('24h traded notional $4,090');
     // Evidence is NOT shown without --verbose
     expect(out).not.toContain('Evidence:');
   });
 
-  test('detail view with --verbose surfaces evidence + confidence + freshness', () => {
+  test('detail view with --verbose surfaces evidence + confidence', () => {
     const card = makeCard();
     const out = formatTrustHuman({ kind: 'detail', card, market: card.markets[0], verbose: true });
     expect(out).toContain('Evidence:');
     expect(out).toContain('avg_spread_cents: 1.2');
     expect(out).toContain('Confidence: high');
-    expect(out).toContain('Freshness: point_in_time');
   });
 });

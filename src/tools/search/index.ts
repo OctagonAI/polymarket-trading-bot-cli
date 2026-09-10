@@ -13,7 +13,7 @@ Search the web for current information on any topic. Returns relevant search res
 
 ## When NOT to Use
 
-- Kalshi market data (use kalshi_search instead)
+- Polymarket market data (use polymarket_search instead)
 - Questions you can answer from knowledge
 
 ## Usage Notes

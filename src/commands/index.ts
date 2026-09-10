@@ -1,13 +1,6 @@
-import { callKalshiApi } from '../tools/kalshi/api.js';
-import type { KalshiOrder, KalshiPosition } from '../tools/kalshi/types.js';
-import type { KalshiBalanceResponse } from './formatters.js';
-import {
-  formatBalance,
-  formatPositions,
-  formatOrders,
-  formatExchangeStatus,
-  formatOrderConfirmation,
-} from './formatters.js';
+import { fetchExchangeStatus } from '../tools/polymarket/exchange.js';
+import { TRADING_UNAVAILABLE_MESSAGE } from '../tools/polymarket/polymarket-trade.js';
+import { formatExchangeStatus } from './formatters.js';
 import { handleThemes, formatThemesHuman } from './themes.js';
 import type { ParsedArgs, Subcommand } from './parse-args.js';
 
@@ -25,10 +18,8 @@ function defaultArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
 }
 import { handleBacktest, formatBacktestHuman } from './backtest.js';
 import { handleAnalyze, formatAnalyzeHuman } from './analyze.js';
-import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
-import { reviewPortfolio, formatReviewHuman } from './review.js';
-import { buildHelp, validateTradeArgs } from './help.js';
-import { fetchMarketQuote } from './helpers.js';
+import { buildHelp } from './help.js';
+import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 import { trackEvent } from '../utils/telemetry.js';
 import { parseArgs } from './parse-args.js';
 import { handleSimilar, formatSimilarHuman } from './similar.js';
@@ -86,6 +77,15 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
     slashMeta.remote = !!process.env.OCTAGON_API_KEY;
   }
   trackEvent('slash_command', slashMeta);
+
+  // Octagon-backed commands that cannot serve Polymarket yet. Gated here so the
+  // TUI reports the same thing the CLI does instead of rendering Kalshi rows.
+  if (command && isDeferredCommand(command)) {
+    const feature = COMMAND_FEATURE[command]!;
+    if (!octagonSupports(feature)) {
+      return { output: octagonUnavailableMessage(feature, `/${command}`) };
+    }
+  }
 
   switch (command) {
     case 'help': {
@@ -302,71 +302,28 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
   }
 }
 
-export async function executePendingTrade(trade: NonNullable<CommandResult['pendingTrade']>): Promise<string> {
-  let effectivePrice = trade.price;
-  // When no price given, fetch best quote to simulate a market order
-  if (effectivePrice === undefined) {
-    const quoteResult = await fetchMarketQuote(trade.ticker, trade.action, trade.side);
-    if ('error' in quoteResult) return quoteResult.error;
-    effectivePrice = quoteResult.cents;
-  }
-  const body: Record<string, unknown> = {
-    ticker: trade.ticker,
-    action: trade.action,
-    side: trade.side,
-    type: 'limit',
-    count: trade.count,
-    ...(trade.side === 'no'
-      ? { no_price: effectivePrice }
-      : { yes_price: effectivePrice }),
-  };
-
-  const data = await callKalshiApi('POST', '/portfolio/orders', { body });
-  const order = data.order as Record<string, unknown> | undefined;
-  trackEvent('trade_executed', { action: trade.action, side: trade.side, success: 'true' });
-  if (order) {
-    return `Order placed. ID: ${order.order_id} | Status: ${order.status}`;
-  }
-  return `Order submitted. Response: ${JSON.stringify(data)}`;
+export async function executePendingTrade(_trade: NonNullable<CommandResult['pendingTrade']>): Promise<string> {
+  return TRADING_UNAVAILABLE_MESSAGE;
 }
 
 // ─── Portfolio subview handler ──────────────────────────────────────────────
 
+/**
+ * `/status` is the only account-adjacent view still available: it checks setup
+ * and CLOB reachability, neither of which needs a wallet. Positions, balance and
+ * resting orders all read an account, and configuring that wallet is part of the
+ * trading setup that does not exist yet.
+ */
 async function handlePortfolioSlash(subview?: string): Promise<CommandResult> {
   const view = subview?.toLowerCase() ?? 'overview';
-
+  if (view !== 'status') {
+    return { output: TRADING_UNAVAILABLE_MESSAGE };
+  }
   try {
-    if (view === 'positions') {
-      const data = await callKalshiApi('GET', '/portfolio/positions');
-      const allPositions = (data.market_positions ?? data.positions ?? []) as KalshiPosition[];
-      const positions = allPositions.filter((p) => {
-        const pos = parseFloat(String(p.position ?? '0'));
-        return pos !== 0;
-      });
-      return { output: formatPositions(positions) };
-    }
-
-    if (view === 'orders') {
-      const data = await callKalshiApi('GET', '/portfolio/orders', { params: { status: 'resting' } });
-      const orders = (data.orders ?? []) as KalshiOrder[];
-      return { output: formatOrders(orders) };
-    }
-
-    if (view === 'balance') {
-      const data = await callKalshiApi('GET', '/portfolio/balance') as unknown as KalshiBalanceResponse;
-      return { output: formatBalance(data) };
-    }
-
-    if (view === 'status') {
-      const data = await callKalshiApi('GET', '/exchange/status');
-      return { output: formatExchangeStatus(data) };
-    }
-
-    // Default: full portfolio overview
-    const resp = await handlePortfolio(defaultArgs({ subcommand: 'portfolio' }));
-    return { output: formatPortfolioHuman(resp.data) };
+    const data = await fetchExchangeStatus();
+    return { output: formatExchangeStatus(data as unknown as Record<string, unknown>) };
   } catch (err) {
-    return { output: `Portfolio error: ${err instanceof Error ? err.message : String(err)}` };
+    return { output: `Status error: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
@@ -418,37 +375,14 @@ function handleTradeCommand(action: 'buy' | 'sell', args: string[]): CommandResu
     }
   }
 
-  const validated = validateTradeArgs(countStr, priceArg);
-  if ('error' in validated) {
-    return { output: validated.error };
-  }
-
-  const pendingTrade = { ticker: ticker.toUpperCase(), action, side, count: validated.count, price: validated.price };
-
-  return {
-    output: formatOrderConfirmation(ticker.toUpperCase(), action, side, validated.count, validated.price),
-    pendingTrade,
-  };
+  return { output: TRADING_UNAVAILABLE_MESSAGE };
 }
 
+/** Reads open positions, so it needs the wallet trading setup provides. */
 async function handleReviewCommand(): Promise<CommandResult> {
-  try {
-    const reviews = await reviewPortfolio();
-    return { output: formatReviewHuman(reviews) };
-  } catch (err) {
-    return { output: `Review failed: ${err instanceof Error ? err.message : String(err)}` };
-  }
+  return { output: TRADING_UNAVAILABLE_MESSAGE };
 }
 
-async function handleCancel(orderId: string | undefined): Promise<CommandResult> {
-  if (!orderId) return { output: 'Usage: /cancel <order_id>' };
-
-  try {
-    await callKalshiApi('DELETE', `/portfolio/orders/${orderId}`);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const hint = msg.includes('404') ? ' (order not found or already filled)' : '';
-    return { output: `Cancel failed: ${msg}${hint}` };
-  }
-  return { output: `Order ${orderId} canceled.` };
+async function handleCancel(_orderId: string | undefined): Promise<CommandResult> {
+  return { output: TRADING_UNAVAILABLE_MESSAGE };
 }

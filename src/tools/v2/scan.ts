@@ -8,9 +8,9 @@ import { formatToolResult } from '../types.js';
 
 export const scanTool = new DynamicStructuredTool({
   name: 'scan_markets',
-  description: 'Run a live market scan: fetches events from Kalshi, calls Octagon for model probabilities, computes edges, and stores results in the local database.',
+  description: 'Run a live market scan: fetches events from Polymarket, calls Octagon for model probabilities, computes edges, and stores results in the local database.',
   schema: z.object({
-    theme: z.string().optional().describe('Theme to scan: "top50" (default), or any Kalshi category — "climate", "companies", "crypto", "economics", "elections", "entertainment", "financials", "health", "mentions", "politics", "science", "social", "sports", "transportation", "world", or a custom theme ID'),
+    theme: z.string().optional().describe('Theme to scan: "top50" (default), or any category — "politics", "elections", "economics", "finance", "crypto", "commodities", "sports", "culture", "tech-science", "climate", "mentions", or a custom theme ID'),
   }),
   func: async ({ theme }) => {
     const db = getDb();
@@ -55,7 +55,7 @@ export const scanTool = new DynamicStructuredTool({
 });
 
 export const SCAN_DESCRIPTION = `
-Run a live market scan. Fetches events from Kalshi, calls Octagon AI for model probabilities, computes pricing edges (model vs market), and stores all results in the local database.
+Run a live market scan. Fetches events from Polymarket, calls Octagon AI for model probabilities, computes pricing edges (model vs market), and stores all results in the local database.
 
 ## When to Use
 - User says "scan", "scan crypto", "scan politics", "find edges", "run a scan"
@@ -64,11 +64,11 @@ Run a live market scan. Fetches events from Kalshi, calls Octagon AI for model p
 
 ## When NOT to Use
 - For querying existing edge data already in the database (use edge_query instead — it's instant)
-- For looking up a specific market's price or details (use kalshi_search)
+- For looking up a specific market's price or details (use polymarket_search)
 
 ## Themes
 - "top50" (default): Top 50 markets by 24h volume
-- "crypto", "politics", "economics", "sports", "entertainment", "science", "climate": Category-based scans
+- "politics", "elections", "economics", "finance", "crypto", "commodities", "sports", "culture", "tech-science", "climate", "mentions": Category-based scans
 - Custom theme ID: Pre-configured in database
 
 ## Notes

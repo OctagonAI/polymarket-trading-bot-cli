@@ -1,19 +1,14 @@
 import { StructuredToolInterface } from '@langchain/core/tools';
-import { DynamicStructuredTool } from '@langchain/core/tools';
-import { z } from 'zod';
-import { createKalshiSearch, KALSHI_SEARCH_DESCRIPTION } from './kalshi/kalshi-search.js';
-import { createKalshiTrade, KALSHI_TRADE_DESCRIPTION } from './kalshi/kalshi-trade.js';
-import { getExchangeStatus } from './kalshi/exchange.js';
-import { callKalshiApi } from './kalshi/api.js';
+import { createPolymarketSearch, POLYMARKET_SEARCH_DESCRIPTION } from './polymarket/polymarket-search.js';
+import { createPolymarketTrade, POLYMARKET_TRADE_DESCRIPTION } from './polymarket/polymarket-trade.js';
+import { getExchangeStatus } from './polymarket/exchange.js';
 import { tavilySearch, WEB_SEARCH_DESCRIPTION } from './search/index.js';
 import { webFetchTool, WEB_FETCH_DESCRIPTION } from './fetch/web-fetch.js';
-import { formatToolResult } from './types.js';
 import { edgeQueryTool, EDGE_QUERY_DESCRIPTION } from './v2/edge-query.js';
 import { portfolioQueryTool, PORTFOLIO_QUERY_DESCRIPTION } from './v2/portfolio-query.js';
 import { riskStatusTool, RISK_STATUS_DESCRIPTION } from './v2/risk-status.js';
 import { octagonReportTool, OCTAGON_REPORT_DESCRIPTION } from './v2/octagon-report.js';
 import { scanTool, SCAN_DESCRIPTION } from './v2/scan.js';
-import { portfolioReviewTool, PORTFOLIO_REVIEW_DESCRIPTION } from './v2/portfolio-review.js';
 
 /**
  * A registered tool with its rich description for system prompt injection.
@@ -27,36 +22,40 @@ export interface RegisteredTool {
   description: string;
 }
 
-// Direct portfolio overview tool (balance + positions in one call)
-const portfolioOverviewTool = new DynamicStructuredTool({
-  name: 'portfolio_overview',
-  description: 'Get a quick overview of the Kalshi portfolio: balance and open positions.',
-  schema: z.object({}),
-  func: async () => {
-    const [balanceData, positionsData] = await Promise.all([
-      callKalshiApi('GET', '/portfolio/balance'),
-      callKalshiApi('GET', '/portfolio/positions'),
-    ]);
-    return formatToolResult({ balance: balanceData, positions: positionsData });
-  },
-});
+/*
+ * portfolio_overview is NOT registered while the wallet path is disabled.
+ *
+ * fetchPortfolioValue and fetchPositions both default their wallet argument to
+ * requireWalletAddress(), which throws unconditionally until the wallet phase.
+ * Registering the tool would hand the agent a capability that can only raise,
+ * and an unset wallet is the normal state — so the agent would surface a raw
+ * exception rather than an explanation. Unlike polymarket_trade, which is kept
+ * registered so trade intent gets a clear refusal, there is no research value in
+ * the agent attempting a portfolio read it cannot perform: `portfolio` is hidden
+ * from users too, so the agent should not believe the capability exists.
+ *
+ * portfolio_review is unregistered for the same reason: reviewPortfolio calls
+ * fetchPositions, so it throws on the same missing wallet.
+ *
+ * Re-register both alongside the wallet work; their descriptions are unchanged.
+ */
 
 const PORTFOLIO_OVERVIEW_DESCRIPTION = `
-Quick portfolio overview tool. Returns current account balance and all open positions in a single call.
+Quick portfolio overview tool. Returns total portfolio value and all open positions in a single call.
 
 ## When to Use
 - User asks "what's my portfolio?" or "show me my balance and positions"
 - Quick portfolio check before or after trading
 
 ## When NOT to Use
-- Detailed fills or order history (use kalshi_search instead)
+- Detailed fills or order history (use polymarket_search instead)
 `.trim();
 
 const EXCHANGE_STATUS_DESCRIPTION = `
-Check whether the Kalshi exchange is currently active and trading is enabled.
+Check whether the Polymarket CLOB is reachable. Polymarket trades 24/7.
 
 ## When to Use
-- "Is Kalshi open?" or "Can I trade right now?"
+- "Is Polymarket up?" or "Can I trade right now?"
 `.trim();
 
 /**
@@ -68,19 +67,14 @@ Check whether the Kalshi exchange is currently active and trading is enabled.
 export function getToolRegistry(model: string): RegisteredTool[] {
   const tools: RegisteredTool[] = [
     {
-      name: 'kalshi_search',
-      tool: createKalshiSearch(model),
-      description: KALSHI_SEARCH_DESCRIPTION,
+      name: 'polymarket_search',
+      tool: createPolymarketSearch(model),
+      description: POLYMARKET_SEARCH_DESCRIPTION,
     },
     {
-      name: 'kalshi_trade',
-      tool: createKalshiTrade(model),
-      description: KALSHI_TRADE_DESCRIPTION,
-    },
-    {
-      name: 'portfolio_overview',
-      tool: portfolioOverviewTool,
-      description: PORTFOLIO_OVERVIEW_DESCRIPTION,
+      name: 'polymarket_trade',
+      tool: createPolymarketTrade(model),
+      description: POLYMARKET_TRADE_DESCRIPTION,
     },
     {
       name: 'exchange_status',
@@ -116,11 +110,6 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       name: 'scan_markets',
       tool: scanTool,
       description: SCAN_DESCRIPTION,
-    },
-    {
-      name: 'portfolio_review',
-      tool: portfolioReviewTool,
-      description: PORTFOLIO_REVIEW_DESCRIPTION,
     },
   ];
 

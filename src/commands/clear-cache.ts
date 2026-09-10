@@ -1,8 +1,7 @@
 import { existsSync, unlinkSync } from 'fs';
 import { closeDb } from '../db/index.js';
-import { appPath } from '../utils/paths.js';
+import { DB_PATH } from '../utils/paths.js';
 
-const DB_PATH = appPath('kalshi-bot.db');
 
 export function handleClearCache(): { deleted: boolean; path: string; message: string } {
   if (!existsSync(DB_PATH)) {

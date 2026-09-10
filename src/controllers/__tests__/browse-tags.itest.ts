@@ -3,7 +3,7 @@
  * and that subcategory searches (e.g. elections:primaries) match against them.
  */
 import { describe, test, expect, beforeAll } from 'bun:test';
-import { ensureIndex } from '../../tools/kalshi/search-index.js';
+import { ensureIndex } from '../../tools/polymarket/search-index.js';
 import { getDb } from '../../db/index.js';
 
 // Force a fresh index rebuild by clearing last_refresh

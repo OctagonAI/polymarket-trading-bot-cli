@@ -5,6 +5,8 @@ import { appPath } from './paths.js';
 export interface BotConfig {
   scan: { interval: number; theme: string };
   risk: {
+    /** Trading bankroll in USDC. Polymarket exposes no cash balance, so sizing needs this. */
+    bankroll_usdc: number;
     kelly_multiplier: number;
     min_edge_threshold: number;
     max_position_pct: number;
@@ -26,7 +28,7 @@ export interface BotConfig {
 
 const DEFAULTS: BotConfig = {
   scan: { interval: 60, theme: 'top50' },
-  risk: { kelly_multiplier: 0.5, min_edge_threshold: 0.05, max_position_pct: 0.10, max_spread_cents: 5, min_volume_24h: 500, liquidity_haircut: 0.50, liquidity_spread_threshold: 3, liquidity_volume_threshold: 1000, max_drawdown: 0.20, max_positions: 10, max_per_category: 3, daily_loss_limit: 200 },
+  risk: { bankroll_usdc: 0, kelly_multiplier: 0.5, min_edge_threshold: 0.05, max_position_pct: 0.10, max_spread_cents: 5, min_volume_24h: 500, liquidity_haircut: 0.50, liquidity_spread_threshold: 3, liquidity_volume_threshold: 1000, max_drawdown: 0.20, max_positions: 10, max_per_category: 3, daily_loss_limit: 200 },
   octagon: { daily_credit_ceiling: 100, price_move_threshold: 0.05 },
   alerts: { min_edge: 0.05, channels: ['terminal'] },
   watch: { min_interval_minutes: 15, ticker_interval_seconds: 5 },
@@ -116,6 +118,7 @@ const NUMERIC_VALIDATORS: Record<string, (v: number) => string | null> = {
   'risk.liquidity_haircut': (v) => v >= 0 && v <= 1 ? null : 'must be between 0 and 1',
   'risk.max_drawdown': (v) => v > 0 && v <= 1 ? null : 'must be between 0 and 1',
   'risk.kelly_multiplier': (v) => v > 0 && v <= 1 ? null : 'must be between 0 and 1',
+  'risk.bankroll_usdc': (v) => v >= 0 ? null : 'must be >= 0',
   'risk.daily_loss_limit': (v) => v > 0 ? null : 'must be > 0',
   'risk.max_spread_cents': (v) => v >= 0 ? null : 'must be >= 0',
   'risk.min_volume_24h': (v) => v >= 0 ? null : 'must be >= 0',
@@ -165,7 +168,13 @@ export function setBotSetting(dotKey: string, rawValue: string): { oldValue: unk
   const config = loadBotConfig();
   const oldValue = walkGet(config as unknown as Record<string, unknown>, keys);
   walkSet(config as unknown as Record<string, unknown>, keys, newValue);
-  saveBotConfig(config);
+  // saveBotConfig swallows write errors and reports them as `false`. Discarding
+  // that made every caller report success on a failed write: `config <k> <v>`
+  // printed the new value, and the setup wizard confirmed a bankroll it had not
+  // persisted. Throw so callers see the failure they already handle.
+  if (!saveBotConfig(config)) {
+    throw new Error(`Could not save config for ${dotKey} (write to ${CONFIG_PATH} failed)`);
+  }
 
   return { oldValue, newValue };
 }

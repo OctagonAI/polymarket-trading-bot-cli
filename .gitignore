@@ -54,7 +54,7 @@ yarn-error.log*
 .cursor/
 
 # App context files (offloaded tool outputs)
-.kalshi-deep-trading-bot/*
+.polymarket-deep-trading-bot/*
 
 
 logs/

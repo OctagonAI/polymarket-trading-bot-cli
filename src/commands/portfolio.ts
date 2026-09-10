@@ -149,9 +149,9 @@ export function formatPortfolioHuman(data: PortfolioData): string {
       p.ticker,
       p.direction.toUpperCase(),
       String(p.size),
-      `$${(p.entryPrice / 100).toFixed(2)}`,
+      `$${p.entryPrice.toFixed(2)}`,
       p.currentEdge !== null ? `${(p.currentEdge * 100).toFixed(1)}%` : '-',
-      p.unrealizedPnl !== null ? `$${(p.unrealizedPnl / 100).toFixed(2)}` : '-',
+      p.unrealizedPnl !== null ? `$${p.unrealizedPnl.toFixed(2)}` : '-',
       p.watchdogStatus,
     ]);
     lines.push(formatTable(
@@ -164,13 +164,13 @@ export function formatPortfolioHuman(data: PortfolioData): string {
   // Account summary
   lines.push('  Account Summary:');
   if (data.accountSummary) {
-    lines.push(`    Cash Balance:    $${(data.accountSummary.cashBalance / 100).toFixed(2)}`);
-    lines.push(`    Portfolio Value: $${(data.accountSummary.portfolioValue / 100).toFixed(2)}`);
-    lines.push(`    Open Exposure:   $${(data.accountSummary.openExposure / 100).toFixed(2)}`);
-    lines.push(`    Available:       $${(data.accountSummary.available / 100).toFixed(2)}`);
+    lines.push(`    Cash Balance:    $${data.accountSummary.cashBalance.toFixed(2)}`);
+    lines.push(`    Portfolio Value: $${data.accountSummary.portfolioValue.toFixed(2)}`);
+    lines.push(`    Open Exposure:   $${data.accountSummary.openExposure.toFixed(2)}`);
+    lines.push(`    Available:       $${data.accountSummary.available.toFixed(2)}`);
     lines.push(`    Positions:       ${data.accountSummary.positionsCount}`);
   } else {
-    lines.push('    (unavailable — Kalshi API returned an error)');
+    lines.push('    (unavailable)');
   }
   lines.push('');
 
@@ -185,7 +185,7 @@ export function formatPortfolioHuman(data: PortfolioData): string {
       lines.push(`    Max Drawdown:     ${(snap.drawdown_max * 100).toFixed(1)}%`);
     }
     if (snap.daily_pnl != null) {
-      lines.push(`    Daily P&L:        $${(snap.daily_pnl / 100).toFixed(2)}`);
+      lines.push(`    Daily P&L:        $${snap.daily_pnl.toFixed(2)}`);
     }
     if (snap.circuit_breaker_on) {
       lines.push('    Circuit Breaker:  ACTIVE');
@@ -200,7 +200,7 @@ export function formatPortfolioHuman(data: PortfolioData): string {
     if (perf.winRate !== null) {
       lines.push(`    Win Rate:    ${(perf.winRate * 100).toFixed(1)}%`);
     }
-    lines.push(`    Total P&L:   $${(perf.totalPnl / 100).toFixed(2)}`);
+    lines.push(`    Total P&L:   $${perf.totalPnl.toFixed(2)}`);
     if (perf.sharpeRatio !== null) {
       lines.push(`    Sharpe Ratio: ${perf.sharpeRatio.toFixed(2)}`);
     }
@@ -217,7 +217,7 @@ export function formatPortfolioHuman(data: PortfolioData): string {
     if (pnlEntries.length > 0) {
       lines.push('');
       lines.push('  P&L by Category:');
-      const pnlRows = pnlEntries.map(([cat, pnl]) => [cat, `$${(pnl / 100).toFixed(2)}`]);
+      const pnlRows = pnlEntries.map(([cat, pnl]) => [cat, `$${pnl.toFixed(2)}`]);
       lines.push(formatTable(['Category', 'P&L'], pnlRows));
     }
 

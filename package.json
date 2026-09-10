@@ -1,19 +1,19 @@
 {
-  "name": "kalshi-trading-bot-cli",
-  "version": "2.1.10",
-  "description": "Kalshi Trading Bot CLI - AI-powered prediction market terminal.",
+  "name": "polymarket-trading-bot-cli",
+  "version": "2.0.0",
+  "description": "Polymarket Trading Bot CLI - AI-powered prediction market terminal.",
   "license": "MIT",
   "author": "Octagon AI, Inc.",
-  "homepage": "https://github.com/OctagonAI/kalshi-trading-bot-cli#readme",
+  "homepage": "https://github.com/OctagonAI/polymarket-trading-bot-cli#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OctagonAI/kalshi-trading-bot-cli.git"
+    "url": "git+https://github.com/OctagonAI/polymarket-trading-bot-cli.git"
   },
   "bugs": {
-    "url": "https://github.com/OctagonAI/kalshi-trading-bot-cli/issues"
+    "url": "https://github.com/OctagonAI/polymarket-trading-bot-cli/issues"
   },
   "keywords": [
-    "kalshi",
+    "polymarket",
     "prediction-markets",
     "trading-bot",
     "cli",
@@ -25,8 +25,8 @@
   "type": "module",
   "main": "src/index.tsx",
   "bin": {
-    "kalshi": "./src/index.tsx",
-    "kalshi-trading-bot-cli": "./src/index.tsx"
+    "polymarket": "./src/index.tsx",
+    "poly": "./src/index.tsx"
   },
   "engines": {
     "bun": ">=1.1.0"

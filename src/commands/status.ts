@@ -1,10 +1,15 @@
-import { callKalshiApi } from '../tools/kalshi/api.js';
+import { fetchExchangeStatus } from '../tools/polymarket/exchange.js';
 import { PROVIDERS } from '../providers.js';
 import { getDefaultModelForProvider } from '../utils/model.js';
 
 /**
- * Verify setup: check API keys, exchange connectivity, and optional services.
+ * Verify setup: check connectivity, API keys, and optional services.
  * Designed to be the first command a new user runs after `cp env.example .env`.
+ *
+ * Note what is NOT checked: exchange credentials. Polymarket's market data is
+ * public, so there is nothing to authenticate for reads — the Kalshi original
+ * required an API key plus an RSA key here, which for Polymarket would report a
+ * permanent failure for credentials that cannot exist.
  */
 export async function handleStatus(): Promise<string> {
   const lines: string[] = [];
@@ -13,29 +18,25 @@ export async function handleStatus(): Promise<string> {
   lines.push('Checking setup...');
   lines.push('');
 
-  // 1. Kalshi API key
-  const hasKalshiKey = !!process.env.KALSHI_API_KEY;
-  const hasKalshiPem = !!(process.env.KALSHI_PRIVATE_KEY_FILE || process.env.KALSHI_PRIVATE_KEY);
-  lines.push(hasKalshiKey ? '✓ KALSHI_API_KEY set' : '✗ KALSHI_API_KEY missing');
-  lines.push(hasKalshiPem ? '✓ Kalshi private key configured' : '✗ Kalshi private key missing (set KALSHI_PRIVATE_KEY_FILE or KALSHI_PRIVATE_KEY)');
-  if (!hasKalshiKey || !hasKalshiPem) allGood = false;
-
-  // 2. Exchange connectivity
-  if (hasKalshiKey && hasKalshiPem) {
-    try {
-      const data = await callKalshiApi('GET', '/exchange/status');
-      const active = (data as any).exchange_active;
-      const trading = (data as any).trading_active;
-      lines.push(active ? '✓ Exchange reachable' : '✗ Exchange not active');
-      lines.push(trading ? '✓ Trading enabled' : '⚠ Trading paused');
-      if (!active) allGood = false;
-    } catch (e: any) {
-      lines.push(`✗ Cannot reach Kalshi API: ${e.message}`);
+  // 1. Market data — public, so this is a plain reachability check
+  const staging = process.env.POLYMARKET_USE_STAGING === 'true';
+  try {
+    const data = await fetchExchangeStatus();
+    if (data.exchange_active) {
+      lines.push(`✓ Polymarket CLOB reachable${staging ? ' (staging)' : ''} — no credentials needed for market data`);
+    } else {
+      lines.push('✗ Polymarket CLOB unreachable');
       allGood = false;
     }
+  } catch (e: any) {
+    lines.push(`✗ Cannot reach Polymarket: ${e.message}`);
+    allGood = false;
+  }
+  if (staging) {
+    lines.push('⚠ POLYMARKET_USE_STAGING=true — staging hosts are unverified and may not resolve');
   }
 
-  // 3. LLM provider — detect which provider is configured and show its default model
+  // 2. LLM provider — detect which provider is configured and show its default model
   const configuredProvider = PROVIDERS.find(
     (p) => p.apiKeyEnvVar && process.env[p.apiKeyEnvVar],
   );
@@ -50,21 +51,21 @@ export async function handleStatus(): Promise<string> {
   );
   if (!llmKey) allGood = false;
 
-  // 4. Octagon
+  // 3. Octagon
   const hasOctagon = !!process.env.OCTAGON_API_KEY;
-  lines.push(hasOctagon ? '✓ OCTAGON_API_KEY set' : '⚠ OCTAGON_API_KEY missing — /scan and deep research will not work');
+  lines.push(
+    hasOctagon
+      ? '✓ OCTAGON_API_KEY set'
+      : '⚠ OCTAGON_API_KEY missing — deep research and `similar`/`events`/`trust`/`report` will not work',
+  );
 
-  // 5. Optional: Tavily
+  // 4. Optional: Tavily
   const hasTavily = !!process.env.TAVILY_API_KEY;
   lines.push(hasTavily ? '✓ TAVILY_API_KEY set (web search enabled)' : '  TAVILY_API_KEY not set (web search disabled — optional)');
 
-  // 6. Demo mode
-  if (process.env.KALSHI_USE_DEMO === 'true') {
-    lines.push('⚠ KALSHI_USE_DEMO=true — using demo environment (no real money)');
-  }
-
   lines.push('');
-  lines.push(allGood ? '✓ All good — ready to trade.' : '✗ Fix the issues above before continuing.');
+  lines.push(allGood ? '✓ All good — ready to research.' : '✗ Fix the issues above before continuing.');
+  lines.push('  Order placement is not implemented yet; buy/sell/cancel are unavailable.');
 
   return lines.join('\n');
 }
