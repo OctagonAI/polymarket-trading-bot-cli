@@ -5,7 +5,7 @@ import { VimSelectList } from '../components/select-list.js';
 import { selectListTheme, theme } from '../theme.js';
 import { checkApiKeyExists, saveApiKeyToEnv, ENV_PATH } from '../utils/env.js';
 import { fetchExchangeStatus } from '../tools/polymarket/exchange.js';
-import { loadBotConfig, saveBotConfig } from '../utils/bot-config.js';
+import { loadBotConfig, saveBotConfig, setBotSetting } from '../utils/bot-config.js';
 import { appPath } from '../utils/paths.js';
 import type { SelectItem } from '@mariozechner/pi-tui';
 
@@ -14,6 +14,7 @@ export type WizardState =
   | 'octagon_api_key'
   | 'llm_provider_select'
   | 'llm_api_key'
+  | 'bankroll'
   | 'testing'
   | 'complete';
 
@@ -30,6 +31,9 @@ export class SetupWizardController {
   private testResults: TestResult[] = [];
   private configWritten = false;
   private selectedProvider: string | null = null;
+  /** Staged like the env keys — written only when the user confirms the wizard. */
+  private pendingBankroll: string | null = null;
+  private bankrollError: string | null = null;
   private readonly onComplete: () => void;
   private readonly onChange: () => void;
   private active = false;
@@ -59,6 +63,8 @@ export class SetupWizardController {
     this.testResults = [];
     this.configWritten = false;
     this.selectedProvider = null;
+    this.pendingBankroll = null;
+    this.bankrollError = null;
     this.currentInput = null;
     this.currentSelector = null;
     this.onChange();
@@ -103,11 +109,13 @@ export class SetupWizardController {
       case 'welcome':
         return 'Welcome to Polymarket Trading Bot CLI';
       case 'octagon_api_key':
-        return 'Step 1/3: Octagon API Key';
+        return 'Step 1/4: Octagon API Key';
       case 'llm_provider_select':
-        return 'Step 2/3: LLM Provider';
+        return 'Step 2/4: LLM Provider';
       case 'llm_api_key':
-        return `Step 3/3: ${this.selectedProvider ?? 'LLM'} API Key`;
+        return `Step 3/4: ${this.selectedProvider ?? 'LLM'} API Key`;
+      case 'bankroll':
+        return 'Step 4/4: Bankroll';
       case 'testing':
         return 'Testing connections...';
       case 'complete':
@@ -125,6 +133,15 @@ export class SetupWizardController {
         return 'Select your LLM provider. You can change this later with /model.';
       case 'llm_api_key':
         return `Paste your ${this.selectedProvider ?? 'LLM'} API key below.`;
+      case 'bankroll':
+        // Polymarket has no cash-balance endpoint — free USDC is an on-chain
+        // ERC-20 balance, not something the read APIs report — so this number
+        // cannot be discovered and has to be told to us.
+        return 'How much USDC should position sizing assume you have?\n'
+          + 'Used by Kelly sizing and the risk gate; without it, analyze reports\n'
+          + 'edge but skips sizing. Not a deposit — just a number, change it any\n'
+          + 'time with: polymarket config risk.bankroll_usdc <amount>\n'
+          + 'Leave empty and press Enter to skip.';
       case 'testing':
         return '';
       case 'complete':
@@ -140,6 +157,7 @@ export class SetupWizardController {
         return 'Enter to continue';
       case 'octagon_api_key':
       case 'llm_api_key':
+      case 'bankroll':
         return 'Enter to confirm · Esc to cancel setup';
       case 'llm_provider_select':
         return 'Enter to confirm · Esc to cancel setup';
@@ -166,6 +184,9 @@ export class SetupWizardController {
 
   /** Returns extra body lines for states without an interactive component */
   getBodyLines(): string[] {
+    if (this.wizardState === 'bankroll') {
+      return this.bankrollError ? ['', theme.error(`  ${this.bankrollError}`)] : [];
+    }
     if (this.wizardState === 'testing') {
       return this.testResults.map((r) => {
         const icon =
@@ -183,6 +204,16 @@ export class SetupWizardController {
         const msg = r.message ? theme.muted(` ${r.message}`) : '';
         return `${icon}  ${r.name}${msg}`;
       });
+      lines.push('');
+      if (this.pendingBankroll !== null) {
+        lines.push(theme.success(`  OK`) + `  Bankroll set to $${this.pendingBankroll} USDC`);
+      } else {
+        lines.push(
+          theme.muted('  --') +
+            '  Bankroll not set — analyze will report edge but skip position sizing.',
+        );
+        lines.push(theme.muted('      Set it later: polymarket config risk.bankroll_usdc 1000'));
+      }
       if (this.configWritten) {
         lines.push('');
         lines.push(theme.muted('  Default thresholds (to customize, run the command shown):'));
@@ -234,6 +265,17 @@ export class SetupWizardController {
         if (!this.currentInput) {
           const input = new ApiKeyInputComponent(true);
           input.onSubmit = (value) => this.handleLlmApiKeySubmit(value);
+          input.onCancel = () => this.cancel();
+          this.currentInput = input;
+        }
+        return this.currentInput;
+      }
+      case 'bankroll': {
+        if (!this.currentInput) {
+          // Unmasked — an amount is not a secret, and echoing it lets the user
+          // catch a typo before it silently changes every position size.
+          const input = new ApiKeyInputComponent(false);
+          input.onSubmit = (value) => this.handleBankrollSubmit(value);
           input.onCancel = () => this.cancel();
           this.currentInput = input;
         }
@@ -299,6 +341,15 @@ export class SetupWizardController {
         failed.push(key);
       }
     }
+    // Bankroll lives in settings.json rather than .env, but it is staged the
+    // same way: nothing is written unless the user confirms the wizard.
+    if (this.pendingBankroll !== null) {
+      try {
+        setBotSetting('risk.bankroll_usdc', this.pendingBankroll);
+      } catch {
+        failed.push('risk.bankroll_usdc');
+      }
+    }
     return failed;
   }
 
@@ -331,21 +382,13 @@ export class SetupWizardController {
   private handleProviderSelect(providerId: string) {
     if (providerId === 'skip') {
       this.selectedProvider = null;
-      this.runTests().catch((err) => {
-        this.testResults = [{ name: 'Setup error', status: 'fail', message: String(err) }];
-        this.wizardState = 'complete';
-        this.onChange();
-      });
+      this.transition('bankroll');
       return;
     }
     if (providerId === 'ollama') {
       // Ollama runs locally — no API key needed, but track the selection
       this.selectedProvider = 'ollama';
-      this.runTests().catch((err) => {
-        this.testResults = [{ name: 'Setup error', status: 'fail', message: String(err) }];
-        this.wizardState = 'complete';
-        this.onChange();
-      });
+      this.transition('bankroll');
       return;
     }
     this.selectedProvider = providerId;
@@ -356,11 +399,7 @@ export class SetupWizardController {
     if (!value || !value.trim()) {
       // Empty submission — treat as skip
       this.selectedProvider = null;
-      this.runTests().catch((err) => {
-        this.testResults = [{ name: 'Setup error', status: 'fail', message: String(err) }];
-        this.wizardState = 'complete';
-        this.onChange();
-      });
+      this.transition('bankroll');
       return;
     }
     if (this.selectedProvider) {
@@ -369,6 +408,38 @@ export class SetupWizardController {
         this.stageEnv(envName, value);
       }
     }
+    this.transition('bankroll');
+  }
+
+  /**
+   * Bankroll is optional: empty skips it, and sizing then reports why rather
+   * than guessing. A bad number keeps the user on this step instead of being
+   * dropped, because a silently ignored bankroll looks exactly like the "no
+   * bankroll configured" state it was meant to fix.
+   */
+  private handleBankrollSubmit(value: string | null) {
+    const raw = value?.trim() ?? '';
+    if (raw === '') {
+      this.pendingBankroll = null;
+      this.bankrollError = null;
+      this.startTests();
+      return;
+    }
+
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      this.bankrollError = `"${raw}" is not a non-negative number. Enter an amount like 1000, or leave empty to skip.`;
+      this.currentInput = null;
+      this.onChange();
+      return;
+    }
+
+    this.pendingBankroll = String(parsed);
+    this.bankrollError = null;
+    this.startTests();
+  }
+
+  private startTests() {
     this.runTests().catch((err) => {
       this.testResults = [{ name: 'Setup error', status: 'fail', message: String(err) }];
       this.wizardState = 'complete';

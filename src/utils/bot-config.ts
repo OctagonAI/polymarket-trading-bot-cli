@@ -118,6 +118,7 @@ const NUMERIC_VALIDATORS: Record<string, (v: number) => string | null> = {
   'risk.liquidity_haircut': (v) => v >= 0 && v <= 1 ? null : 'must be between 0 and 1',
   'risk.max_drawdown': (v) => v > 0 && v <= 1 ? null : 'must be between 0 and 1',
   'risk.kelly_multiplier': (v) => v > 0 && v <= 1 ? null : 'must be between 0 and 1',
+  'risk.bankroll_usdc': (v) => v >= 0 ? null : 'must be >= 0',
   'risk.daily_loss_limit': (v) => v > 0 ? null : 'must be > 0',
   'risk.max_spread_cents': (v) => v >= 0 ? null : 'must be >= 0',
   'risk.min_volume_24h': (v) => v >= 0 ? null : 'must be >= 0',

@@ -417,6 +417,23 @@ Polymarket market data is public, so there is no exchange key to set — reads w
 
 Each Octagon report costs 3 credits. Reports are cached with tiered TTLs based on market close proximity — markets closing soon get shorter cache windows. Use `--refresh` to force a fresh report. Set a daily credit ceiling with `config octagon.daily_credit_ceiling <n>`.
 
+### Bankroll
+
+Position sizing needs to know how much capital to size against, and Polymarket
+has no cash-balance endpoint — free USDC is an on-chain ERC-20 balance, not
+something the market-data APIs report. So the amount is a setting rather than
+something the CLI can discover:
+
+```bash
+polymarket config risk.bankroll_usdc 1000
+```
+
+The setup wizard asks for this. Until it is set, `analyze` still reports edge,
+probabilities and catalysts, but skips position sizing with *"No bankroll
+configured"* — it will not size against a number it does not have. This is not a
+deposit or a transfer; it is only the figure Kelly sizing and the risk gate
+work from, and you can change it at any time.
+
 ### Runtime Settings
 
 ```bash
@@ -429,6 +446,7 @@ polymarket config risk.kelly_multiplier 0.3    # Set a value
 |---------|---------|-------------|
 | `scan.interval` | `60` | Scan interval in minutes |
 | `scan.theme` | `top50` | Default market theme |
+| `risk.bankroll_usdc` | `0` | Capital that sizing assumes; `0` disables sizing |
 | `risk.kelly_multiplier` | `0.5` | Kelly fraction (0.5 = half-Kelly) |
 | `risk.max_drawdown` | `0.20` | Max drawdown before circuit breaker |
 | `risk.max_positions` | `10` | Max concurrent open positions |

@@ -69,7 +69,11 @@ ${p}analyze slug-a slug-b slug-c --json          For pipelines / scripting
 The batch mode hits POST /markets/edge in one call and returns
 model_probability, market_probability, edge_pp, expected_return per ticker.
 Use single-ticker mode when you need the full deep-analysis pipeline
-(drivers, catalysts, Kelly sizing, risk gate).${ctx === 'cli' ? `
+(drivers, catalysts, Kelly sizing, risk gate).
+
+Position sizing needs a bankroll. Polymarket exposes no cash balance, so set it:
+  ${p}config risk.bankroll_usdc 1000
+Until then, analyze reports edge and catalysts but skips sizing.${ctx === 'cli' ? `
 
 Legacy aliases (still work):
   ${p}edge [--ticker X]                    Edge history / snapshots (default: last 24h)
