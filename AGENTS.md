@@ -56,13 +56,19 @@ This is the single largest source of drift in the repo — see `CLAUDE.md`.
 
 Registered in `src/tools/registry.ts`, conditionally by env var:
 `polymarket_search` (market research router), `polymarket_trade` (trade execution router, currently returns an unavailable error —
-see `TOOLS_REQUIRING_APPROVAL` in `src/agent/tool-executor.ts`), `octagon_report`, `portfolio_overview`,
-`portfolio_query`, `portfolio_review`, `edge_query`, `risk_status`, `scan_markets`, `exchange_status`,
+see `TOOLS_REQUIRING_APPROVAL` in `src/agent/tool-executor.ts`), `octagon_report`,
+`portfolio_query`, `edge_query`, `risk_status`, `scan_markets`, `exchange_status`,
 `web_search` (Tavily), `web_fetch`.
+
+`portfolio_overview` and `portfolio_review` are **not registered** — both read the wallet, which is disabled until
+trading lands. Their descriptions stay in `src/tools/registry.ts` so re-enabling is a registration change. The
+agent policy in `src/agent/prompts.ts` must not name them: an unregistered tool in the policy makes the agent emit
+`Tool '...' not found` instead of the gated explanation. `portfolio_query` stays registered — it reads the local DB.
 
 ## Environment Variables
 
-- Exchange: `POLYMARKET_API_KEY`, `POLYMARKET_PRIVATE_KEY_FILE` / `POLYMARKET_PRIVATE_KEY`, `POLYMARKET_USE_DEMO`
+- Exchange: none — Gamma / CLOB / Data reads are public. Order placement will use a Polygon wallet signature, not an API key.
+- Endpoints: `POLYMARKET_USE_STAGING`, `POLYMARKET_GAMMA_URL`, `POLYMARKET_CLOB_URL`, `POLYMARKET_DATA_URL`
 - Research: `OCTAGON_API_KEY`, `OCTAGON_BASE_URL`, `OCTAGON_CONCURRENCY`
 - LLM: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_BASE_URL`, `DEFAULT_MODEL`
 - Other: `TAVILY_API_KEY`, `TELEMETRY_ENABLED`

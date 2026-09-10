@@ -50,7 +50,6 @@ Review all open positions for close (sell) recommendations based on edge reversa
 - User asks to "close my positions" or "sell my holdings"
 
 ## When NOT to Use
-- Quick balance check only (use portfolio_overview)
 - Opening new positions (use edge_query or scan_markets)
 
 ## How to Act on Results

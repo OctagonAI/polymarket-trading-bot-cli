@@ -14,6 +14,7 @@ import { openPosition } from '../db/positions.js';
 import { CircuitBreaker } from '../risk/circuit-breaker.js';
 import { roundToTick, parseGammaJsonArray } from '../tools/polymarket/api.js';
 import { getToolRegistry } from '../tools/registry.js';
+import { buildSystemPrompt } from '../agent/prompts.js';
 import type { OctagonVariant } from '../scan/types.js';
 import type { ParsedArgs } from '../commands/parse-args.js';
 
@@ -481,5 +482,22 @@ describe('E2E Integration Tests', () => {
     expect(names).not.toContain('portfolio_review');
     expect(names).toContain('exchange_status');
     expect(names).toContain('web_fetch');
+  });
+
+  // Test 11: the system prompt may not name a tool the registry does not build.
+  // The agent emits `Tool '...' not found` for those, which reads as a crash
+  // rather than the gated explanation every other unavailable surface gives.
+  test('system prompt never names an unregistered tool', () => {
+    const registered = new Set(getToolRegistry('gpt-4o').map((t) => t.name));
+    const prompt = buildSystemPrompt('gpt-4o');
+
+    for (const name of ['portfolio_overview', 'portfolio_review']) {
+      expect(registered.has(name)).toBe(false);
+      expect(prompt).not.toContain(name);
+    }
+
+    // Guard against the inverse drift: a tool that exists but goes unmentioned.
+    expect(prompt).toContain('portfolio_query');
+    expect(registered.has('portfolio_query')).toBe(true);
   });
 });

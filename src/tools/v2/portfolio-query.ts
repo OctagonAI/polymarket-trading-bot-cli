@@ -74,6 +74,5 @@ Get positions with current edge data, P&L, bankroll summary, and optional perfor
 - Wants performance stats (win rate, Sharpe, Brier)
 
 ## When NOT to Use
-- Quick balance check only (use portfolio_overview)
 - Detailed order history or fills (use polymarket_search)
 `.trim();

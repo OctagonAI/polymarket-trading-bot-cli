@@ -4,7 +4,7 @@ import { insertRiskSnapshot, getLatestSnapshot, getDrawdownHistory } from '../db
 import type { RiskSnapshot } from '../db/risk.js';
 
 export interface CircuitBreakerConfig {
-  dailyLossLimit?: number;  // cents, default 5000 ($50)
+  dailyLossLimit?: number;  // USDC, default 50
   maxDrawdown?: number;     // fraction, default 0.20
 }
 
@@ -18,7 +18,7 @@ export class CircuitBreaker {
 
   constructor(config?: CircuitBreakerConfig) {
     this.config = {
-      dailyLossLimit: config?.dailyLossLimit ?? 5000,
+      dailyLossLimit: config?.dailyLossLimit ?? 50,
       maxDrawdown: config?.maxDrawdown ?? 0.20,
     };
   }
@@ -35,7 +35,7 @@ export class CircuitBreaker {
     if (snapshot.daily_pnl != null && snapshot.daily_pnl < -this.config.dailyLossLimit) {
       return {
         active: true,
-        reason: `Daily P&L ${snapshot.daily_pnl} cents exceeds loss limit of -${this.config.dailyLossLimit} cents`,
+        reason: `Daily P&L $${snapshot.daily_pnl.toFixed(2)} exceeds loss limit of -$${this.config.dailyLossLimit.toFixed(2)}`,
       };
     }
 

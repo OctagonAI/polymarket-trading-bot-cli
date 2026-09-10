@@ -373,7 +373,7 @@ describe('Circuit Breaker', () => {
     insertRiskSnapshot(db, {
       timestamp: Math.floor(Date.now() / 1000),
       drawdown_current: 0.25,
-      daily_pnl: -1000,
+      daily_pnl: -10,
     });
 
     const cb = new CircuitBreaker({ maxDrawdown: 0.20 });
@@ -387,10 +387,10 @@ describe('Circuit Breaker', () => {
     insertRiskSnapshot(db, {
       timestamp: Math.floor(Date.now() / 1000),
       drawdown_current: 0.05,
-      daily_pnl: -6000, // -$60 > -$50 limit
+      daily_pnl: -60, // -$60 USDC > -$50 limit
     });
 
-    const cb = new CircuitBreaker({ dailyLossLimit: 5000 });
+    const cb = new CircuitBreaker({ dailyLossLimit: 50 });
     const status = cb.check(db);
 
     expect(status.active).toBe(true);
@@ -401,7 +401,7 @@ describe('Circuit Breaker', () => {
     insertRiskSnapshot(db, {
       timestamp: Math.floor(Date.now() / 1000),
       drawdown_current: 0.05,
-      daily_pnl: -1000,
+      daily_pnl: -10,
     });
 
     const cb = new CircuitBreaker();
