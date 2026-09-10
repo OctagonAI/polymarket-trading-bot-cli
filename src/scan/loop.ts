@@ -29,6 +29,15 @@ export interface ScanResult {
 
 const DEFAULT_INTERVAL_MINUTES = 60;
 
+/**
+ * A configured numeric setting, or undefined when it is absent or unusable so
+ * the consumer's own default applies rather than a coerced NaN or 0.
+ */
+function numericSetting(key: string): number | undefined {
+  const raw = Number(getBotSetting(key));
+  return Number.isFinite(raw) ? raw : undefined;
+}
+
 export class ScanLoop {
   private db: Database;
   private audit: AuditTrail;
@@ -55,7 +64,12 @@ export class ScanLoop {
     this.octagonClient = new OctagonClient(octagonInvoker, db, audit);
     this.watchdog = new PositionWatchdog(audit);
     this.alerter = opts?.alerter ?? new Alerter(db, audit);
-    this.circuitBreaker = new CircuitBreaker();
+    // Without these the breaker silently used its own defaults (50 / 0.20) and
+    // the configured limits did nothing.
+    this.circuitBreaker = new CircuitBreaker({
+      dailyLossLimit: numericSetting('risk.daily_loss_limit'),
+      maxDrawdown: numericSetting('risk.max_drawdown'),
+    });
     this.defaultChannels = opts?.defaultChannels ?? ['terminal'];
   }
 

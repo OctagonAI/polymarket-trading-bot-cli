@@ -1,6 +1,11 @@
 import type { Database } from 'bun:sqlite';
 import { fetchLiveBankroll } from './kelly.js';
-import { insertRiskSnapshot, getLatestSnapshot, getDrawdownHistory } from '../db/risk.js';
+import {
+  insertRiskSnapshot,
+  getLatestSnapshot,
+  getEquityHistory,
+  getLatestSnapshotWithEquity,
+} from '../db/risk.js';
 import type { RiskSnapshot } from '../db/risk.js';
 
 export interface CircuitBreakerConfig {
@@ -51,45 +56,52 @@ export class CircuitBreaker {
   }
 
   /**
-   * Take a fresh snapshot: fetch live bankroll, compute drawdown vs
-   * portfolio high-water mark from risk_snapshots history, insert new snapshot.
+   * Take a fresh snapshot: fetch live bankroll, compute drawdown against the
+   * 24h equity high-water mark, insert a new snapshot.
+   *
+   * Drawdown is measured on **equity** (`wallet_cash + portfolio_value`), not on
+   * position value alone. Selling a position converts mark-to-market value into
+   * cash, so a portfolio-value-only measure read that as a loss all the way to
+   * ~100% while the capital was untouched — and because the running maximum
+   * only ever ratchets up, one such reading permanently failed the drawdown gate
+   * on every later `analyze`.
+   *
+   * When equity is unknown, drawdown is reported as 0 and the snapshot records a
+   * null equity rather than a zero. A missing reading is not a loss, and writing
+   * a zero here is exactly what would recreate the bug above.
    */
   async snapshot(db: Database): Promise<RiskSnapshot> {
     const bankroll = await fetchLiveBankroll();
 
-    // Compute high-water mark from history
     const dayAgo = Math.floor(Date.now() / 1000) - 86400;
-    const history = getDrawdownHistory(db, dayAgo);
+    // Only rows carrying a real equity reading: pre-migration rows and rows
+    // taken while the balance was unreadable would otherwise enter the walk as
+    // an account worth nothing.
+    const history = getEquityHistory(db, dayAgo);
 
-    let highWaterMark = bankroll.portfolioValue;
+    const equity = bankroll.equity;
+    let drawdownCurrent = 0;
     let dailyPnl = 0;
 
-    if (history.length > 0) {
-      // High-water mark is max portfolio_value across all snapshots
+    if (equity !== null) {
+      let highWaterMark = equity;
       for (const h of history) {
-        if (h.portfolio_value != null && h.portfolio_value > highWaterMark) {
-          highWaterMark = h.portfolio_value;
-        }
+        if (h.equity != null && h.equity > highWaterMark) highWaterMark = h.equity;
       }
 
-      // Daily P&L = current portfolio value - earliest snapshot's portfolio value in the window
+      drawdownCurrent = highWaterMark > 0
+        ? Math.max(0, (highWaterMark - equity) / highWaterMark)
+        : 0;
+
       const earliest = history[0];
-      if (earliest.portfolio_value != null) {
-        dailyPnl = bankroll.portfolioValue - earliest.portfolio_value;
-      }
+      if (earliest?.equity != null) dailyPnl = equity - earliest.equity;
     }
 
-    // Drawdown = (high_water - current) / high_water
-    const drawdownCurrent = highWaterMark > 0
-      ? (highWaterMark - bankroll.portfolioValue) / highWaterMark
-      : 0;
-
-    // Max drawdown is the worst we've seen
-    const latestSnapshot = getLatestSnapshot(db);
-    const drawdownMax = Math.max(
-      drawdownCurrent,
-      latestSnapshot?.drawdown_max ?? 0
-    );
+    // Carry the running maximum forward from the last snapshot that had a real
+    // reading, so a gap of unreadable snapshots neither resets it nor lets
+    // pre-equity history seed it.
+    const previous = getLatestSnapshotWithEquity(db);
+    const drawdownMax = Math.max(drawdownCurrent, previous?.drawdown_max ?? 0);
 
     const now = Math.floor(Date.now() / 1000);
     const cbStatus = this.check(db);
@@ -97,6 +109,8 @@ export class CircuitBreaker {
     const snapshot: RiskSnapshot = {
       timestamp: now,
       cash_balance: bankroll.cashBalance,
+      wallet_cash: bankroll.walletCash,
+      equity,
       portfolio_value: bankroll.portfolioValue,
       open_exposure: bankroll.openExposure,
       available_bankroll: bankroll.availableBankroll,

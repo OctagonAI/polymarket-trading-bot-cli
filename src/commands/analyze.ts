@@ -87,7 +87,7 @@ export interface AnalyzeData {
   reportId: string;
   rawReport: string;
   existingPosition?: { direction: 'yes' | 'no'; size: number } | null;
-  closePriceCents?: number | null;
+  closePrice?: number | null;
 }
 
 
@@ -442,8 +442,13 @@ export async function handleAnalyze(
     reportId: report.reportId,
     rawReport: report.rawResponse,
     existingPosition,
-    closePriceCents: existingPosition
-      ? Math.round((existingPosition.direction === 'yes' ? yesBid : noBid) * 100) || null
+    // Decimal USDC, the price a close would actually hit — the bid on the side
+    // held. Kept unrounded; the venue tick applies at order time.
+    closePrice: existingPosition
+      ? (() => {
+          const bid = existingPosition.direction === 'yes' ? yesBid : noBid;
+          return Number.isFinite(bid) && bid > 0 ? bid : null;
+        })()
       : null,
   };
 }

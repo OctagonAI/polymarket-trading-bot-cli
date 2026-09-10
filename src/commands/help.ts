@@ -558,28 +558,41 @@ export function buildHelp(ctx: HelpContext, topic?: string): { text: string } | 
   return { text: stripGatedLines(buildOverview(ctx)) };
 }
 
-/** Shared trade argument validation for both dispatch and slash handlers. */
+/**
+ * Shared trade argument validation for both dispatch and slash handlers.
+ *
+ * Both arguments are Polymarket-shaped, which differs from Kalshi on each:
+ *
+ *  - **Size is fractional.** Outcome tokens divide, and Kelly sizing already
+ *    rounds to 2dp (`src/risk/kelly.ts`), so an integer-only check would reject
+ *    the size the CLI itself just recommended.
+ *  - **Price is a decimal in (0, 1)**, not integer cents — 0.56 means $0.56 per
+ *    share, or a 56% implied probability. The bounds are exclusive because 0 and
+ *    1 are the resolved outcomes, not tradeable prices.
+ *
+ * Tick-size and venue-minimum checks are deliberately not here: both are
+ * per-market (`PolymarketMarket.tick_size` / `min_order_size`) and belong to the
+ * order path, which can name the actual limit.
+ */
 export function validateTradeArgs(
   countStr: string,
   priceStr?: string,
 ): { count: number; price: number | undefined } | { error: string } {
-  if (!/^\d+$/.test(countStr)) {
-    return { error: `Invalid count: ${countStr}` };
-  }
   const count = Number(countStr);
-  if (count <= 0) {
-    return { error: `Invalid count: ${countStr}` };
+  // Reject '', whitespace, '1e3' and 'Infinity' — Number() accepts all of them.
+  if (!/^\d*\.?\d+$/.test(countStr) || !Number.isFinite(count) || count <= 0) {
+    return { error: `Invalid size: ${countStr}. Size must be a positive number of shares, e.g. 25 or 12.5.` };
   }
 
   let price: number | undefined;
   if (priceStr !== undefined) {
-    if (!/^\d+$/.test(priceStr)) {
-      return { error: `Invalid price: ${priceStr}. Price must be 1-99 (cents).` };
+    const parsed = Number(priceStr);
+    if (!/^\d*\.?\d+$/.test(priceStr) || !Number.isFinite(parsed) || parsed <= 0 || parsed >= 1) {
+      return {
+        error: `Invalid price: ${priceStr}. Price is decimal USDC between 0 and 1, e.g. 0.56 for 56c.`,
+      };
     }
-    price = Number(priceStr);
-    if (price < 1 || price > 99) {
-      return { error: `Invalid price: ${priceStr}. Price must be 1-99 (cents).` };
-    }
+    price = parsed;
   }
 
   return { count, price };

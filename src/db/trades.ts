@@ -10,7 +10,7 @@ export interface Trade {
   size: number;
   price: number;
   fill_status?: string | null;
-  kalshi_response?: string | null;
+  raw_response?: string | null;
   created_at?: number | null;
 }
 
@@ -18,10 +18,10 @@ export function logTrade(db: Database, trade: Trade): void {
   db.prepare(`
     INSERT INTO trades
       (trade_id, position_id, order_id, ticker, action, side, size, price,
-       fill_status, kalshi_response, created_at)
+       fill_status, raw_response, created_at)
     VALUES
       ($trade_id, $position_id, $order_id, $ticker, $action, $side, $size, $price,
-       $fill_status, $kalshi_response, $created_at)
+       $fill_status, $raw_response, $created_at)
   `).run({
     $trade_id: trade.trade_id,
     $position_id: trade.position_id ?? null,
@@ -32,7 +32,7 @@ export function logTrade(db: Database, trade: Trade): void {
     $size: trade.size,
     $price: trade.price,
     $fill_status: trade.fill_status ?? null,
-    $kalshi_response: trade.kalshi_response ?? null,
+    $raw_response: trade.raw_response ?? null,
     $created_at: trade.created_at ?? null,
   });
 }

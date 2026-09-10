@@ -95,7 +95,7 @@ export function migrate(db: Database): void {
       size         REAL NOT NULL,
       price        REAL NOT NULL,
       fill_status  TEXT,
-      kalshi_response TEXT,
+      raw_response TEXT,
       created_at   INTEGER
     );
 
@@ -103,6 +103,8 @@ export function migrate(db: Database): void {
       id                  INTEGER PRIMARY KEY AUTOINCREMENT,
       timestamp           INTEGER NOT NULL,
       cash_balance        REAL,
+      wallet_cash         REAL,
+      equity              REAL,
       portfolio_value     REAL,
       open_exposure       REAL,
       available_bankroll  REAL,
@@ -246,5 +248,31 @@ export function migrate(db: Database): void {
   const historyCols = db.query(`PRAGMA table_info(octagon_history)`).all() as Array<{ name: string }>;
   if (!historyCols.some((c) => c.name === 'outcome_probabilities_json')) {
     db.exec(`ALTER TABLE octagon_history ADD COLUMN outcome_probabilities_json TEXT`);
+  }
+
+  // Equity-based drawdown. `portfolio_value` alone is mark-to-market position
+  // value, so realising a position to cash used to read as a drawdown toward
+  // 100%. `equity = wallet_cash + portfolio_value` is invariant across a close.
+  //
+  // Both are nullable ON PURPOSE and must never be coerced to 0. NULL means
+  // "cash was not readable" — no wallet, or the RPC failed — and every consumer
+  // filters those rows out. That one rule keeps pre-migration rows (NULL by
+  // ALTER TABLE default) from poisoning the high-water mark, and stops a
+  // transient RPC failure from looking like equity fell to zero, which is
+  // precisely how the original bug behaved.
+  const snapshotCols = db.query(`PRAGMA table_info(risk_snapshots)`).all() as Array<{ name: string }>;
+  if (!snapshotCols.some((c) => c.name === 'wallet_cash')) {
+    db.exec(`ALTER TABLE risk_snapshots ADD COLUMN wallet_cash REAL`);
+  }
+  if (!snapshotCols.some((c) => c.name === 'equity')) {
+    db.exec(`ALTER TABLE risk_snapshots ADD COLUMN equity REAL`);
+  }
+
+  // Venue rename: the column held the raw Kalshi order response. Nothing writes
+  // it yet (logTrade has no production caller), so this is a free rename rather
+  // than a data migration.
+  const tradeCols = db.query(`PRAGMA table_info(trades)`).all() as Array<{ name: string }>;
+  if (tradeCols.some((c) => c.name === 'kalshi_response') && !tradeCols.some((c) => c.name === 'raw_response')) {
+    db.exec(`ALTER TABLE trades RENAME COLUMN kalshi_response TO raw_response`);
   }
 }

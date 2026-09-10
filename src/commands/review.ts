@@ -17,7 +17,8 @@ export interface PositionReview {
   edge: number | null;
   signal: 'HOLD' | 'SELL';
   sellSide: 'yes' | 'no';
-  closePriceCents: number;
+  /** Decimal USDC in (0, 1) — the price a close would target. Not cents. */
+  closePrice: number;
   reason: string;
   analyzeError?: string;
 }
@@ -63,7 +64,7 @@ export async function reviewPortfolio(): Promise<PositionReview[]> {
         edge: null,
         signal: 'HOLD' as const,
         sellSide: direction,
-        closePriceCents: 0,
+        closePrice: 0,
         reason: 'Analysis failed — manual review required',
         analyzeError: err,
       };
@@ -99,13 +100,15 @@ export async function reviewPortfolio(): Promise<PositionReview[]> {
       reason = `Edge decayed (${(decay * 100).toFixed(0)}pp) but below sell threshold`;
     }
 
-    // Use the bid-derived close price from handleAnalyze when available,
-    // fall back to marketProb approximation only if both are present
-    const closePriceCents =
-      analysis.closePriceCents && analysis.closePriceCents > 0
-        ? analysis.closePriceCents
+    // Use the bid-derived close price from handleAnalyze when available, and
+    // fall back to a marketProb approximation only if that is present. Prices
+    // are decimal USDC in (0, 1); the one-tick haircut makes the fallback a
+    // price a resting sell could plausibly hit rather than the midpoint.
+    const closePrice =
+      analysis.closePrice && analysis.closePrice > 0
+        ? analysis.closePrice
         : marketProb != null
-          ? Math.round(direction === 'yes' ? marketProb * 100 - 1 : (1 - marketProb) * 100 - 1)
+          ? (direction === 'yes' ? marketProb : 1 - marketProb) - 0.01
           : 0;
 
     return {
@@ -118,7 +121,8 @@ export async function reviewPortfolio(): Promise<PositionReview[]> {
       edge,
       signal,
       sellSide: direction,
-      closePriceCents: Math.max(1, closePriceCents),
+      // Clamp into the tradeable band: 0 and 1 are resolved outcomes, not prices.
+      closePrice: Math.min(0.99, Math.max(0.01, closePrice)),
       reason,
     };
   });
@@ -150,8 +154,8 @@ export function formatReviewHuman(reviews: PositionReview[]): string {
     const edgePp = edgePpStr(r.edge);
     lines.push(`  ⚠  ${r.ticker}  ${dirLabel} ×${r.size}`);
     lines.push(`     Edge: ${edgePp}  |  ${r.reason}`);
-    lines.push(`     → SELL ${dirLabel} @ ${r.closePriceCents}¢`);
-    lines.push(`     Command: /sell ${r.ticker} ${r.size} ${r.closePriceCents} ${r.direction}`);
+    lines.push(`     → SELL ${dirLabel} @ $${r.closePrice.toFixed(2)}`);
+    lines.push(`     Command: /sell ${r.ticker} ${r.size} ${r.closePrice.toFixed(2)} ${r.direction}`);
     if (r.analyzeError) {
       lines.push(`     ⚠ Analysis error: ${r.analyzeError}`);
     }

@@ -37,6 +37,23 @@ export interface LiveBankroll {
   availableBankroll: number; // USDC
   /** True when no bankroll is configured, so sizing cannot be computed. */
   bankrollUnset: boolean;
+  /**
+   * Free collateral read from the chain, or null when it is not readable.
+   *
+   * Always null until wallet support lands — there is no chain read yet. It is
+   * deliberately NOT the configured `risk.bankroll_usdc`: that number is static,
+   * so it would not fall as cash is spent, and equity would then appear to grow
+   * every time a position is opened.
+   */
+  walletCash: number | null;
+  /**
+   * `walletCash + portfolioValue`, or null when `walletCash` is null.
+   *
+   * The value drawdown is measured against. Unlike `portfolioValue` it does not
+   * move when a position is closed, because the value simply shifts between the
+   * two terms.
+   */
+  equity: number | null;
 }
 
 /**
@@ -66,12 +83,20 @@ export async function fetchLiveBankroll(): Promise<LiveBankroll> {
   const openExposure = positions.reduce((sum, p) => sum + (p.current_value || 0), 0);
   const availableBankroll = Math.max(0, cashBalance - openExposure);
 
+  // No chain read exists yet, so cash is unknown rather than zero and equity is
+  // therefore unknown too. Snapshots taken now record NULL and are skipped by
+  // every high-water-mark walk, which is what stops them from being read later
+  // as an account that fell to nothing.
+  const walletCash: number | null = null;
+
   return {
     cashBalance,
     portfolioValue,
     openExposure,
     availableBankroll,
     bankrollUnset: cashBalance === 0,
+    walletCash,
+    equity: walletCash === null ? null : walletCash + portfolioValue,
   };
 }
 

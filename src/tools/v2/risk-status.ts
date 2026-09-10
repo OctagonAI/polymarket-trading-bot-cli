@@ -64,8 +64,10 @@ export const riskStatusTool = new DynamicStructuredTool({
     checks.push({
       name: 'daily_pnl',
       status: 'INFO',
+      // Already USDC — CircuitBreaker.snapshot writes it as a dollar amount.
+      // The /100 here was a Kalshi-cents carryover that under-reported by 100x.
       detail: snapshot?.daily_pnl != null
-        ? `Daily P&L: $${(snapshot.daily_pnl / 100).toFixed(2)}`
+        ? `Daily P&L: $${snapshot.daily_pnl.toFixed(2)}`
         : 'No daily P&L data',
       current: snapshot?.daily_pnl ?? null,
     });
