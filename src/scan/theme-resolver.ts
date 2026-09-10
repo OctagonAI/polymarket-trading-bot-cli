@@ -4,37 +4,23 @@ import { fetchAllMarkets } from '../tools/polymarket/markets.js';
 import { ensureIndex, getRefreshPromise } from '../tools/polymarket/search-index.js';
 import { upsertEvent, deactivateExpired } from '../db/events.js';
 import { getThemeTickers } from '../db/themes.js';
+import { findTheme, themeTagLabels } from './theme-registry.js';
 
 /**
- * Maps lowercase theme IDs to Polymarket tag labels, matched against the
- * `category` and `tags` columns of the local event index.
+ * Theme id → Polymarket tag labels, matched against the `category` and `tags`
+ * columns of the local event index.
  *
- * Polymarket has no fixed category taxonomy the way Kalshi did — it has free-form
- * tags — so these are best-effort groupings.
+ * Derived from the shared registry in theme-registry.ts so the ids a user sees
+ * are the same ones `search` accepts. A theme can carry several tag labels
+ * because Gamma splits some of Octagon's categories — "Tech & Science" is two
+ * separate Gamma tags, and Octagon's "Climate" is tagged "Weather" here.
  *
- * Deliberately NOT switched to Octagon's `meta_category`: that field only exists
- * on the few hundred events Octagon has scored, and collapses to a handful of
- * labels (Crypto / Politics / Sports / …). Resolving themes against the local
- * Gamma index covers the whole active universe at a finer grain, so Octagon is
- * the wrong source here even though it is the right source for edge and reports.
+ * Deliberately NOT using Octagon's `meta_category` for this path: resolving
+ * against the local Gamma index covers the whole active universe at a finer
+ * grain and needs no API key. `search` uses meta_category because it queries
+ * Octagon directly; that split is why registry entries carry both.
  */
-export const CATEGORY_MAP: Record<string, string> = {
-  'climate': 'Climate',
-  'companies': 'Business',
-  'crypto': 'Crypto',
-  'economics': 'Economy',
-  'elections': 'Elections',
-  'entertainment': 'Pop Culture',
-  'financials': 'Business',
-  'health': 'Health',
-  'mentions': 'Mentions',
-  'politics': 'Politics',
-  'science': 'Science',
-  'social': 'Pop Culture',
-  'sports': 'Sports',
-  'transportation': 'Transportation',
-  'world': 'Geopolitics',
-};
+export const CATEGORY_MAP: Record<string, string[]> = themeTagLabels();
 
 /**
  * Build a map of category → sorted subcategory tags from the local event index.
@@ -52,20 +38,26 @@ export async function fetchSubcategories(): Promise<Record<string, string[]>> {
     .all() as Array<{ category: string | null; tags: string | null }>;
 
   const allSeries = rows.map((r) => ({ category: r.category ?? '', tags: (r.tags ?? '').split(',').filter(Boolean) }));
-  const catTags: Record<string, Set<string>> = {};
+  const catTags: Record<string, Map<string, number>> = {};
 
   for (const s of allSeries) {
     const cat = s.category;
     if (!cat) continue;
-    if (!catTags[cat]) catTags[cat] = new Set();
+    if (!catTags[cat]) catTags[cat] = new Map();
     for (const tag of s.tags ?? []) {
-      catTags[cat].add(tag);
+      catTags[cat].set(tag, (catTags[cat].get(tag) ?? 0) + 1);
     }
   }
 
+  // Ranked by how many events carry the tag, not alphabetically. Polymarket
+  // tags are free-form and long-tailed — a single category can carry 170+ of
+  // them, most matching one event and some being artefacts ("Rewards 20, 4.5,
+  // 50") — so an A-Z list buries the tags anyone would actually browse.
   const result: Record<string, string[]> = {};
   for (const [cat, tags] of Object.entries(catTags)) {
-    result[cat] = [...tags].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    result[cat] = [...tags.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], undefined, { sensitivity: 'base' }))
+      .map(([tag]) => tag);
   }
   return result;
 }
@@ -88,7 +80,7 @@ export class ThemeResolver {
     } else if (themeName.includes(':')) {
       // Subcategory filter: "crypto:btc", "sports:football"
       eventTickers = await this.resolveSubcategory(themeName);
-    } else if (CATEGORY_MAP[themeName]) {
+    } else if (findTheme(themeName)) {
       eventTickers = await this.resolveCategory(themeName);
     } else {
       eventTickers = getThemeTickers(this.db, themeName);
@@ -132,7 +124,8 @@ export class ThemeResolver {
   }
 
   private async resolveCategory(themeName: string): Promise<string[]> {
-    const categoryLabel = CATEGORY_MAP[themeName];
+    const labels = findTheme(themeName)?.tags ?? [];
+    if (labels.length === 0) return [];
     // Gamma has no server-side category filter, so query the local SQLite index
     // instead of paging every open event
     await ensureIndex();
@@ -145,18 +138,22 @@ export class ThemeResolver {
     // most of a category. Also match the label as a whole tag: wrapping both
     // sides in commas makes this exact-token, so "Crypto" does not match on
     // "Crypto Prices" by accident (SQLite LIKE is ASCII case-insensitive).
-    const rows = this.db.query(
-      `SELECT event_ticker FROM event_index
-        WHERE category = ?1 OR ',' || COALESCE(tags, '') || ',' LIKE ?2`,
-    ).all(categoryLabel, `%,${categoryLabel},%`) as { event_ticker: string }[];
-    return rows.map((r) => r.event_ticker);
+    const seen = new Set<string>();
+    for (const label of labels) {
+      const rows = this.db.query(
+        `SELECT event_ticker FROM event_index
+          WHERE category = ?1 OR ',' || COALESCE(tags, '') || ',' LIKE ?2`,
+      ).all(label, `%,${label},%`) as { event_ticker: string }[];
+      for (const row of rows) seen.add(row.event_ticker);
+    }
+    return [...seen];
   }
 
   private async resolveSubcategory(themeName: string): Promise<string[]> {
     const [catKey, ...subParts] = themeName.split(':');
     const subTag = subParts.join(':').toLowerCase();
-    const categoryLabel = CATEGORY_MAP[catKey];
-    if (!categoryLabel) return [];
+    const labels = findTheme(catKey ?? '')?.tags ?? [];
+    if (labels.length === 0) return [];
 
     await ensureIndex();
     const pending = getRefreshPromise();
@@ -164,12 +161,17 @@ export class ThemeResolver {
 
     // Tags are stored comma-joined on the index row; match either the raw label
     // or its kebab-cased form so "pop-culture" and "Pop Culture" both resolve.
-    const rows = this.db
-      .query(
-        `SELECT event_ticker, tags FROM event_index
-          WHERE category = ?1 OR ',' || COALESCE(tags, '') || ',' LIKE ?2`,
-      )
-      .all(categoryLabel, `%,${categoryLabel},%`) as Array<{ event_ticker: string; tags: string | null }>;
+    const rows: Array<{ event_ticker: string; tags: string | null }> = [];
+    for (const label of labels) {
+      rows.push(
+        ...(this.db
+          .query(
+            `SELECT event_ticker, tags FROM event_index
+              WHERE category = ?1 OR ',' || COALESCE(tags, '') || ',' LIKE ?2`,
+          )
+          .all(label, `%,${label},%`) as Array<{ event_ticker: string; tags: string | null }>),
+      );
+    }
 
     const seen = new Set<string>();
     const eventTickers: string[] = [];

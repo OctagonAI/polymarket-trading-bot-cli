@@ -4,7 +4,13 @@
  * OCTAGON_API_KEY is set; the legacy local-SQLite paths remain as fallback.
  */
 import { formatTable } from './scan-formatters.js';
-import { stripVenuePrefix, type OctagonMarketRow, type PagedResult, type MarketsWithEdgeResponse } from '../scan/octagon-api.js';
+import {
+  stripVenuePrefix,
+  type OctagonMarketRow,
+  type OctagonEventSearchRow,
+  type PagedResult,
+  type MarketsWithEdgeResponse,
+} from '../scan/octagon-api.js';
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
@@ -47,6 +53,41 @@ export function formatMarketSearchHuman(query: string, page: PagedResult<Octagon
     fmtCloseDate(m.close_time),
   ]);
   lines.push(formatTable(['Slug', 'Title', 'Last', '24h Vol', 'Category', 'Closes'], rows));
+  return lines.join('\n');
+}
+
+/**
+ * Event-level search results.
+ *
+ * No Closes column: `/markets/events/search` returns `close_time: null` on
+ * every row. The markets path still shows it.
+ *
+ * `describe` names what was searched ("theme politics", `"bitcoin"`) so an
+ * empty result can say which one came back empty rather than printing a bare
+ * table — silently-empty output is the failure mode this whole path fixes.
+ */
+export function formatEventSearchHuman(
+  describe: string,
+  page: PagedResult<OctagonEventSearchRow>,
+): string {
+  const lines: string[] = [];
+  const more = page.has_more ? ' (more available)' : '';
+  lines.push(`Events matching ${describe} — ${page.data.length} shown${more}`);
+  lines.push('');
+
+  if (page.data.length === 0) {
+    lines.push(`No events found for ${describe}.`);
+    return lines.join('\n');
+  }
+
+  const rows: string[][] = page.data.map((e) => [
+    truncate(e.native_event_ticker ?? stripVenuePrefix(e.event_ticker), 46),
+    truncate(e.title ?? '-', 44),
+    fmtMoney(e.last_price ?? e.yes_ask),
+    fmtVol(e.volume_24h),
+    e.category ?? '-',
+  ]);
+  lines.push(formatTable(['Slug', 'Event', 'Last', '24h Vol', 'Category'], rows));
   return lines.join('\n');
 }
 

@@ -12,25 +12,19 @@ import { getEventsFromIndex, getTopEventsByVolume, getIndexAge } from '../db/eve
 import { resolveMarket } from '../commands/analyze.js';
 import type { PolymarketEvent, PolymarketMarket } from '../tools/polymarket/types.js';
 import { trackEvent } from '../utils/telemetry.js';
+import { findTheme } from '../scan/theme-registry.js';
 
-/** Maps lowercase theme IDs to exact Kalshi category labels (inlined to avoid heavy theme-resolver import) */
-const CATEGORY_MAP: Record<string, string> = {
-  climate: 'Climate and Weather',
-  companies: 'Companies',
-  crypto: 'Crypto',
-  economics: 'Economics',
-  elections: 'Elections',
-  entertainment: 'Entertainment',
-  financials: 'Financials',
-  health: 'Health',
-  mentions: 'Mentions',
-  politics: 'Politics',
-  science: 'Science and Technology',
-  social: 'Social',
-  sports: 'Sports',
-  transportation: 'Transportation',
-  world: 'World',
-};
+/**
+ * Theme id → Polymarket tag labels, from the shared registry.
+ *
+ * This used to be an inlined copy of the Kalshi labels ("Climate and Weather",
+ * "World", "Science and Technology"), which match nothing in a Polymarket
+ * index — every themed browse came back empty. Read from theme-registry so it
+ * cannot drift from what `search` and `scan` accept.
+ */
+function themeTags(theme: string): string[] | null {
+  return findTheme(theme)?.tags ?? null;
+}
 
 /** Minimal market shape needed by parseMarketProb and isMarketActive */
 /** Prices on a MarketRow are decimal probabilities in [0,1]. */
@@ -483,23 +477,21 @@ export class BrowseController {
         if (token !== undefined && token !== this.loadToken) return;
 
         // Now query the index
-        if (CATEGORY_MAP[theme]) {
-          const categoryLabel = CATEGORY_MAP[theme];
-          kalshiEvents = await this.searchIndex(db, '', categoryLabel);
+        if (themeTags(theme)) {
+          kalshiEvents = await this.searchIndex(db, '', themeTags(theme));
         } else {
           const searchTerm = theme.includes(':') ? theme.split(':').slice(1).join(':') : theme;
-          const categoryLabel = theme.includes(':') ? CATEGORY_MAP[theme.split(':')[0]] : null;
-          kalshiEvents = await this.searchIndex(db, searchTerm, categoryLabel);
+          const labels = theme.includes(':') ? themeTags(theme.split(':')[0] ?? '') : null;
+          kalshiEvents = await this.searchIndex(db, searchTerm, labels);
         }
-      } else if (CATEGORY_MAP[theme]) {
+      } else if (themeTags(theme)) {
         // Pure category (e.g. "elections") — read from local index
-        const categoryLabel = CATEGORY_MAP[theme];
-        kalshiEvents = await this.searchIndex(db, '', categoryLabel);
+        kalshiEvents = await this.searchIndex(db, '', themeTags(theme));
       } else {
         // Subcategory (e.g. "politics:iran") or free-text search (e.g. "iran")
         const searchTerm = theme.includes(':') ? theme.split(':').slice(1).join(':') : theme;
-        const categoryLabel = theme.includes(':') ? CATEGORY_MAP[theme.split(':')[0]] : null;
-        kalshiEvents = await this.searchIndex(db, searchTerm, categoryLabel);
+        const labels = theme.includes(':') ? themeTags(theme.split(':')[0] ?? '') : null;
+        kalshiEvents = await this.searchIndex(db, searchTerm, labels);
       }
 
       // Sort all events by total market volume (most active first)
@@ -760,22 +752,30 @@ export class BrowseController {
   private async searchIndex(
     db: ReturnType<typeof getDb>,
     searchTerm: string,
-    categoryLabel: string | null,
+    categoryLabels: string[] | null,
   ): Promise<PolymarketEvent[]> {
     try {
       await ensureIndex();
       let rows: any[] = [];
-      if (categoryLabel && !searchTerm) {
+      // `category` holds tags[0], often a narrow label ("Bitcoin"), so matching
+      // it alone drops most of a category. Also match the label as a whole tag,
+      // comma-wrapped so "Crypto" does not hit "Crypto Prices". Mirrors
+      // ThemeResolver.resolveCategory.
+      const catClause = (labels: string[]) =>
+        '(' + labels.map(() => `(category = ? OR ',' || COALESCE(tags,'') || ',' LIKE ?)`).join(' OR ') + ')';
+      const catParams = (labels: string[]) => labels.flatMap((l) => [l, `%,${l},%`]);
+
+      if (categoryLabels?.length && !searchTerm) {
         rows = db.query(
-          `SELECT event_ticker FROM event_index WHERE category = ? LIMIT 30`,
-        ).all(categoryLabel);
-      } else if (categoryLabel) {
+          `SELECT DISTINCT event_ticker FROM event_index WHERE ${catClause(categoryLabels)} LIMIT 30`,
+        ).all(...catParams(categoryLabels));
+      } else if (categoryLabels?.length) {
         const term = `%${searchTerm.toLowerCase()}%`;
         rows = db.query(
-          `SELECT event_ticker FROM event_index
-           WHERE category = ? AND (LOWER(title) LIKE ? OR LOWER(event_ticker) LIKE ? OR LOWER(COALESCE(sub_title,'')) LIKE ? OR LOWER(COALESCE(series_ticker,'')) LIKE ? OR LOWER(COALESCE(tags,'')) LIKE ?)
+          `SELECT DISTINCT event_ticker FROM event_index
+           WHERE ${catClause(categoryLabels)} AND (LOWER(title) LIKE ? OR LOWER(event_ticker) LIKE ? OR LOWER(COALESCE(sub_title,'')) LIKE ? OR LOWER(COALESCE(series_ticker,'')) LIKE ? OR LOWER(COALESCE(tags,'')) LIKE ?)
            LIMIT 30`,
-        ).all(categoryLabel, term, term, term, term, term);
+        ).all(...catParams(categoryLabels), term, term, term, term, term);
       } else {
         const normalizedTerm = searchTerm.trim().toUpperCase();
         const isTicker = /^[A-Z0-9]+$/.test(normalizedTerm);

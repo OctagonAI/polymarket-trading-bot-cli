@@ -74,6 +74,7 @@ async function request<T>(
   opts?: {
     params?: object;
     body?: unknown;
+    timeoutMs?: number;
   },
 ): Promise<T> {
   const apiKey = process.env.OCTAGON_API_KEY;
@@ -83,7 +84,7 @@ async function request<T>(
 
   const url = `${base}${path}${method === 'GET' ? buildQuery(opts?.params) : ''}`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? TIMEOUT_MS);
 
   let resp: Response;
   try {
@@ -121,7 +122,7 @@ function kalshiApi<T>(method: 'GET' | 'POST', path: string, opts?: { params?: ob
 }
 
 /** Venue-generic routes; every call is scoped to Polymarket. */
-function venueApi<T>(method: 'GET' | 'POST', path: string, opts?: { params?: object; body?: unknown }): Promise<T> {
+function venueApi<T>(method: 'GET' | 'POST', path: string, opts?: { params?: object; body?: unknown; timeoutMs?: number }): Promise<T> {
   return request<T>(PREDICTIONS_BASE, method, path, opts);
 }
 
@@ -359,6 +360,74 @@ export function searchOctagonMarkets(params: SearchMarketsParams): Promise<Paged
     params: { ...params, venues: OCTAGON_VENUE },
   });
 }
+
+/**
+ * A row from `/markets/events/search`. Shaped like a market row — same title,
+ * price and volume fields — but describing an EVENT, so `close_time` is always
+ * null and the useful slug is `native_event_ticker`.
+ */
+export interface OctagonEventSearchRow extends OctagonMarketRow {
+  native_event_ticker?: string | null;
+  has_report?: boolean | null;
+}
+
+export interface SearchEventsParams {
+  q?: string;
+  /** EXACT case — see META_CATEGORIES. A lowercase value returns zero rows. */
+  meta_category?: string;
+  report?: 'all' | 'ready' | 'none';
+  limit?: number;
+  cursor?: string;
+}
+
+/**
+ * Every query key `/markets/events/search` accepts. Anything else must be
+ * dropped rather than forwarded — see the warning on searchOctagonEvents.
+ */
+const EVENT_SEARCH_KEYS = ['q', 'meta_category', 'report', 'limit', 'cursor', 'venues'] as const;
+
+/**
+ * Event-level search across Polymarket.
+ *
+ * Prefer this over searchOctagonMarkets for anything a human typed. Polymarket
+ * market titles are outcome labels ("Yes", "76,000", "Marine Le Pen") while the
+ * subject lives on the event, so market-level full text misses the obvious
+ * query: `q=government shutdown` returns 0 markets but 2 events.
+ *
+ * This is also the only route that reaches `meta_category`, Octagon's
+ * cross-venue taxonomy. `/markets/search` takes a venue-specific `category`
+ * instead and returns nothing for a meta value.
+ *
+ * WARNING: this endpoint answers an unrecognised query param with an empty
+ * result set rather than an error — `sort_by`, `min_volume_24h` and
+ * `close_before` all silently zero the results. Params are therefore filtered
+ * to EVENT_SEARCH_KEYS here instead of being spread through. Rows come back
+ * ordered by 24h volume descending already.
+ */
+export function searchOctagonEvents(
+  params: SearchEventsParams,
+  opts?: { timeoutMs?: number },
+): Promise<PagedResult<OctagonEventSearchRow>> {
+  const safe: Record<string, unknown> = { venues: OCTAGON_VENUE };
+  for (const key of EVENT_SEARCH_KEYS) {
+    const value = (params as Record<string, unknown>)[key];
+    if (value !== undefined) safe[key] = value;
+  }
+  return venueApi<PagedResult<OctagonEventSearchRow>>('GET', '/markets/events/search', {
+    params: safe,
+    ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+  });
+}
+
+/**
+ * How long to wait on an event-level free-text query before giving up.
+ *
+ * Measured 2026-09-09: `meta_category` lookups return in well under a second,
+ * but free text on this route is erratic — `q=bitcoin` and `q=election` both
+ * exceeded 30s, while `/markets/search` answered the same queries in ~1-2s.
+ * Free text is therefore a fallback with a short leash, not the primary path.
+ */
+export const EVENT_SEARCH_TEXT_TIMEOUT_MS = 8_000;
 
 export interface SimilarParams {
   anchor_ticker?: string;

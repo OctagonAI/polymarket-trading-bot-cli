@@ -1,5 +1,6 @@
 // ─── Shared help content for both TUI slash commands and CLI batch mode ─────
 import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
+import { THEMES } from '../scan/theme-registry.js';
 import { isTradingCommand, TRADING_UNAVAILABLE_MESSAGE } from '../tools/polymarket/polymarket-trade.js';
 
 /** Context determines prefix style: slash commands use "/", CLI uses "polymarket" */
@@ -16,6 +17,9 @@ function buildTopics(ctx: HelpContext): Record<string, string> {
 
 ${p}search [theme|ticker|query]  Full-text market search (server-side when key is set, else local index)
 ${p}search themes                List all available themes and subcategories
+
+Themes (a bare theme name returns that whole category):
+  ${THEMES.map((t) => t.id).join(', ')}, top50
 ${p}search edge                  Edge ranking from latest Octagon run (server-side) or local cache
 ${p}search edge --min-edge 30    Markets with ≥30pp edge
 ${p}search edge --limit 50       Top 50 results

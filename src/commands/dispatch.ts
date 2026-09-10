@@ -24,8 +24,9 @@ import { handleClusters, formatClustersHuman } from './clusters.js';
 import { handlePeers, formatPeersHuman } from './peers.js';
 import { handleCorrelate, formatCorrelationHuman } from './correlate.js';
 import { handleBasket, formatBasketHuman } from './basket.js';
-import { searchOctagonMarkets, getEventsWithEdge } from '../scan/octagon-api.js';
-import { formatMarketSearchHuman, formatMarketsWithEdgeHuman } from './search-remote.js';
+import { searchOctagonMarkets, searchOctagonEvents, EVENT_SEARCH_TEXT_TIMEOUT_MS, getEventsWithEdge } from '../scan/octagon-api.js';
+import { formatMarketSearchHuman, formatEventSearchHuman, formatMarketsWithEdgeHuman } from './search-remote.js';
+import { findTheme } from '../scan/theme-registry.js';
 import { handleEvents, formatEventsHuman } from './events.js';
 import { handleTrust, formatTrustHuman } from './trust.js';
 import { handleReport, formatReportHuman } from './report.js';
@@ -262,8 +263,38 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
           process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
           return;
         }
-        // sort_by is now server-side (true top-N across the whole universe);
-        // series_prefix lets us tree-browse (KXBTC matches all Bitcoin series).
+        // Route by what the user actually typed.
+        //
+        // Market-level filters only exist on /markets/search, so a query using
+        // them stays there (it also keeps the Closes column, which the events
+        // route cannot populate). Everything else — a theme name or free text —
+        // goes to the event route, because Polymarket market titles are outcome
+        // labels ("Yes", "76,000") while the subject lives on the event.
+        const usesMarketFilters =
+          args.minVolume !== undefined ||
+          args.closeBefore !== undefined ||
+          args.sortBy !== undefined ||
+          args.category !== undefined ||
+          args.seriesTicker !== undefined ||
+          args.seriesPrefix !== undefined;
+
+        const theme = findTheme(query);
+        if (theme && !usesMarketFilters) {
+          // meta_category is case-sensitive and a closed set — it comes from
+          // the registry, never from the raw query string.
+          const page = await searchOctagonEvents({
+            meta_category: theme.metaCategory,
+            limit: args.limit ?? 30,
+          });
+          if (json) {
+            console.log(JSON.stringify(wrapSuccess('search', page)));
+          } else {
+            console.log(formatEventSearchHuman(`theme ${theme.id}`, page));
+          }
+          return;
+        }
+
+        // sort_by is server-side (true top-N across the whole universe).
         const serverSortBy = (args.sortBy === 'volume_24h' || args.sortBy === 'close_time' || args.sortBy === 'last_price')
           ? args.sortBy
           : undefined;
@@ -282,6 +313,33 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
           ? page.data.filter((m) => m.status === 'active' || m.status === 'open')
           : page.data;
         const filteredPage = { ...page, data: rows };
+
+        // Market titles are outcome labels ("Yes", "76,000"), so a query naming
+        // the subject — "government shutdown" — matches no market even when the
+        // event exists. Retry at event level, but only on a miss: the event
+        // route is erratic on high-match free text (q=bitcoin and q=election
+        // both exceeded 30s while /markets/search answered in ~1s), and those
+        // are exactly the queries this path already answered. Short leash, and
+        // a failure leaves the market result standing.
+        if (filteredPage.data.length === 0 && !usesMarketFilters) {
+          try {
+            const events = await searchOctagonEvents(
+              { q: query, limit: args.limit ?? 30 },
+              { timeoutMs: EVENT_SEARCH_TEXT_TIMEOUT_MS },
+            );
+            if (events.data.length > 0) {
+              if (json) {
+                console.log(JSON.stringify(wrapSuccess('search', events)));
+              } else {
+                console.log(formatEventSearchHuman(`"${query}"`, events));
+              }
+              return;
+            }
+          } catch {
+            // Slow or unavailable — fall through to the empty market result.
+          }
+        }
+
         if (json) {
           console.log(JSON.stringify(wrapSuccess('search', filteredPage)));
         } else {

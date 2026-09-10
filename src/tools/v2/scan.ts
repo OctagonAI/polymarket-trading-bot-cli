@@ -10,7 +10,7 @@ export const scanTool = new DynamicStructuredTool({
   name: 'scan_markets',
   description: 'Run a live market scan: fetches events from Polymarket, calls Octagon for model probabilities, computes edges, and stores results in the local database.',
   schema: z.object({
-    theme: z.string().optional().describe('Theme to scan: "top50" (default), or any category — "climate", "companies", "crypto", "economics", "elections", "entertainment", "financials", "health", "mentions", "politics", "science", "social", "sports", "transportation", "world", or a custom theme ID'),
+    theme: z.string().optional().describe('Theme to scan: "top50" (default), or any category — "politics", "elections", "economics", "finance", "crypto", "commodities", "sports", "culture", "tech-science", "climate", "mentions", or a custom theme ID'),
   }),
   func: async ({ theme }) => {
     const db = getDb();
@@ -68,7 +68,7 @@ Run a live market scan. Fetches events from Polymarket, calls Octagon AI for mod
 
 ## Themes
 - "top50" (default): Top 50 markets by 24h volume
-- "crypto", "politics", "economics", "sports", "entertainment", "science", "climate": Category-based scans
+- "politics", "elections", "economics", "finance", "crypto", "commodities", "sports", "culture", "tech-science", "climate", "mentions": Category-based scans
 - Custom theme ID: Pre-configured in database
 
 ## Notes

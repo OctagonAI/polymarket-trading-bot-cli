@@ -1,5 +1,10 @@
 import { getDb } from '../../db/index.js';
-import { clearAndPopulateIndex, getIndexAge, setLastRefresh } from '../../db/event-index.js';
+import {
+  clearAndPopulateIndex,
+  countIndexedEvents,
+  getIndexAge,
+  setLastRefresh,
+} from '../../db/event-index.js';
 import { fetchAllEvents } from './events.js';
 import { logger } from '../../utils/logger.js';
 
@@ -78,6 +83,12 @@ async function refreshIndex(): Promise<void> {
       detail: `Writing ${events.length} events to index...`,
     });
 
+    if (events.length === 0) {
+      // Do not stamp last_refresh: leaving the index "stale" means the next
+      // command retries instead of serving an empty table for the whole window.
+      throw new Error('Gamma returned no events — keeping the existing index');
+    }
+
     clearAndPopulateIndex(
       db,
       events.map((e) => ({
@@ -122,17 +133,19 @@ export async function forceRefreshIndex(): Promise<void> {
  *
  *  - fresh (< 2h): return immediately
  *  - stale: kick off a background refresh and serve the stale rows now
- *  - empty (never refreshed): AWAIT the refresh, because returning immediately
- *    means the caller searches an empty table and reports "no results" on the
- *    very first run
+ *  - empty (no rows, however recent the stamp): AWAIT the refresh, because
+ *    returning immediately means the caller searches an empty table and reports
+ *    "no results" 
  */
 export async function ensureIndex(): Promise<void> {
   const db = getDb();
   const age = getIndexAge(db);
+  // Row count, not the timestamp: a refresh that wrote nothing used to stamp
+  // itself fresh, so a 0-row index looked current and every search came back
+  // empty until it went stale. Treat no rows as empty however new the stamp is.
+  const isEmpty = countIndexedEvents(db) === 0;
 
-  if (age < INDEX_STALE_MS) return;
-
-  const isEmpty = age === Infinity;
+  if (!isEmpty && age < INDEX_STALE_MS) return;
 
   if (!_refreshPromise) {
     _refreshPromise = refreshIndex()

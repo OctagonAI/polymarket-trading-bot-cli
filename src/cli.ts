@@ -37,6 +37,7 @@ import { formatResponse } from './utils/markdown-table.js';
 import { ensureIndex, onIndexProgress, getRefreshPromise } from './tools/polymarket/search-index.js';
 import { TRADING_UNAVAILABLE_MESSAGE } from './tools/polymarket/polymarket-trade.js';
 import { isDeferredCommand } from './scan/octagon-capabilities.js';
+import { allThemeIds } from './scan/theme-registry.js';
 import { isTradingCommand } from './tools/polymarket/polymarket-trade.js';
 import { SetupWizardController } from './setup/wizard.js';
 import { trackEvent } from './utils/telemetry.js';
@@ -204,7 +205,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
   });
 
   // Slash command autocomplete — start with top-level themes, load subcategories in background
-  const baseThemes = ['top50', 'climate', 'companies', 'crypto', 'economics', 'elections', 'entertainment', 'financials', 'health', 'mentions', 'politics', 'science', 'social', 'sports', 'transportation', 'world'];
+  const baseThemes = allThemeIds();
   let allThemes = baseThemes.map((t) => ({ value: t, label: t }));
 
   // Pre-warm the event index on startup (non-blocking, only if credentials exist)
@@ -241,8 +242,8 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       try {
         const { fetchSubcategories, CATEGORY_MAP } = await import('./scan/theme-resolver.js');
         const labelToKey: Record<string, string> = {};
-        for (const [key, label] of Object.entries(CATEGORY_MAP)) {
-          labelToKey[label] = key;
+        for (const [key, labels] of Object.entries(CATEGORY_MAP)) {
+          for (const label of labels) labelToKey[label] = key;
         }
         const subcats = await fetchSubcategories();
         const subEntries: Array<{ value: string; label: string }> = [];

@@ -159,6 +159,13 @@ export function clearAndPopulateIndex(
 ): void {
   const now = Date.now();
 
+  // An empty fetch is a failed refresh, not an empty universe. Populating from
+  // it would DELETE a good index and leave the CLI answering every search with
+  // "no results" until the next refresh window.
+  if (events.length === 0) {
+    throw new Error('refusing to populate the event index from an empty result set');
+  }
+
   // OR REPLACE because Gamma pages with limit/offset over a volume-ordered set:
   // rows shift between requests, so the same event can arrive on two pages.
   const insert = db.prepare(`
@@ -218,6 +225,12 @@ export function getLastRefresh(db: Database): number | null {
 /**
  * Set the last refresh timestamp.
  */
+/** How many events the index currently holds. */
+export function countIndexedEvents(db: Database): number {
+  const row = db.query('SELECT COUNT(*) AS c FROM event_index').get() as { c: number };
+  return row.c;
+}
+
 export function setLastRefresh(db: Database, timestamp: number): void {
   db.query("INSERT OR REPLACE INTO event_index_meta (key, value) VALUES ('last_refresh', $ts)").run({
     $ts: String(timestamp),
