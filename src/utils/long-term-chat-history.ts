@@ -1,7 +1,7 @@
-import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { getAppDir } from './paths.js';
+import { mkdir, readFile, writeFile } from 'fs/promises';
+import { dirname } from 'path';
+import { appPath } from './paths.js';
 
 /**
  * Represents a conversation entry (user message + agent response pair)
@@ -27,13 +27,10 @@ const MESSAGES_FILE = 'chat_history.json';
  * Stores messages in the app messages directory
  */
 export class LongTermChatHistory {
-  private filePath: string;
+
+  private readonly filePath = appPath(MESSAGES_DIR, MESSAGES_FILE);
   private messages: ConversationEntry[] = [];
   private loaded = false;
-
-  constructor(baseDir: string = process.cwd()) {
-    this.filePath = join(baseDir, getAppDir(), MESSAGES_DIR, MESSAGES_FILE);
-  }
 
   /**
    * Loads messages from the JSON file.
@@ -66,7 +63,7 @@ export class LongTermChatHistory {
    */
   private async save(): Promise<void> {
     const dir = dirname(this.filePath);
-    
+
     if (!existsSync(dir)) {
       await mkdir(dir, { recursive: true });
     }

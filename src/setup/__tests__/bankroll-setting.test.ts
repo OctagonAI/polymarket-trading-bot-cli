@@ -20,3 +20,12 @@ describe('risk.bankroll_usdc', () => {
     expect(() => setBotSetting('risk.bankroll_usdc', 'abc')).toThrow(/Invalid number/);
   });
 });
+
+/*
+ * Not covered here: setBotSetting throwing when saveBotConfig fails.
+ * The config path is derived from homedir() at module load with no override, so
+ * the only way to make a write fail is to make the real ~/.polymarket-bot
+ * unwritable — which would clobber the developer's own settings. Adding an env
+ * override to paths.ts purely for this test would widen production surface for
+ * one assertion, so the guard is left to review instead.
+ */

@@ -168,7 +168,13 @@ export function setBotSetting(dotKey: string, rawValue: string): { oldValue: unk
   const config = loadBotConfig();
   const oldValue = walkGet(config as unknown as Record<string, unknown>, keys);
   walkSet(config as unknown as Record<string, unknown>, keys, newValue);
-  saveBotConfig(config);
+  // saveBotConfig swallows write errors and reports them as `false`. Discarding
+  // that made every caller report success on a failed write: `config <k> <v>`
+  // printed the new value, and the setup wizard confirmed a bankroll it had not
+  // persisted. Throw so callers see the failure they already handle.
+  if (!saveBotConfig(config)) {
+    throw new Error(`Could not save config for ${dotKey} (write to ${CONFIG_PATH} failed)`);
+  }
 
   return { oldValue, newValue };
 }

@@ -76,6 +76,58 @@ describe('fetchWithDeadline', () => {
     expect(seen?.body).toBe('{}');
   });
 
+  test("honours the caller's own signal instead of replacing it", async () => {
+    // Cancelling mid-flight must still work. Overwriting init.signal with the
+    // deadline's silently made caller cancellation a no-op.
+    const caller = new AbortController();
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      const signal = init?.signal;
+      return new Response(
+        new ReadableStream({
+          start(c) {
+            signal?.addEventListener('abort', () => {
+              c.error(new DOMException('The operation was aborted.', 'AbortError'));
+            });
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as unknown as typeof fetch;
+
+    // Generous deadline, so only the caller's abort can end this.
+    const promise = fetchWithDeadline(
+      'https://example.test/x',
+      { signal: caller.signal },
+      60_000,
+      (r) => r.json(),
+    );
+    caller.abort();
+
+    await expect(promise).rejects.toThrow();
+  });
+
+  test('a caller signal that is already aborted reaches fetch aborted', async () => {
+    // Real fetch rejects immediately on a pre-aborted signal, so the stub does
+    // too — the part under test is that the caller's aborted state survives
+    // being combined with the deadline, rather than being dropped.
+    let seenAborted: boolean | undefined;
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      seenAborted = init?.signal?.aborted;
+      if (init?.signal?.aborted) {
+        throw new DOMException('The operation was aborted.', 'AbortError');
+      }
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const caller = new AbortController();
+    caller.abort();
+
+    await expect(
+      fetchWithDeadline('https://example.test/x', { signal: caller.signal }, 60_000, (r) => r.json()),
+    ).rejects.toThrow();
+    expect(seenAborted).toBe(true);
+  });
+
   test('an error thrown by readBody reaches the caller unchanged', async () => {
     globalThis.fetch = (async () =>
       new Response('nope', { status: 500, statusText: 'Server Error' })) as unknown as typeof fetch;

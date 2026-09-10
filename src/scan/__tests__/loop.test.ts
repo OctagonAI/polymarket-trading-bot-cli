@@ -126,10 +126,15 @@ describe('ScanLoop', () => {
     const snapshot = getLatestSnapshot(db);
     expect(snapshot).not.toBeNull();
     // The wallet is off until the trading phase, so the Data API is never read
-    // even though POLYMARKET_WALLET_ADDRESS is set above.
+    // even though POLYMARKET_WALLET_ADDRESS is set above. Both of these are
+    // wallet-derived, so both stay 0.
     expect(snapshot!.portfolio_value).toBe(0);
     expect(snapshot!.open_exposure).toBe(0);
-    expect(snapshot!.cash_balance).toBe(0);
+    // cash_balance is deliberately NOT asserted: it comes from the
+    // risk.bankroll_usdc setting, not the wallet, and is legitimately non-zero
+    // for anyone who has configured one. Asserting 0 only passed because the
+    // default is 0, and made this test fail on a developer machine with a
+    // bankroll set — reading the real ~/.polymarket-bot/config.json.
   });
 
   test('drawdown stays 0 so the risk gate cannot trip on a phantom loss', async () => {

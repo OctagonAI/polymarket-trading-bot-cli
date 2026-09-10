@@ -26,6 +26,13 @@
  * it is the right place to branch on `resp.ok`, read text vs json, and throw.
  * An abort raised while it runs propagates like any other error, so callers that
  * translate AbortError should wrap this whole call rather than just the fetch.
+ *
+ * A caller's own `init.signal` is honoured alongside the deadline rather than
+ * replaced by it, so cancellation still works — including a signal that is
+ * already aborted, which fails immediately instead of running the request.
+ * Note that both sources surface as AbortError, so a caller that both passes a
+ * signal and rewrites aborts into a timeout error would mislabel its own
+ * cancellation; check `signal.aborted` first if that distinction matters.
  */
 export async function fetchWithDeadline<T>(
   url: string,
@@ -35,8 +42,11 @@ export async function fetchWithDeadline<T>(
 ): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = init.signal
+    ? AbortSignal.any([controller.signal, init.signal])
+    : controller.signal;
   try {
-    const resp = await fetch(url, { ...init, signal: controller.signal });
+    const resp = await fetch(url, { ...init, signal });
     return await readBody(resp);
   } finally {
     clearTimeout(timer);
