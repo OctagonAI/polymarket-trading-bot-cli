@@ -462,10 +462,10 @@ Polymarket's own CLI.
 
 ### Bankroll
 
-Position sizing needs to know how much capital to size against, and Polymarket
-has no cash-balance endpoint — free USDC is an on-chain ERC-20 balance, not
-something the market-data APIs report. So the amount is a setting rather than
-something the CLI can discover:
+Position sizing needs a limit to work from. Polymarket has no cash-balance
+endpoint: free collateral is **pUSD**, an ERC-20 held on-chain by your funding
+wallet, not something the market-data APIs report. So the figure is a setting
+rather than something the CLI can discover:
 
 ```bash
 polymarket config risk.bankroll_usdc 1000
@@ -474,8 +474,12 @@ polymarket config risk.bankroll_usdc 1000
 The setup wizard asks for this. Until it is set, `analyze` still reports edge,
 probabilities and catalysts, but skips position sizing with *"No bankroll
 configured"* — it will not size against a number it does not have. This is not a
-deposit or a transfer; it is only the figure Kelly sizing and the risk gate
-work from, and you can change it at any time.
+deposit or a transfer; it is a ceiling on what sizing may risk, and you can
+change it at any time.
+
+> Note this is a *limit*, not a balance. Reading your actual pUSD balance lands
+> with balance support; when it does, this setting becomes a cap on top of it,
+> so a value you set now keeps meaning the same thing.
 
 ### Runtime Settings
 

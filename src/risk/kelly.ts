@@ -59,8 +59,8 @@ export interface LiveBankroll {
 /**
  * Fetch live bankroll, in USDC.
  *
- * Polymarket has no equivalent of Kalshi's /portfolio/balance: free USDC sits
- * on-chain and the Data API reports only position value. Cash must therefore be
+ * Polymarket has no equivalent of Kalshi's /portfolio/balance: free collateral
+ * is pUSD held on-chain, and the Data API reports only position value. Cash must therefore be
  * configured via `risk.bankroll_usdc`; when it is not, `bankrollUnset` is true and
  * callers should say so rather than size against a number we do not have.
  */

@@ -172,13 +172,20 @@ export class SetupWizardController {
       case 'wallet_created':
         return 'This is the only time the private key is shown. Copy it somewhere safe.';
       case 'bankroll':
-        // Polymarket has no cash-balance endpoint — free USDC is an on-chain
-        // ERC-20 balance, not something the read APIs report — so this number
-        // cannot be discovered and has to be told to us.
-        return 'How much USDC should position sizing assume you have?\n'
-          + 'Used by Kelly sizing and the risk gate; without it, analyze reports\n'
-          + 'edge but skips sizing. Not a deposit — just a number, change it any\n'
-          + 'time with: polymarket config risk.bankroll_usdc <amount>\n'
+        // Framed as a LIMIT, not as "what you have". Polymarket's collateral is
+        // pUSD held on-chain, which this build cannot read yet — so the figure
+        // has to be told to us. When balance reads land this becomes a cap on
+        // the wallet balance, which keeps the framing true rather than making
+        // this text a lie later.
+        return (this.pendingWallet
+          ? 'Your wallet is set, but reading its balance is not wired up yet,\n'
+            + 'so position sizing still needs a figure to work from.\n'
+          : '')
+          + 'How much should position sizing be allowed to risk?\n'
+          + 'Kelly sizing and the risk gate work from this. Without it, analyze\n'
+          + 'still reports edge and catalysts but skips sizing.\n'
+          + 'It is a limit you set, not a deposit or a transfer. Change it with:\n'
+          + 'polymarket config risk.bankroll_usdc <amount>\n'
           + 'Leave empty and press Enter to skip.';
       case 'testing':
         return '';
@@ -277,7 +284,7 @@ export class SetupWizardController {
         lines.push(theme.muted('      Set one up later: polymarket wallet create'));
       }
       if (this.pendingBankroll !== null) {
-        lines.push(theme.success(`  OK`) + `  Bankroll set to $${this.pendingBankroll} USDC`);
+        lines.push(theme.success(`  OK`) + `  Position sizing limit: $${this.pendingBankroll}`);
       } else {
         lines.push(
           theme.muted('  --') +

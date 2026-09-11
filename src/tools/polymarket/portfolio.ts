@@ -155,7 +155,7 @@ export const getPositions = new DynamicStructuredTool({
 export const getBalance = new DynamicStructuredTool({
   name: 'get_balance',
   description:
-    'Get total Polymarket portfolio value (mark-to-market of open positions) for the configured wallet. Free USDC balance is on-chain and not included.',
+    'Get total Polymarket portfolio value (mark-to-market of open positions) for the configured wallet. Free collateral (pUSD) is held on-chain and is not included.',
   schema: z.object({}),
   func: async () => formatToolResult({ balance: await fetchPortfolioValue() }),
 });

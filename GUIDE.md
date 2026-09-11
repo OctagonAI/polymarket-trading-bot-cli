@@ -29,7 +29,7 @@ bunx polymarket-trading-bot-cli@latest
 
 That's it — no clone required. The setup wizard runs automatically on first launch and writes your API keys to `~/.polymarket-bot/.env`.
 
-The wizard also asks for a **bankroll** — how much USDC position sizing should assume you have. Polymarket has no cash-balance endpoint (free USDC is an on-chain ERC-20 balance, not something the market-data APIs report), so this figure cannot be discovered and has to be set:
+The wizard also asks for a **bankroll** — a ceiling on what position sizing may risk. Polymarket has no cash-balance endpoint (free collateral is **pUSD**, an ERC-20 held on-chain by your funding wallet, not something the market-data APIs report), so the figure cannot be discovered and has to be set. It is a limit, not a balance:
 
 ```bash
 polymarket config risk.bankroll_usdc 1000
