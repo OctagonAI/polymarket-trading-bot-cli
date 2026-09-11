@@ -88,6 +88,10 @@ export interface ParsedArgs {
   force: boolean;
   /** --proxy <address>: pin the funding address instead of deriving it. */
   proxy?: string;
+  /** --check: report state without changing anything. */
+  check: boolean;
+  /** --yes: skip an interactive confirmation. Scripting only. */
+  yes: boolean;
   parseErrors: string[];
 }
 
@@ -102,6 +106,8 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
   let minEdge: number | undefined;
   let live = false;
   let force = false;
+  let check = false;
+  let yes = false;
   let proxy: string | undefined;
   let refresh = false;
   let report = false;
@@ -224,6 +230,10 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
       }
     } else if (arg === '--force') {
       force = true;
+    } else if (arg === '--check') {
+      check = true;
+    } else if (arg === '--yes' || arg === '-y') {
+      yes = true;
     } else if (arg === '--proxy') {
       // Manual override for the derived proxy address. Derivation is the one
       // wallet step that can be silently wrong, so a user who knows their
@@ -495,7 +505,7 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
     weights, bankroll, kellyMultiplier, n, maxPerCluster, maxCorrelation, minReturn, seriesTicker,
     sortBy, probabilities, tickers, query, showCluster, aggregateBy, activeOnly,
     seriesPrefix, sides, cells, autoProbs, daysToClose, market,
-    force, proxy,
+    force, proxy, check, yes,
     parseErrors,
   };
 }

@@ -13,6 +13,8 @@ function makeArgs(o: Partial<ParsedArgs>): ParsedArgs {
     behavioral: false, ranked: false, showCluster: false, activeOnly: false,
     cells: false, autoProbs: false,
     force: false,
+    check: false,
+    yes: false,
     parseErrors: [],
     ...o,
   };

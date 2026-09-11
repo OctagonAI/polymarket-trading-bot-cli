@@ -13,6 +13,8 @@ function defaultArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
     behavioral: false, ranked: false, showCluster: false,
     activeOnly: false, cells: false, autoProbs: false,
     force: false,
+    check: false,
+    yes: false,
     parseErrors: [],
     ...overrides,
   };
@@ -65,7 +67,7 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
   if (command === 'wallet') {
     const sub = args[0]?.toLowerCase();
     // Sub-verb only. An address or key must never reach telemetry.
-    if (sub === 'create' || sub === 'import' || sub === 'address' || sub === 'show') {
+    if (sub === 'create' || sub === 'import' || sub === 'address' || sub === 'show' || sub === 'approve') {
       slashMeta.subview = sub;
     }
   }

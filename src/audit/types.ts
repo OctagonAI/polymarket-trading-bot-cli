@@ -109,6 +109,18 @@ export interface OctagonErrorEvent extends AuditBase {
   error: string;
 }
 
+/** An on-chain transaction this CLI signed and broadcast. */
+export interface ApprovalSentEvent extends AuditBase {
+  type: 'APPROVAL_SENT';
+  /** Funding (proxy) wallet the grants were made by. */
+  wallet: string;
+  tx_hash: string;
+  /** "<target>:<kind>" for each grant in the batch. Never any key material. */
+  grants: string[];
+  gas_used: string;
+  success: boolean;
+}
+
 export type AuditEvent =
   | ScanStartEvent
   | ScanCompleteEvent
@@ -122,6 +134,7 @@ export type AuditEvent =
   | DlqEntryEvent
   | ConfigChangeEvent
   | ConfigSetEvent
+  | ApprovalSentEvent
   | OctagonErrorEvent;
 
 export type AuditEventType = AuditEvent['type'];

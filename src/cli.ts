@@ -485,6 +485,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
         { value: 'create', label: 'create', description: 'Generate a new dedicated wallet' },
         { value: 'import', label: 'import', description: '<private-key|address>  Bring an existing wallet' },
         { value: 'address', label: 'address', description: 'Print the funding address only' },
+        { value: 'approve', label: 'approve', description: 'Grant trading approvals (--check to inspect first)' },
       ];
       if (!typed) return opts;
       return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));

@@ -52,10 +52,14 @@ ${p}wallet import <private-key>  Bring an existing wallet (enables trading)
 ${p}wallet import <address>      Read-only: balances and positions, no trading
 ${p}wallet address               Print the funding address only
 ${p}wallet show                  Addresses, mode, key source, on-chain proxy status
+${p}wallet approve --check       List the 11 trading approvals and their state (free)
+${p}wallet approve               Grant the missing ones (on-chain, costs gas)
 
 Flags:
   --force                           Replace an existing wallet
   --proxy <address>                 Pin the funding address instead of deriving it
+  --check                           Report approval state without sending anything
+  --yes                             Skip the confirmation prompt (scripting)
 
 A Polymarket account has two addresses:
   Signing wallet   the keypair that signs. Pays gas in POL.
@@ -71,7 +75,14 @@ with everything you own.
 
 The key is written to ~/.polymarket-bot/wallet.json with owner-only (0600)
 permissions, never to .env. Override it for one session with
-POLYMARKET_PRIVATE_KEY, which takes precedence over the saved file.`,
+POLYMARKET_PRIVATE_KEY, which takes precedence over the saved file.
+
+Approvals
+  Trading needs 11 on-chain permissions: six contracts allowed to move your
+  pUSD, five of those also allowed to move your outcome tokens when you sell.
+  ${p}wallet approve --check reads them for free. ${p}wallet approve grants the
+  missing ones in a single batched transaction, after showing you the cost and
+  asking. Gas is paid in POL from the SIGNING wallet — send POL there, not pUSD.`,
 
     portfolio: `**${p}portfolio** — Account state
 
@@ -463,6 +474,7 @@ Analysis:
 
 Account:
   wallet                        Create, import, or inspect your wallet
+  wallet approve --check        Check the on-chain trading approvals
   portfolio                     Overview: positions, P&L, risk snapshot
   portfolio positions           Open positions
   portfolio balance             Account balance
@@ -541,6 +553,7 @@ Analysis:
 
 Account:
   /wallet                        Create, import, or inspect your wallet
+  /wallet approve --check        Check the on-chain trading approvals
   /portfolio                     Overview: positions, P&L, risk snapshot
   /portfolio positions           Open positions
   /portfolio balance             Account balance

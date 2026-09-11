@@ -62,7 +62,7 @@ function resolveAlias(subcommand: Subcommand, positionalArgs: string[]): Resolve
     // The sub-verb is recorded; no address or key ever reaches telemetry.
     case 'wallet': {
       const sub = positionalArgs[0]?.toLowerCase();
-      if (sub === 'create' || sub === 'import' || sub === 'address' || sub === 'show') {
+      if (sub === 'create' || sub === 'import' || sub === 'address' || sub === 'show' || sub === 'approve') {
         return { canonical: 'wallet', subview: sub };
       }
       return { canonical: 'wallet' };

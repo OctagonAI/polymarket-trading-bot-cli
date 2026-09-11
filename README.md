@@ -183,6 +183,8 @@ Type help for commands, or just ask a question.
 | `--series-prefix <prefix>` | Server-side series prefix match (e.g. `bitcoin` matches `bitcoin-above-…`) |
 | `--force` | Replace an existing wallet (`wallet create`, `wallet import`) |
 | `--proxy <address>` | Pin the funding address instead of deriving it (`wallet import`) |
+| `--check` | Report state without sending anything (`wallet approve`) |
+| `--yes` | Skip the confirmation prompt (`wallet approve`) |
 
 ### Discovery & Portfolio (Octagon-powered)
 
@@ -459,6 +461,29 @@ for a single session.
 
 Only proxy wallets (signature type 1) are supported, matching the default in
 Polymarket's own CLI.
+
+#### Trading approvals
+
+Before a wallet can trade, eleven on-chain permissions must be in place: six
+contracts allowed to move your pUSD, five of those also allowed to move your
+outcome tokens when you sell.
+
+```bash
+polymarket wallet approve --check   # read them — free, no gas, no signature
+polymarket wallet approve           # grant the missing ones
+```
+
+`approve` shows what it will send and what it will cost, then asks. It never
+sends without an explicit yes; `--yes` skips the prompt for scripting, and is
+the only way to skip it. **Gas is paid in POL from the signing wallet** — send
+POL to that address, not to the funding wallet, and not pUSD. The command
+refuses before signing if there is not enough.
+
+Everything is granted in one batched transaction rather than eleven separate
+ones, so an interrupted run cannot leave you half-approved. Grants that are
+already in place are skipped, and a permission that could not be *read* is
+reported as unknown rather than re-sent — paying gas to re-grant something you
+already have is the failure mode that matters here.
 
 ### Bankroll
 
