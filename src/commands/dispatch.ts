@@ -26,6 +26,7 @@ import { handleCorrelate, formatCorrelationHuman } from './correlate.js';
 import { handleBasket, formatBasketHuman } from './basket.js';
 import { handleWallet, formatWalletHuman } from './wallet.js';
 import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
+import { handleOrders, handleCancelOrders, formatOrdersHuman, formatCancelHuman } from './orders.js';
 import { searchOctagonMarkets, searchOctagonEvents, EVENT_SEARCH_TEXT_TIMEOUT_MS, getEventsWithEdge } from '../scan/octagon-api.js';
 import { formatMarketSearchHuman, formatEventSearchHuman, formatMarketsWithEdgeHuman } from './search-remote.js';
 import { findTheme } from '../scan/theme-registry.js';
@@ -400,6 +401,24 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       } else {
         console.log(output);
       }
+      return;
+    }
+
+    if (resolved.canonical === 'orders') {
+      const resp = await handleOrders(args);
+      if (json) console.log(JSON.stringify(resp));
+      else if (resp.ok) console.log(formatOrdersHuman(resp.data));
+      else console.error(resp.error?.message ?? 'orders failed');
+      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
+      return;
+    }
+
+    if (resolved.canonical === 'cancel') {
+      const resp = await handleCancelOrders(args);
+      if (json) console.log(JSON.stringify(resp));
+      else if (resp.ok) console.log(formatCancelHuman(resp.data));
+      else console.error(resp.error?.message ?? 'cancel failed');
+      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
       return;
     }
 

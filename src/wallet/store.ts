@@ -42,6 +42,20 @@ export interface StoredWallet {
   createdAt: number;
   /** Unix seconds when `eth_getCode` last confirmed the proxy. */
   verifiedCodeAt?: number;
+  /**
+   * CLOB L2 credentials, derived from the private key.
+   *
+   * Cached rather than issued: anyone with the key can re-derive them, so this
+   * is a convenience, not an escalation. Stored here because the file already
+   * has the right permissions for a credential.
+   */
+  apiCreds?: { key: string; secret: string; passphrase: string };
+}
+
+function isApiCreds(v: unknown): v is { key: string; secret: string; passphrase: string } {
+  if (typeof v !== 'object' || v === null) return false;
+  const c = v as Record<string, unknown>;
+  return typeof c.key === 'string' && typeof c.secret === 'string' && typeof c.passphrase === 'string';
 }
 
 export function walletPath(): string {
@@ -87,6 +101,7 @@ export function parseStoredWallet(raw: unknown): StoredWallet {
     ...(privateKey ? { privateKey } : {}),
     createdAt: typeof w.createdAt === 'number' ? w.createdAt : 0,
     ...(typeof w.verifiedCodeAt === 'number' ? { verifiedCodeAt: w.verifiedCodeAt } : {}),
+    ...(isApiCreds(w.apiCreds) ? { apiCreds: w.apiCreds } : {}),
   };
 }
 

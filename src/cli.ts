@@ -379,7 +379,8 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       { value: 'watch', label: 'watch', description: 'Live monitoring' },
       { value: 'buy', label: 'buy', description: 'Buy contracts' },
       { value: 'sell', label: 'sell', description: 'Sell contracts' },
-      { value: 'cancel', label: 'cancel', description: 'Cancel an order' },
+      { value: 'cancel', label: 'cancel', description: 'Cancel a resting order' },
+      { value: 'orders', label: 'orders', description: 'List resting orders' },
       { value: 'backtest', label: 'backtest', description: 'Model accuracy & edge scanner' },
       { value: 'help', label: 'help', description: 'Show help' },
       { value: 'scripting', label: 'scripting', description: 'Tips for agents, pipelines, parallel use' },
@@ -476,6 +477,12 @@ export async function runCli(options?: { forceSetup?: boolean }) {
         { value: 'add-series <name> KX-A,KX-B', label: 'add-series', description: 'Map series to a theme' },
         { value: 'export themes.json', label: 'export', description: 'Save registry to JSON' },
       ];
+      if (!typed) return opts;
+      return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
+    }},
+    { name: 'orders', description: 'List your resting orders on the CLOB' },
+    { name: 'cancel', description: 'Cancel a resting order by id, or --all', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
+      const opts = [{ value: '--all', label: '--all', description: 'Cancel every resting order' }];
       if (!typed) return opts;
       return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
     }},

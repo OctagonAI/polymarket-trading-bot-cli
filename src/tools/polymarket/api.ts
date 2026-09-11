@@ -32,7 +32,7 @@ const STAGING_BASE_URLS: Record<PolymarketService, string> = {
  * DNS at the time of writing. Treat POLYMARKET_USE_STAGING as unverified until
  * someone confirms it against real credentials.
  */
-function getBaseUrl(service: PolymarketService): string {
+export function getBaseUrl(service: PolymarketService): string {
   const override = process.env[`POLYMARKET_${service.toUpperCase()}_URL`];
   if (override) return override.replace(/\/$/, '');
   const useStaging = process.env.POLYMARKET_USE_STAGING === 'true';

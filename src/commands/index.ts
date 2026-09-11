@@ -33,6 +33,7 @@ import { handleCorrelate, formatCorrelationHuman } from './correlate.js';
 import { handleBasket, formatBasketHuman } from './basket.js';
 import { handleWallet, formatWalletHuman } from './wallet.js';
 import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
+import { handleOrders, handleCancelOrders, formatOrdersHuman, formatCancelHuman } from './orders.js';
 import { handleEvents, formatEventsHuman } from './events.js';
 import { handleTrust, formatTrustHuman } from './trust.js';
 import { handleReport, formatReportHuman } from './report.js';
@@ -125,9 +126,6 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
       return handleTradeCommand('buy', args);
     case 'sell':
       return handleTradeCommand('sell', args);
-    case 'cancel':
-      return handleCancel(args[0]);
-
     // ─── /themes (editorial registry) ────────────────────────────────
     // The bare /themes call now hits the editorial-themes registry. Legacy
     // "Kalshi category labels" is still reachable via /search themes.
@@ -234,6 +232,26 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
         asyncFollowUp: async () => {
           const resp = await handleCorrelate(parsed);
           return resp.ok ? formatCorrelationHuman(resp.data) : (resp.error?.message ?? 'correlate failed');
+        },
+      };
+    }
+    case 'orders': {
+      const parsed = parseArgs(['orders', ...args]);
+      return {
+        output: 'Loading orders...',
+        asyncFollowUp: async () => {
+          const resp = await handleOrders(parsed);
+          return resp.ok ? formatOrdersHuman(resp.data) : (resp.error?.message ?? 'orders failed');
+        },
+      };
+    }
+    case 'cancel': {
+      const parsed = parseArgs(['cancel', ...args]);
+      return {
+        output: 'Cancelling...',
+        asyncFollowUp: async () => {
+          const resp = await handleCancelOrders(parsed);
+          return resp.ok ? formatCancelHuman(resp.data) : (resp.error?.message ?? 'cancel failed');
         },
       };
     }
@@ -416,6 +434,4 @@ async function handleReviewCommand(): Promise<CommandResult> {
   return { output: TRADING_UNAVAILABLE_MESSAGE };
 }
 
-async function handleCancel(_orderId: string | undefined): Promise<CommandResult> {
-  return { output: TRADING_UNAVAILABLE_MESSAGE };
-}
+

@@ -115,7 +115,8 @@ autocomplete, and running it explains why.
 | `/wallet approve` | Grant the 7 trading needs (confirms, then costs POL) | `/wallet approve` |
 | `/balance` | Free pUSD in your funding wallet | `/balance` |
 | `/positions` | Open positions with P&L | `/positions` |
-| `/orders` ⏳ | Resting (open) orders — **needs trading support** | `/orders` |
+| `/orders` | Resting (open) orders | `/orders` |
+| `/cancel <id>` | Cancel a resting order (`--all` for every one) | `/cancel 0x…` |
 | `/markets [series]` | Browse markets, optionally filter by series slug | `/markets bitcoin` |
 | `/market <market-slug>` | Market detail + top-of-book orderbook | `/market bitcoin-above-95k-by-april-30` |
 | `/search <query>` | Full-text market search (Octagon when key set) | `/search "bitcoin price" --min-volume 10000` |

@@ -159,9 +159,28 @@ Example${ctx === 'cli' ? 's' : ''}:
 ${ctx === 'cli' ? `  ${p}sell bitcoin-above-100k-2026 10 0.72 no  Limit order for NO shares at $0.72` : ''}
 Side defaults to YES if omitted.`,
 
-    cancel: `**${p}cancel** — Cancel a resting order
+    orders: `**${p}orders** — Your resting orders
 
-${p}cancel <order_id>`,
+${p}orders                       Every order still working on the book
+
+Shows the remaining size, what has filled so far, and the order id to cancel
+with. Needs a wallet with a private key: the CLOB authenticates each request
+with credentials derived from it.
+
+An order rests until it fills, expires, or you cancel it. Nothing here places
+orders — see ${p}buy and ${p}sell.`,
+
+    cancel: `**${p}cancel** — Cancel resting orders
+
+${p}cancel <order_id>            Cancel one order
+${p}cancel <id> <id> <id>        Cancel several at once
+${p}cancel --all                 Cancel every resting order
+
+Cancelling cannot lose money — it only removes orders from the book — so none of
+these ask for confirmation. Ids that had already filled or expired are reported
+rather than counted as cancelled.
+
+Get ids from ${p}orders.`,
 
     backtest: `**${p}backtest** — Model accuracy scorecard & edge scanner
 
@@ -480,6 +499,8 @@ Analysis:
 Account:
   wallet                        Create, import, or inspect your wallet
   wallet approve --check        Check the on-chain trading approvals
+  orders                        Your resting orders on the CLOB
+  cancel <order_id>             Cancel a resting order (--all for every one)
   portfolio                     Overview: positions, P&L, risk snapshot
   portfolio positions           Open positions
   portfolio balance             Account balance
@@ -559,6 +580,8 @@ Analysis:
 Account:
   /wallet                        Create, import, or inspect your wallet
   /wallet approve --check        Check the on-chain trading approvals
+  /orders                        Your resting orders on the CLOB
+  /cancel <order_id>             Cancel a resting order (--all for every one)
   /portfolio                     Overview: positions, P&L, risk snapshot
   /portfolio positions           Open positions
   /portfolio balance             Account balance

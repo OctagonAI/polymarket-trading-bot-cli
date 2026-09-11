@@ -143,7 +143,8 @@ Type help for commands, or just ask a question.
 | `watch --theme <theme>` | Continuous theme scan |
 | `buy <ticker> <count> [price] [yes\|no]` | Buy contracts — **⏳ trading not implemented yet** |
 | `sell <ticker> <count> [price] [yes\|no]` | Sell contracts — **⏳ trading not implemented yet** |
-| `cancel <order_id>` | Cancel a resting order — **⏳ trading not implemented yet** |
+| `orders` | Your resting orders on the CLOB — needs a wallet with a key |
+| `cancel <order_id>` | Cancel a resting order, or `--all` for every one |
 | `backtest` | Model accuracy scorecard + live edge scanner |
 | `portfolio` | Cash, positions, P&L, risk snapshot — needs a wallet |
 | `setup` | Re-run setup wizard (inside TUI) |
@@ -185,7 +186,7 @@ Type help for commands, or just ask a question.
 | `--proxy <address>` | Pin the funding address instead of deriving it (`wallet import`) |
 | `--check` | Report state without sending anything (`wallet approve`) |
 | `--yes` | Skip the confirmation prompt (`wallet approve`) |
-| `--all` | Include grants trading does not require (`wallet approve`) |
+| `--all` | Include grants trading does not require (`wallet approve`); cancel every order (`cancel`) |
 
 ### Discovery & Portfolio (Octagon-powered)
 

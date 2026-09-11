@@ -8,15 +8,19 @@ import { loadWalletIdentity } from '../../wallet/identity.js';
  *
  * Polymarket orders are EIP-712 messages signed with a Polygon key, submitted to
  * the CLOB with derived L2 HMAC credentials — a different model from Kalshi's
- * RSA-signed REST calls, and it additionally needs on-chain USDC/CTF allowances
- * and the right proxy-wallet signature type. That work is a later phase; until
- * then this tool exists so the agent gets a clear refusal instead of silently
- * routing trade intent into a read-only tool.
+ * RSA-signed REST calls, and it additionally needs on-chain pUSD/CTF allowances
+ * and the right proxy-wallet signature type.
+ *
+ * All of that now exists: `src/clob/client.ts` authenticates, `wallet approve`
+ * grants the allowances, and `orders` / `cancel` use both. What is missing is
+ * order CONSTRUCTION — sizing, tick rounding, and choosing an order type. Until
+ * that lands this tool exists so the agent gets a clear refusal instead of
+ * silently routing trade intent into a read-only tool.
  */
 export const TRADING_UNAVAILABLE_MESSAGE =
-  'Trading is not available yet in the Polymarket CLI. Order placement requires ' +
-  'EIP-712 wallet signing and on-chain USDC/CTF allowances, which land in a later ' +
-  'release. Market data and research work today.';
+  'Order placement is not available yet in the Polymarket CLI. Everything around it ' +
+  'is in place — wallet, pUSD balance, on-chain approvals, and `orders` / `cancel` ' +
+  'for orders already resting — only placing a new one is missing.';
 
 /**
  * Commands hidden until wallet/trading support lands.
@@ -30,10 +34,13 @@ export const TRADING_UNAVAILABLE_MESSAGE =
  * Kept separate from octagon-capabilities.ts: those commands are gated by what
  * Octagon can answer, these by what this CLI can do.
  */
-export const TRADING_COMMANDS = ['buy', 'sell', 'cancel', 'portfolio'] as const;
+export const TRADING_COMMANDS = ['buy', 'sell', 'cancel', 'orders', 'portfolio'] as const;
 
-/** Need a signing key. */
-export const ORDER_COMMANDS = ['buy', 'sell', 'cancel'] as const;
+/** Placement — not implemented yet at any tier. */
+export const ORDER_COMMANDS = ['buy', 'sell'] as const;
+
+/** Implemented, but need a signing key to authenticate against the CLOB. */
+export const KEY_COMMANDS = ['cancel', 'orders'] as const;
 
 /** Need an address, but not a key — the watch tier is enough. */
 export const ACCOUNT_COMMANDS = ['portfolio'] as const;
@@ -60,6 +67,15 @@ export function commandUnavailableReason(name: string): string | null {
       ? 'No wallet configured, so there is no account to report. Run `polymarket wallet create` ' +
           'for a new one, or `polymarket wallet import <address>` to read an existing account.'
       : null;
+  }
+  if ((KEY_COMMANDS as readonly string[]).includes(name)) {
+    const tier = loadWalletIdentity().tier;
+    if (tier === 'trade') return null;
+    return tier === 'watch'
+      ? 'This wallet is watch-only. Orders are authenticated with your private key. ' +
+          'Run `polymarket wallet import <private-key> --force` to use them.'
+      : 'No wallet configured. Run `polymarket wallet create` or ' +
+          '`polymarket wallet import <private-key>`.';
   }
   if ((ORDER_COMMANDS as readonly string[]).includes(name)) {
     // Order placement does not exist yet at any tier, so the reason is the same
