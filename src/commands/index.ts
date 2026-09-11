@@ -15,6 +15,7 @@ function defaultArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
     force: false,
     check: false,
     yes: false,
+    all: false,
     parseErrors: [],
     ...overrides,
   };

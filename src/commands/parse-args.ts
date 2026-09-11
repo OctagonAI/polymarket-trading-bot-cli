@@ -92,6 +92,8 @@ export interface ParsedArgs {
   check: boolean;
   /** --yes: skip an interactive confirmation. Scripting only. */
   yes: boolean;
+  /** --all: include grants that trading does not require. */
+  all: boolean;
   parseErrors: string[];
 }
 
@@ -108,6 +110,7 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
   let force = false;
   let check = false;
   let yes = false;
+  let all = false;
   let proxy: string | undefined;
   let refresh = false;
   let report = false;
@@ -232,6 +235,8 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
       force = true;
     } else if (arg === '--check') {
       check = true;
+    } else if (arg === '--all') {
+      all = true;
     } else if (arg === '--yes' || arg === '-y') {
       yes = true;
     } else if (arg === '--proxy') {
@@ -505,7 +510,7 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
     weights, bankroll, kellyMultiplier, n, maxPerCluster, maxCorrelation, minReturn, seriesTicker,
     sortBy, probabilities, tickers, query, showCluster, aggregateBy, activeOnly,
     seriesPrefix, sides, cells, autoProbs, daysToClose, market,
-    force, proxy, check, yes,
+    force, proxy, check, yes, all,
     parseErrors,
   };
 }

@@ -26,6 +26,7 @@ function status(over: Partial<ApprovalStatus> = {}): ApprovalStatus {
     kind: 'collateral',
     spender: '0xE111180000d2663C0091e4f400237545B87B996B',
     approved: false,
+    required: true,
     allowance: 0,
     ...over,
   };

@@ -14,6 +14,7 @@ function makeArgs(o: Partial<ParsedArgs>): ParsedArgs {
     force: false,
     check: false,
     yes: false,
+    all: false,
     parseErrors: [],
     ...o,
   };

@@ -6,6 +6,7 @@ import {
   CONDITIONAL_TOKENS,
   checkApprovals,
   pendingApprovals,
+  readyToTrade,
   buildApprovalBatch,
   type ApprovalStatus,
 } from '../approvals.js';
@@ -41,6 +42,26 @@ describe('approval matrix', () => {
     for (const t of APPROVAL_TARGETS) expect(t.collateral).toBe(true);
     const noOperator = APPROVAL_TARGETS.filter((t) => !t.ctfOperator).map((t) => t.name);
     expect(noOperator).toEqual(['Conditional Tokens']);
+  });
+
+  test('only the two collateral adapters are optional', () => {
+    // Every one of twelve sampled leaderboard accounts holds the seven
+    // exchange-side grants; only four hold the adapter grants — and the
+    // adapters' bytecode exposes only splitPosition/mergePositions/
+    // redeemPositions, which order matching never touches.
+    const optional = APPROVAL_TARGETS.filter((t) => !t.required).map((t) => t.name);
+    expect(optional).toEqual(['CTF Collateral Adapter', 'Neg Risk CTF Collateral Adapter']);
+
+    const requiredGrants = APPROVAL_TARGETS
+      .filter((t) => t.required)
+      .reduce((n, t) => n + (t.collateral ? 1 : 0) + (t.ctfOperator ? 1 : 0), 0);
+    expect(requiredGrants).toBe(7);
+  });
+
+  test('every optional target explains why it is optional', () => {
+    for (const t of APPROVAL_TARGETS.filter((x) => !x.required)) {
+      expect(t.note).toBeTruthy();
+    }
   });
 
   test('addresses are valid and distinct', () => {
@@ -99,6 +120,7 @@ describe('pendingApprovals', () => {
     kind: 'collateral',
     spender: APPROVAL_TARGETS[0]!.address,
     approved: false,
+    required: true,
     allowance: 0,
     ...over,
   });
@@ -110,6 +132,19 @@ describe('pendingApprovals', () => {
       row({ approved: false, error: 'unreadable' }),
     ];
     expect(pendingApprovals(rows)).toHaveLength(1);
+  });
+
+  test('optional grants are excluded unless asked for', () => {
+    // The default must not propose spending gas on a capability trading does
+    // not need — which is what made a working wallet report four outstanding.
+    const rows = [row({ required: true }), row({ required: false })];
+    expect(pendingApprovals(rows)).toHaveLength(1);
+    expect(pendingApprovals(rows, true)).toHaveLength(2);
+  });
+
+  test('readyToTrade ignores optional grants', () => {
+    expect(readyToTrade([row({ required: true, approved: true }), row({ required: false })])).toBe(true);
+    expect(readyToTrade([row({ required: true, approved: false })])).toBe(false);
   });
 });
 
@@ -127,7 +162,7 @@ describe('buildApprovalBatch', () => {
 
   test('one sub-call per pending grant, all plain CALLs with no value attached', async () => {
     stubCalls(() => FALSE_WORD);
-    const pending = pendingApprovals(await checkApprovals(OWNER));
+    const pending = pendingApprovals(await checkApprovals(OWNER), true);
     const calls = decodeBatch(buildApprovalBatch(pending));
 
     expect(calls).toHaveLength(pending.length);
@@ -139,7 +174,7 @@ describe('buildApprovalBatch', () => {
 
   test('pUSD grants approve the spender for the maximum, on the pUSD contract', async () => {
     stubCalls(() => FALSE_WORD);
-    const pending = pendingApprovals(await checkApprovals(OWNER));
+    const pending = pendingApprovals(await checkApprovals(OWNER), true);
     const calls = decodeBatch(buildApprovalBatch(pending));
 
     const collateralCalls = calls.filter((c) => c.to.toLowerCase() === PUSD_ADDRESS.toLowerCase());
@@ -153,7 +188,7 @@ describe('buildApprovalBatch', () => {
 
   test('CTF grants set operator rights on the Conditional Tokens contract', async () => {
     stubCalls(() => FALSE_WORD);
-    const pending = pendingApprovals(await checkApprovals(OWNER));
+    const pending = pendingApprovals(await checkApprovals(OWNER), true);
     const calls = decodeBatch(buildApprovalBatch(pending));
 
     const ctfCalls = calls.filter((c) => c.to.toLowerCase() === CONDITIONAL_TOKENS.toLowerCase());
@@ -168,7 +203,7 @@ describe('buildApprovalBatch', () => {
   test('already-approved grants are not re-sent', async () => {
     // Only the ERC-1155 side is missing.
     stubCalls((to) => (to.toLowerCase() === PUSD_ADDRESS.toLowerCase() ? MAX_WORD : FALSE_WORD));
-    const pending = pendingApprovals(await checkApprovals(OWNER));
+    const pending = pendingApprovals(await checkApprovals(OWNER), true);
     const calls = decodeBatch(buildApprovalBatch(pending));
 
     expect(calls).toHaveLength(5);

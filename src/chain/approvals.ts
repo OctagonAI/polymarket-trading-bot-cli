@@ -1,10 +1,23 @@
 /**
- * The allowances Polymarket needs before a proxy wallet can trade.
+ * The allowances a Polymarket proxy wallet needs, and which of them are
+ * actually required to trade.
  *
  * Six contracts, each needing permission to move your pUSD, and five of those
  * additionally needing operator rights over your outcome tokens (ERC-1155) so a
  * sale can transfer them. Eleven grants in total. Addresses match
- * `Polymarket/polymarket-cli` at v0.1.4.
+ * `Polymarket/polymarket-cli` at v0.1.4, which grants all eleven unconditionally.
+ *
+ * **They are not all required.** Surveying twelve accounts from the volume
+ * leaderboard: all twelve hold the seven exchange-side grants, and only four
+ * hold the four collateral-adapter grants. The adapters' deployed bytecode
+ * exposes exactly three functions — `splitPosition`, `mergePositions` and
+ * `redeemPositions` — so they are the collateral path for minting, merging and
+ * redeeming complete sets, not the order-matching path. CLOB orders settle
+ * peer-to-peer in outcome tokens through the two exchange contracts.
+ *
+ * So the adapters are marked optional. Reporting them as outstanding on a
+ * wallet that trades perfectly well is a false alarm, and acting on it costs
+ * real gas for a capability the user may never use.
  *
  * Two properties worth stating because they are what make this safe to automate:
  *
@@ -30,15 +43,21 @@ export interface ApprovalTarget {
   collateral: boolean;
   /** Needs ERC-1155 operator rights over conditional tokens. */
   ctfOperator: boolean;
+  /** False for grants that trading does not need. See the module comment. */
+  required: boolean;
+  /** Shown next to an optional grant so "missing" does not read as "broken". */
+  note?: string;
 }
 
+const SPLIT_MERGE_REDEEM = 'only for split / merge / redeem';
+
 export const APPROVAL_TARGETS: ApprovalTarget[] = [
-  { name: 'CTF Exchange', address: '0xE111180000d2663C0091e4f400237545B87B996B', collateral: true, ctfOperator: true },
-  { name: 'Neg Risk Exchange', address: '0xe2222d279d744050d28e00520010520000310F59', collateral: true, ctfOperator: true },
-  { name: 'Neg Risk Adapter', address: '0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296', collateral: true, ctfOperator: true },
-  { name: 'Conditional Tokens', address: CONDITIONAL_TOKENS, collateral: true, ctfOperator: false },
-  { name: 'CTF Collateral Adapter', address: '0xADa100874d00e3331D00F2007a9c336a65009718', collateral: true, ctfOperator: true },
-  { name: 'Neg Risk CTF Collateral Adapter', address: '0xAdA200001000ef00D07553cEE7006808F895c6F1', collateral: true, ctfOperator: true },
+  { name: 'CTF Exchange', address: '0xE111180000d2663C0091e4f400237545B87B996B', collateral: true, ctfOperator: true, required: true },
+  { name: 'Neg Risk Exchange', address: '0xe2222d279d744050d28e00520010520000310F59', collateral: true, ctfOperator: true, required: true },
+  { name: 'Neg Risk Adapter', address: '0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296', collateral: true, ctfOperator: true, required: true },
+  { name: 'Conditional Tokens', address: CONDITIONAL_TOKENS, collateral: true, ctfOperator: false, required: true },
+  { name: 'CTF Collateral Adapter', address: '0xADa100874d00e3331D00F2007a9c336a65009718', collateral: true, ctfOperator: true, required: false, note: SPLIT_MERGE_REDEEM },
+  { name: 'Neg Risk CTF Collateral Adapter', address: '0xAdA200001000ef00D07553cEE7006808F895c6F1', collateral: true, ctfOperator: true, required: false, note: SPLIT_MERGE_REDEEM },
 ];
 
 const ctfAbi = parseAbi([
@@ -59,6 +78,8 @@ export interface ApprovalStatus {
   /** Contract the grant is made to. */
   spender: string;
   approved: boolean;
+  required: boolean;
+  note?: string;
   /** pUSD allowance, for collateral grants. null when it could not be read. */
   allowance: number | null;
   /** Set when the check itself failed, so "unapproved" is not assumed. */
@@ -79,7 +100,13 @@ export async function checkApprovals(proxyAddress: string): Promise<ApprovalStat
   for (const t of APPROVAL_TARGETS) {
     if (t.collateral) {
       checks.push(async () => {
-        const base = { target: t.name, kind: 'collateral' as const, spender: t.address };
+        const base = {
+        target: t.name,
+        kind: 'collateral' as const,
+        spender: t.address,
+        required: t.required,
+        ...(t.note ? { note: t.note } : {}),
+      };
         try {
           const data = encodeFunctionData({
             abi: erc20Abi,
@@ -105,7 +132,13 @@ export async function checkApprovals(proxyAddress: string): Promise<ApprovalStat
     }
     if (t.ctfOperator) {
       checks.push(async () => {
-        const base = { target: t.name, kind: 'ctf' as const, spender: t.address };
+        const base = {
+        target: t.name,
+        kind: 'ctf' as const,
+        spender: t.address,
+        required: t.required,
+        ...(t.note ? { note: t.note } : {}),
+      };
         try {
           const data = encodeFunctionData({
             abi: ctfAbi,
@@ -134,9 +167,27 @@ export async function checkApprovals(proxyAddress: string): Promise<ApprovalStat
   return Promise.all(checks.map((fn) => fn()));
 }
 
-/** Grants that are neither already in place nor unknown because a read failed. */
-export function pendingApprovals(statuses: ApprovalStatus[]): ApprovalStatus[] {
-  return statuses.filter((s) => !s.approved && !s.error);
+/**
+ * Grants still needed: not already in place, and not unknown because a read
+ * failed.
+ *
+ * Optional ones are excluded unless `includeOptional` is set, so the default
+ * `wallet approve` grants what trading needs and nothing more. Sending the
+ * other four costs gas for split/merge/redeem, which most users never touch
+ * directly.
+ */
+export function pendingApprovals(
+  statuses: ApprovalStatus[],
+  includeOptional = false,
+): ApprovalStatus[] {
+  return statuses.filter(
+    (s) => !s.approved && !s.error && (includeOptional || s.required),
+  );
+}
+
+/** True when every grant trading actually needs is in place. */
+export function readyToTrade(statuses: ApprovalStatus[]): boolean {
+  return statuses.filter((s) => s.required).every((s) => s.approved);
 }
 
 /**

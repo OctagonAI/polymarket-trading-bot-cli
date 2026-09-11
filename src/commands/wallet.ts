@@ -33,6 +33,7 @@ import {
 import {
   checkApprovals,
   pendingApprovals,
+  readyToTrade,
   buildApprovalBatch,
   PROXY_FACTORY,
   type ApprovalKind,
@@ -45,6 +46,8 @@ export interface ApprovalRow {
   target: string;
   kind: ApprovalKind;
   approved: boolean;
+  required: boolean;
+  note?: string;
   error?: string;
 }
 
@@ -67,6 +70,9 @@ export interface WalletData {
   polBalance?: string;
   approvals?: ApprovalRow[];
   pendingCount?: number;
+  /** Missing grants that trading does not need. Reported, never auto-sent. */
+  optionalPendingCount?: number;
+  readyToTrade?: boolean;
   estimatedGasPol?: string;
   txHash?: string;
   sent?: boolean;
@@ -230,6 +236,8 @@ async function approveCheckHandler(): Promise<CLIResponse<WalletData>> {
 
   return wrapSuccess('wallet', {
     action: 'approve',
+    readyToTrade: readyToTrade(statuses),
+    optionalPendingCount: pendingApprovals(statuses, true).length - pending.length,
     tier: id.tier,
     address: id.address,
     signer: id.signer,
@@ -239,6 +247,8 @@ async function approveCheckHandler(): Promise<CLIResponse<WalletData>> {
       target: a.target,
       kind: a.kind,
       approved: a.approved,
+      required: a.required,
+      ...(a.note ? { note: a.note } : {}),
       ...(a.error ? { error: a.error } : {}),
     })),
     ...(id.signer ? { polBalance: formatPol(await polBalance(id.signer)) } : {}),
@@ -282,7 +292,7 @@ async function approveHandler(args: ParsedArgs): Promise<CLIResponse<WalletData>
     );
   }
 
-  const pending = pendingApprovals(statuses);
+  const pending = pendingApprovals(statuses, args.all);
   if (pending.length === 0) {
     return wrapSuccess('wallet', {
       action: 'approve',
@@ -291,8 +301,19 @@ async function approveHandler(args: ParsedArgs): Promise<CLIResponse<WalletData>
       signer: id.signer,
       sent: false,
       pendingCount: 0,
-      approvals: statuses.map((a) => ({ target: a.target, kind: a.kind, approved: a.approved })),
-      message: 'Everything is already approved. Nothing to send.',
+      readyToTrade: true,
+      optionalPendingCount: pendingApprovals(statuses, true).length,
+        approvals: statuses.map((a) => ({
+      target: a.target,
+      kind: a.kind,
+      approved: a.approved,
+      required: a.required,
+      ...(a.note ? { note: a.note } : {}),
+      ...(a.error ? { error: a.error } : {}),
+    })),
+      message: args.all
+        ? 'Everything is already approved. Nothing to send.'
+        : 'Everything trading needs is already approved. Nothing to send.',
     });
   }
 
@@ -375,8 +396,16 @@ async function approveHandler(args: ParsedArgs): Promise<CLIResponse<WalletData>
     sent: true,
     txHash: tx.hash,
     estimatedGasPol: gasPol,
-    pendingCount: pendingApprovals(after).length,
-    approvals: after.map((a) => ({ target: a.target, kind: a.kind, approved: a.approved })),
+    readyToTrade: readyToTrade(after),
+    pendingCount: pendingApprovals(after, args.all).length,
+    approvals: after.map((a) => ({
+      target: a.target,
+      kind: a.kind,
+      approved: a.approved,
+      required: a.required,
+      ...(a.note ? { note: a.note } : {}),
+      ...(a.error ? { error: a.error } : {}),
+    })),
   });
 }
 
@@ -425,15 +454,31 @@ export function formatWalletHuman(data: WalletData): string {
   if (data.action === 'approve') {
     lines.push(data.sent ? theme.success('  Approvals sent.') : '  Trading approvals');
     lines.push('');
-    for (const a of data.approvals ?? []) {
-      const label = `${a.kind === 'collateral' ? 'pUSD' : 'CTF '} → ${a.target}`;
-      const mark = a.error
+
+    const mark = (a: ApprovalRow) =>
+      a.error
         ? theme.error('  ?   ') // unreadable: NOT the same as unapproved
         : a.approved
           ? theme.success('  OK  ')
           : theme.muted('  --  ');
-      lines.push(`${mark}${label}${a.error ? theme.muted('  could not read') : ''}`);
+    const label = (a: ApprovalRow) => `${a.kind === 'collateral' ? 'pUSD' : 'CTF '} → ${a.target}`;
+
+    const rows = data.approvals ?? [];
+    for (const a of rows.filter((r) => r.required)) {
+      lines.push(`${mark(a)}${label(a)}${a.error ? theme.muted('  could not read') : ''}`);
     }
+
+    // Listed separately, because showing these alongside the required ones made
+    // a wallet that trades perfectly well report four outstanding approvals.
+    const optional = rows.filter((r) => !r.required);
+    if (optional.length > 0) {
+      lines.push('');
+      lines.push(theme.muted('  Optional — not needed to trade:'));
+      for (const a of optional) {
+        lines.push(`${mark(a)}${label(a)}${a.note ? theme.muted(`   ${a.note}`) : ''}`);
+      }
+    }
+
     lines.push('');
     if (data.txHash) {
       lines.push(`    Transaction  ${data.txHash}`);
@@ -442,6 +487,7 @@ export function formatWalletHuman(data: WalletData): string {
     if (data.polBalance !== undefined) {
       lines.push(`    Signing wallet POL  ${data.polBalance}`);
     }
+
     if (data.message) {
       lines.push(theme.muted(`    ${data.message}`));
     } else if ((data.pendingCount ?? 0) > 0) {
@@ -449,8 +495,16 @@ export function formatWalletHuman(data: WalletData): string {
         theme.muted(`    ${data.pendingCount} grant(s) outstanding. Send them with: polymarket wallet approve`),
       );
       lines.push(theme.muted('    Gas is paid in POL from the signing wallet.'));
-    } else if (!data.sent) {
-      lines.push(theme.muted('    All approvals in place — this wallet can trade once orders ship.'));
+    } else if (data.readyToTrade) {
+      lines.push(theme.success('    Ready to trade — every required approval is in place.'));
+      if ((data.optionalPendingCount ?? 0) > 0) {
+        lines.push(
+          theme.muted(
+            `    ${data.optionalPendingCount} optional grant(s) not set. Only needed to split, merge or`,
+          ),
+        );
+        lines.push(theme.muted('    redeem positions directly: polymarket wallet approve --all'));
+      }
     }
     return lines.join('\n');
   }

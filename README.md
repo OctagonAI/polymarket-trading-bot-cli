@@ -185,6 +185,7 @@ Type help for commands, or just ask a question.
 | `--proxy <address>` | Pin the funding address instead of deriving it (`wallet import`) |
 | `--check` | Report state without sending anything (`wallet approve`) |
 | `--yes` | Skip the confirmation prompt (`wallet approve`) |
+| `--all` | Include grants trading does not require (`wallet approve`) |
 
 ### Discovery & Portfolio (Octagon-powered)
 
@@ -464,16 +465,25 @@ Polymarket's own CLI.
 
 #### Trading approvals
 
-Before a wallet can trade, eleven on-chain permissions must be in place: six
-contracts allowed to move your pUSD, five of those also allowed to move your
-outcome tokens when you sell.
+Trading needs **seven** on-chain permissions: the two exchange contracts, the
+neg-risk adapter and the conditional-tokens contract allowed to move your pUSD,
+and the first three also allowed to move your outcome tokens when you sell.
+
+Four further grants exist, to the two *collateral adapters*, and they are
+**not** needed to trade. Their deployed bytecode exposes only `splitPosition`,
+`mergePositions` and `redeemPositions` — the collateral path for building,
+combining and redeeming complete sets. CLOB orders never touch them: all twelve
+accounts sampled from the volume leaderboard hold the seven required grants, and
+only four hold these. `--check` lists them separately; `approve --all` grants
+them if you want that capability.
 
 ```bash
 polymarket wallet approve --check   # read them — free, no gas, no signature
 polymarket wallet approve           # grant the missing ones
 ```
 
-`approve` shows what it will send and what it will cost, then asks. It never
+`approve` grants only what trading requires. It shows what it will send and what
+it will cost, then asks. It never
 sends without an explicit yes; `--yes` skips the prompt for scripting, and is
 the only way to skip it. **Gas is paid in POL from the signing wallet** — send
 POL to that address, not to the funding wallet, and not pUSD. The command
