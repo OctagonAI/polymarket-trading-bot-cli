@@ -22,10 +22,10 @@ export interface CLIResponse<T> {
     warnings?: string[];
     bankroll?: {
       cash_balance: number;
-      portfolio_value: number;
-      open_exposure: number;
+      portfolio_value: number | null;
+      open_exposure: number | null;
       available: number;
-      positions_count: number;
+      positions_count: number | null;
     };
   };
   error?: { code: string; message: string };

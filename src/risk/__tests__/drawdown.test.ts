@@ -32,6 +32,8 @@ function bankroll(walletCash: number | null, portfolioValue: number): LiveBankro
     bankrollUnset: walletCash === null,
     bankrollSource: walletCash === null ? 'none' : 'wallet',
     cap: null,
+    positionsUnavailable: false,
+    portfolioValueUnavailable: false,
     walletCash,
     equity: walletCash === null ? null : walletCash + portfolioValue,
   };

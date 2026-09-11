@@ -81,6 +81,33 @@ export function normalizePosition(raw: RawPosition): PolymarketPosition {
 
 /** Data API page size cap for /positions. */
 const POSITIONS_PAGE_SIZE = 100;
+
+/**
+ * Short TTL cache over the paged reads.
+ *
+ * A full walk is one request per 100 positions, and several callers want the
+ * same list within a single command: `portfolio` renders the table and then
+ * computes the bankroll, and a batch `analyze` sizes every ticker, each sizing
+ * fetching positions again. An 800-position wallet analysed across 50 tickers
+ * would otherwise be 400+ requests, and the Data API answers 403 long before
+ * that — which surfaced as a portfolio reporting $0.00 value against 736
+ * positions, because the failed leg silently degraded to zero.
+ */
+const READ_TTL_MS = 15_000;
+
+const positionsCache = new Map<string, { at: number; value: PolymarketPosition[] }>();
+const valueCache = new Map<string, { at: number; value: PolymarketBalance }>();
+
+export function resetPortfolioCaches(): void {
+  positionsCache.clear();
+  valueCache.clear();
+}
+
+function cached<T>(store: Map<string, { at: number; value: T }>, key: string): T | undefined {
+  const hit = store.get(key);
+  if (hit && Date.now() - hit.at < READ_TTL_MS) return hit.value;
+  return undefined;
+}
 /** Guard against an unbounded loop if the API ever stops shortening pages. */
 const POSITIONS_MAX_PAGES = 20;
 
@@ -105,6 +132,10 @@ export async function fetchPositions(
   wallet = requireWalletAddress(),
   opts: { limit?: number; redeemable?: boolean } = {}
 ): Promise<PolymarketPosition[]> {
+  const cacheKey = `${wallet}|${opts.limit ?? 'all'}|${opts.redeemable ?? 'any'}`;
+  const hit = cached(positionsCache, cacheKey);
+  if (hit) return hit;
+
   const fetchPage = async (limit: number, offset: number) => {
     const raw = await callPolymarketApi<RawPosition[]>('data', 'GET', '/positions', {
       params: { user: wallet, limit, offset, redeemable: opts.redeemable },
@@ -113,7 +144,9 @@ export async function fetchPositions(
   };
 
   if (opts.limit !== undefined) {
-    return (await fetchPage(opts.limit, 0)).map(normalizePosition);
+    const single = (await fetchPage(opts.limit, 0)).map(normalizePosition);
+    positionsCache.set(cacheKey, { at: Date.now(), value: single });
+    return single;
   }
 
   const all: RawPosition[] = [];
@@ -134,7 +167,9 @@ export async function fetchPositions(
     );
   }
 
-  return all.map(normalizePosition);
+  const positions = all.map(normalizePosition);
+  positionsCache.set(cacheKey, { at: Date.now(), value: positions });
+  return positions;
 }
 
 /**
@@ -144,11 +179,16 @@ export async function fetchPositions(
  * is not exposed here, so this reports position value only.
  */
 export async function fetchPortfolioValue(wallet = requireWalletAddress()): Promise<PolymarketBalance> {
+  const hit = cached(valueCache, wallet);
+  if (hit) return hit;
+
   const raw = await callPolymarketApi<Array<Record<string, unknown>>>('data', 'GET', '/value', {
     params: { user: wallet },
   });
   const row = Array.isArray(raw) ? raw[0] : undefined;
-  return { portfolio_value: num(row?.value), address: wallet };
+  const value = { portfolio_value: num(row?.value), address: wallet };
+  valueCache.set(wallet, { at: Date.now(), value });
+  return value;
 }
 
 export const getPositions = new DynamicStructuredTool({

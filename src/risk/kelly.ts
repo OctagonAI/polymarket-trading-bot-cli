@@ -24,9 +24,9 @@ export interface KellyResult {
   notionalUsdc: number; // shares * entryPrice
   entryPrice: number; // actual entry price used (ask, not midpoint), 0-1
   availableBankroll: number; // min(wallet cash, cap - open exposure), in USD
-  openExposure: number; // sum of position current_value (USDC)
+  openExposure: number | null; // sum of position current_value; null if unreadable
   cashBalance: number; // wallet balance, or the configured cap standing in for it
-  portfolioValue: number; // mark-to-market position value (USDC)
+  portfolioValue: number | null; // mark-to-market position value; null if unreadable
   liquidityAdjusted: boolean;
   skippedReason?: string; // if shares=0, explains why
 }
@@ -36,14 +36,26 @@ export type BankrollSource = 'none' | 'wallet' | 'config' | 'capped';
 
 export interface LiveBankroll {
   cashBalance: number; // USDC
-  portfolioValue: number; // USDC
-  openExposure: number; // USDC
+  /**
+   * Mark-to-market position value, or null when the Data API could not be read.
+   *
+   * Null rather than 0 for the same reason as `walletCash`: a failed read is
+   * not an empty book, and treating it as one understates equity, which shows
+   * up as a phantom drawdown.
+   */
+  portfolioValue: number | null;
+  /** Sum of position values, or null when positions could not be read. */
+  openExposure: number | null;
   availableBankroll: number; // USDC
   /** True when neither a wallet balance nor a configured cap is available. */
   bankrollUnset: boolean;
   bankrollSource: BankrollSource;
   /** The configured `risk.bankroll_usdc` ceiling, or null when unset. */
   cap: number | null;
+  /** The Data API position list could not be read; exposure is unknown. */
+  positionsUnavailable: boolean;
+  /** The Data API value endpoint could not be read. */
+  portfolioValueUnavailable: boolean;
   /**
    * Free pUSD read from the chain, or null when it is not readable.
    *
@@ -85,8 +97,8 @@ export interface LiveBankroll {
 export async function fetchLiveBankroll(): Promise<LiveBankroll> {
   // Research and scanning must work without a wallet, so a missing or
   // unreachable wallet degrades to zeros instead of throwing.
-  let value = { portfolio_value: 0, address: '' };
-  let positions: Awaited<ReturnType<typeof fetchPositions>> = [];
+  let portfolioValue: number | null = null;
+  let positions: Awaited<ReturnType<typeof fetchPositions>> | null = null;
   let walletCash: number | null = null;
 
   const address = getWalletAddress();
@@ -101,7 +113,7 @@ export async function fetchLiveBankroll(): Promise<LiveBankroll> {
       fetchPositions(),
       readPusdBalance(address),
     ]);
-    if (valueRes.status === 'fulfilled') value = valueRes.value;
+    if (valueRes.status === 'fulfilled') portfolioValue = valueRes.value.portfolio_value;
     if (positionsRes.status === 'fulfilled') positions = positionsRes.value;
     if (cashRes.status === 'fulfilled') walletCash = cashRes.value;
   }
@@ -109,15 +121,18 @@ export async function fetchLiveBankroll(): Promise<LiveBankroll> {
   const rawCap = Number(getBotSetting('risk.bankroll_usdc') ?? 0);
   const cap = Number.isFinite(rawCap) && rawCap > 0 ? rawCap : null;
 
-  const portfolioValue = value.portfolio_value;
-  const openExposure = positions.reduce((sum, p) => sum + (p.current_value || 0), 0);
+  const openExposure =
+    positions === null ? null : positions.reduce((sum, p) => sum + (p.current_value || 0), 0);
 
   // Each term is dropped when unknown rather than defaulted to zero: a failed
   // balance read must not read as "no money", and an unset cap must not read as
   // "cap of nothing".
   const limits: number[] = [];
   if (walletCash !== null) limits.push(walletCash);
-  if (cap !== null) limits.push(cap - openExposure);
+  // Unknown exposure is netted as 0 rather than refusing to size: the wallet
+  // term usually binds anyway, and `positionsUnavailable` tells the caller the
+  // cap arm is provisional.
+  if (cap !== null) limits.push(cap - (openExposure ?? 0));
   const availableBankroll = limits.length > 0 ? Math.max(0, Math.min(...limits)) : 0;
 
   const bankrollSource: BankrollSource =
@@ -138,7 +153,11 @@ export async function fetchLiveBankroll(): Promise<LiveBankroll> {
     bankrollSource,
     cap,
     walletCash,
-    equity: walletCash === null ? null : walletCash + portfolioValue,
+    // Equity needs BOTH terms. With either missing it is unknown, not partial —
+    // a half-computed equity is what produces a phantom drawdown.
+    equity: walletCash === null || portfolioValue === null ? null : walletCash + portfolioValue,
+    positionsUnavailable: positions === null,
+    portfolioValueUnavailable: portfolioValue === null,
   };
 }
 
@@ -277,7 +296,7 @@ export async function kellySize(params: KellySizeParams): Promise<KellyResult> {
       // exposure looks identical to an empty wallet, and the fix is different.
       ? (bankroll.cap !== null
         ? `No available bankroll: the risk.bankroll_usdc limit of $${bankroll.cap.toFixed(2)} is fully `
-          + `used by $${openExposure.toFixed(2)} of open positions. Raise the limit to size new trades.`
+          + `used by $${(openExposure ?? 0).toFixed(2)} of open positions. Raise the limit to size new trades.`
         : 'No available bankroll: the wallet has no free pUSD.')
       : entryPrice === 0
         ? 'Entry price rounds to zero'

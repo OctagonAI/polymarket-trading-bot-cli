@@ -25,28 +25,32 @@ export interface PositionView {
   currentEdge: number | null;
   unrealizedPnl: number | null;
   watchdogStatus: string;
+  /** True when this CLI opened the position and has edge history for it. */
+  tracked: boolean;
 }
 
 export interface PortfolioData {
   positions: PositionView[];
   /**
-   * Where the rows came from.
-   *
-   * `local` is this CLI's own tracking table, which carries entry edge and
-   * watchdog status. `live` is the Data API — the authoritative list of what the
-   * wallet actually holds, but with no edge history, because those positions
-   * were not opened through this tool.
+   * True when the position list could not be read at all, as distinct from a
+   * wallet that genuinely holds nothing.
    */
-  positionsSource: 'local' | 'live';
+  positionsUnavailable: boolean;
   accountSummary: {
     cashBalance: number;
-    portfolioValue: number;
-    openExposure: number;
+    /** Null when the Data API could not be read — unknown, not zero. */
+    portfolioValue: number | null;
+    openExposure: number | null;
     available: number;
-    positionsCount: number;
+    /** Null when the position list could not be read — unknown, not none. */
+    positionsCount: number | null;
   } | null;
   riskSnapshot: RiskSnapshot | null;
   performance?: PerformanceStats;
+}
+
+function fmtMoney(v: number | null): string {
+  return v === null ? 'unknown (could not read)' : `$${v.toFixed(2)}`;
 }
 
 function truncate(s: string, max: number): string {
@@ -73,55 +77,52 @@ export async function handlePortfolio(args: ParsedArgs): Promise<CLIResponse<Por
   const db = getDb();
   const warnings: string[] = [];
 
-  // Get open positions with edge data
+  // The wallet is the source of truth for what is held.
+  //
+  // The local `positions` table only ever contains positions this CLI opened
+  // itself, so for an imported wallet it is empty or partial by construction —
+  // using it as the list would under-report someone else's account as their own.
+  // It is used solely to ENRICH the live rows with entry edge and watchdog
+  // status, matched on ticker, which is information the Data API does not have.
   let positionViews: PositionView[] = [];
-  let positionsCount = 0;
-  try {
-    const openPositions = getOpenPositions(db);
-    const views = openPositions.map((pos) => {
-      const withEdge = getPositionWithEdge(db, pos.position_id);
-      return {
-        ticker: pos.ticker,
-        direction: pos.direction,
-        size: pos.size,
-        entryPrice: pos.entry_price,
-        entryEdge: pos.entry_edge ?? null,
-        currentEdge: withEdge?.latest_edge?.edge ?? null,
-        unrealizedPnl: pos.current_pnl ?? null,
-        watchdogStatus: withEdge ? deriveWatchdogStatus(withEdge) : 'unknown',
-      };
-    });
-    positionViews = views;
-    positionsCount = openPositions.length;
-  } catch (err) {
-    positionsCount = 0;
-    warnings.push(`Positions unavailable: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  let positionsCount: number | null = null;
+  let positionsUnavailable = false;
 
-  // The local table is only written for positions opened through this CLI, and
-  // nothing writes it yet. Falling back to the wallet's actual holdings stops
-  // the table saying "no open positions" directly above a large open-exposure
-  // figure taken from the same wallet.
-  let positionsSource: 'local' | 'live' = 'local';
-  if (positionViews.length === 0 && getWalletAddress()) {
+  if (getWalletAddress()) {
     try {
       const live = await fetchPositions();
-      if (live.length > 0) {
-        positionsSource = 'live';
-        positionViews = live.map((p) => ({
-          ticker: p.ticker || p.token_id,
+
+      // Index local tracking by ticker. Cheap, and tolerates the common case of
+      // no local rows at all.
+      const tracked = new Map<string, ReturnType<typeof getPositionWithEdge>>();
+      try {
+        for (const pos of getOpenPositions(db)) {
+          tracked.set(pos.ticker, getPositionWithEdge(db, pos.position_id));
+        }
+      } catch (err) {
+        warnings.push(`Local position tracking unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      positionViews = live.map((p) => {
+        const ticker = p.ticker || p.token_id;
+        const local = tracked.get(ticker);
+        return {
+          ticker,
           direction: p.outcome || '-',
           size: p.size,
           entryPrice: p.avg_price,
-          entryEdge: null,
-          currentEdge: null,
+          entryEdge: local?.entry_edge ?? null,
+          currentEdge: local?.latest_edge?.edge ?? null,
+          // P&L comes from the venue, which knows about fills this CLI did not make.
           unrealizedPnl: p.cash_pnl ?? null,
-          watchdogStatus: 'untracked',
-        }));
-        positionsCount = live.length;
-      }
+          watchdogStatus: local ? deriveWatchdogStatus(local) : 'untracked',
+          tracked: local !== undefined && local !== null,
+        };
+      });
+      positionsCount = positionViews.length;
     } catch (err) {
-      warnings.push(`Live positions unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      positionsUnavailable = true;
+      warnings.push(`Positions unavailable: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -143,7 +144,7 @@ export async function handlePortfolio(args: ParsedArgs): Promise<CLIResponse<Por
 
   const data: PortfolioData = {
     positions: positionViews,
-    positionsSource,
+    positionsUnavailable,
     accountSummary: bankroll
       ? {
           cashBalance: bankroll.cashBalance,
@@ -218,9 +219,9 @@ export function formatPortfolioHuman(data: PortfolioData, warnings: string[] = [
     lines.push('');
   }
 
-  if (data.positionsSource === 'live' && data.positions.length > 0) {
-    lines.push(theme.muted('  Held in the wallet. Edge and status are blank because these were not'));
-    lines.push(theme.muted('  opened through this CLI, so there is no entry edge to compare against.'));
+  if (data.positions.some((p) => !p.tracked)) {
+    lines.push(theme.muted('  Rows marked "untracked" were not opened through this CLI, so there is no'));
+    lines.push(theme.muted('  entry edge to compare against. Size and P&L come from the venue.'));
     lines.push('');
   }
 
@@ -228,10 +229,14 @@ export function formatPortfolioHuman(data: PortfolioData, warnings: string[] = [
   lines.push('  Account Summary:');
   if (data.accountSummary) {
     lines.push(`    Cash Balance:    $${data.accountSummary.cashBalance.toFixed(2)}`);
-    lines.push(`    Portfolio Value: $${data.accountSummary.portfolioValue.toFixed(2)}`);
-    lines.push(`    Open Exposure:   $${data.accountSummary.openExposure.toFixed(2)}`);
+    // "unknown" rather than $0.00: a failed read is not an empty book, and
+    // printing zero there is what made a 736-position wallet look empty.
+    lines.push(`    Portfolio Value: ${fmtMoney(data.accountSummary.portfolioValue)}`);
+    lines.push(`    Open Exposure:   ${fmtMoney(data.accountSummary.openExposure)}`);
     lines.push(`    Available:       $${data.accountSummary.available.toFixed(2)}`);
-    lines.push(`    Positions:       ${data.accountSummary.positionsCount}`);
+    lines.push(
+      `    Positions:       ${data.accountSummary.positionsCount ?? 'unknown (could not read)'}`,
+    );
   } else {
     lines.push('    (unavailable)');
   }

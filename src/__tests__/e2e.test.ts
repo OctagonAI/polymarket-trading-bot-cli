@@ -157,7 +157,14 @@ function setupFetchMock(originalFetch: typeof globalThis.fetch) {
       return json([{ user: '0x1', value: 1000 }]);
     }
     if (urlStr.includes('data-api.polymarket.com/positions')) {
-      return json([{ slug: 'MKT-OTHER', conditionId: '0xb', size: 100, curPrice: 0.5, currentValue: 200 }]);
+      // The wallet is the source of truth for what is held. MKT-YES is also
+      // tracked locally in the portfolio test, so it exercises the enrichment
+      // join; MKT-OTHER is held but untracked, which is the normal case for an
+      // imported wallet.
+      return json([
+        { slug: 'MKT-YES', conditionId: '0xa', outcome: 'Yes', size: 5, avgPrice: 0.58, curPrice: 0.6, currentValue: 3, cashPnl: 0.1 },
+        { slug: 'MKT-OTHER', conditionId: '0xb', outcome: 'No', size: 100, avgPrice: 0.5, curPrice: 0.5, currentValue: 200 },
+      ]);
     }
 
     return json({});
@@ -327,9 +334,21 @@ describe('E2E Integration Tests', () => {
     const resp = await handlePortfolio(makeParsedArgs({ subcommand: 'portfolio' }));
 
     expect(resp.ok).toBe(true);
-    expect(resp.data.positions.length).toBeGreaterThan(0);
-    expect(resp.data.positions[0].entryEdge).toBe(0.14);
-    expect(resp.data.positions[0].currentEdge).toBe(0.10);
+    // Both wallet holdings are listed, not just the one this CLI opened: the
+    // local table is partial by construction for an imported wallet.
+    expect(resp.data.positions.map((p) => p.ticker).sort()).toEqual(['MKT-OTHER', 'MKT-YES']);
+
+    // The tracked one is enriched with local edge history...
+    const tracked = resp.data.positions.find((p) => p.ticker === 'MKT-YES')!;
+    expect(tracked.tracked).toBe(true);
+    expect(tracked.entryEdge).toBe(0.14);
+    expect(tracked.currentEdge).toBe(0.10);
+
+    // ...and the untracked one is still reported, with no invented edge.
+    const untracked = resp.data.positions.find((p) => p.ticker === 'MKT-OTHER')!;
+    expect(untracked.tracked).toBe(false);
+    expect(untracked.entryEdge).toBeNull();
+    expect(untracked.watchdogStatus).toBe('untracked');
 
     dbSpy.mockRestore();
   });

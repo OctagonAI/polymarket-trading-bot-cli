@@ -74,7 +74,10 @@ describe('bankroll precedence', () => {
     const b = await fetchLiveBankroll();
 
     expect(b.walletCash).toBeNull();
-    expect(b.openExposure).toBe(0);
+    // Not zero: with no address there is nothing to query, so exposure is
+    // genuinely unknown and the cap is all there is to go on.
+    expect(b.openExposure).toBeNull();
+    expect(b.positionsUnavailable).toBe(true);
     expect(b.availableBankroll).toBe(1000);
     expect(b.bankrollSource).toBe('config');
   });
