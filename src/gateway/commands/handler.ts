@@ -3,7 +3,8 @@ import type { AlertRouter } from '../alerts/router.js';
 import type { ParsedArgs } from '../../commands/parse-args.js';
 import { handleScan } from '../../commands/scan.js';
 import { handleEdge } from '../../commands/edge.js';
-import { TRADING_UNAVAILABLE_MESSAGE } from '../../tools/polymarket/polymarket-trade.js';
+import { commandUnavailableReason } from '../../tools/polymarket/polymarket-trade.js';
+import { handlePortfolio, formatPortfolioHuman } from '../../commands/portfolio.js';
 import {
   formatScanForWhatsApp,
   formatEdgeForWhatsApp,
@@ -58,10 +59,13 @@ export async function handleCommand(
       return formatEdgeForWhatsApp(result.data);
     }
 
-    // Account reads need a configured wallet, which is part of the trading
-    // setup that does not exist yet.
-    case 'portfolio':
-      return TRADING_UNAVAILABLE_MESSAGE;
+    // Account reads need a configured wallet.
+    case 'portfolio': {
+      const unavailable = commandUnavailableReason('portfolio');
+      if (unavailable) return unavailable;
+      const resp = await handlePortfolio(makeArgs({ subcommand: 'portfolio' }));
+      return resp.ok ? formatPortfolioHuman(resp.data, resp.meta?.warnings ?? []) : (resp.error?.message ?? 'portfolio failed');
+    }
 
   }
 }

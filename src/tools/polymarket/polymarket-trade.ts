@@ -1,6 +1,7 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { formatToolResult } from '../types.js';
+import { loadWalletIdentity } from '../../wallet/identity.js';
 
 /**
  * Order placement is not implemented yet.
@@ -31,8 +32,47 @@ export const TRADING_UNAVAILABLE_MESSAGE =
  */
 export const TRADING_COMMANDS = ['buy', 'sell', 'cancel', 'portfolio'] as const;
 
+/** Need a signing key. */
+export const ORDER_COMMANDS = ['buy', 'sell', 'cancel'] as const;
+
+/** Need an address, but not a key — the watch tier is enough. */
+export const ACCOUNT_COMMANDS = ['portfolio'] as const;
+
 export function isTradingCommand(name: string): boolean {
   return (TRADING_COMMANDS as readonly string[]).includes(name);
+}
+
+/**
+ * Why a command cannot run right now, or null when it can.
+ *
+ * Availability is a function of wallet state rather than a static list, so a
+ * user who configures a wallet sees `portfolio` appear without any further
+ * ceremony, and one who only pasted an address is told what is missing instead
+ * of being shown an account view full of zeros.
+ *
+ * Every gate and every hide-from-listing site calls this one function. Leaving
+ * some on the static `isTradingCommand` is how the old behaviour would quietly
+ * survive in half the surfaces.
+ */
+export function commandUnavailableReason(name: string): string | null {
+  if ((ACCOUNT_COMMANDS as readonly string[]).includes(name)) {
+    return loadWalletIdentity().tier === 'none'
+      ? 'No wallet configured, so there is no account to report. Run `polymarket wallet create` ' +
+          'for a new one, or `polymarket wallet import <address>` to read an existing account.'
+      : null;
+  }
+  if ((ORDER_COMMANDS as readonly string[]).includes(name)) {
+    // Order placement does not exist yet at any tier, so the reason is the same
+    // for everyone. Telling a watch-only user to import a key would imply that
+    // doing so unlocks trading, which it does not — the tier check belongs here
+    // once orders are actually implemented.
+    return TRADING_UNAVAILABLE_MESSAGE;
+  }
+  return null;
+}
+
+export function isCommandAvailable(name: string): boolean {
+  return commandUnavailableReason(name) === null;
 }
 
 export const POLYMARKET_TRADE_DESCRIPTION = `

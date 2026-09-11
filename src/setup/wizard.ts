@@ -177,16 +177,19 @@ export class SetupWizardController {
         // has to be told to us. When balance reads land this becomes a cap on
         // the wallet balance, which keeps the framing true rather than making
         // this text a lie later.
-        return (this.pendingWallet
-          ? 'Your wallet is set, but reading its balance is not wired up yet,\n'
-            + 'so position sizing still needs a figure to work from.\n'
-          : '')
-          + 'How much should position sizing be allowed to risk?\n'
-          + 'Kelly sizing and the risk gate work from this. Without it, analyze\n'
-          + 'still reports edge and catalysts but skips sizing.\n'
-          + 'It is a limit you set, not a deposit or a transfer. Change it with:\n'
-          + 'polymarket config risk.bankroll_usdc <amount>\n'
-          + 'Leave empty and press Enter to skip.';
+        return this.pendingWallet
+          ? 'Leave this empty to size against your wallet balance — that is the\n'
+            + 'usual choice now that a wallet is set.\n'
+            + 'Set a figure only to cap risk BELOW the balance, which is useful\n'
+            + 'if the wallet holds more than you want this bot to trade.\n'
+            + 'Change it later with: polymarket config risk.bankroll_usdc <amount>'
+          : 'How much should position sizing be allowed to risk?\n'
+            + 'With no wallet the balance cannot be read, so this figure is all\n'
+            + 'Kelly sizing and the risk gate have. Without it, analyze still\n'
+            + 'reports edge and catalysts but skips sizing.\n'
+            + 'It is a limit you set, not a deposit. Change it with:\n'
+            + 'polymarket config risk.bankroll_usdc <amount>\n'
+            + 'Leave empty and press Enter to skip.';
       case 'testing':
         return '';
       case 'complete':
@@ -285,10 +288,13 @@ export class SetupWizardController {
       }
       if (this.pendingBankroll !== null) {
         lines.push(theme.success(`  OK`) + `  Position sizing limit: $${this.pendingBankroll}`);
+      } else if (this.pendingWallet) {
+        lines.push(theme.success('  OK') + '  Position sizing will use your wallet balance.');
+        lines.push(theme.muted('      Cap it lower: polymarket config risk.bankroll_usdc 1000'));
       } else {
         lines.push(
           theme.muted('  --') +
-            '  Bankroll not set — analyze will report edge but skip position sizing.',
+            '  No bankroll — analyze will report edge but skip position sizing.',
         );
         lines.push(theme.muted('      Set it later: polymarket config risk.bankroll_usdc 1000'));
       }

@@ -476,10 +476,12 @@ describe('E2E Integration Tests', () => {
 
     expect(names).toContain('polymarket_search');
     expect(names).toContain('polymarket_trade');
-    // portfolio_overview and portfolio_review are deliberately unregistered:
-    // both read positions through requireWalletAddress, which throws until the
-    // wallet phase, so the agent would get a raw exception rather than a tool.
-    expect(names).not.toContain('portfolio_overview');
+    // This suite sets POLYMARKET_WALLET_ADDRESS, so portfolio_overview IS
+    // registered: it needs an address, which is present. Registration is a
+    // function of wallet state rather than a fixed list.
+    expect(names).toContain('portfolio_overview');
+    // portfolio_review still needs positions the CLI cannot write yet, so it
+    // would report an empty book on every call.
     expect(names).not.toContain('portfolio_review');
     expect(names).toContain('exchange_status');
     expect(names).toContain('web_fetch');
@@ -492,13 +494,16 @@ describe('E2E Integration Tests', () => {
     const registered = new Set(getToolRegistry('gpt-4o').map((t) => t.name));
     const prompt = buildSystemPrompt('gpt-4o');
 
-    for (const name of ['portfolio_overview', 'portfolio_review']) {
-      expect(registered.has(name)).toBe(false);
-      expect(prompt).not.toContain(name);
-    }
+    // portfolio_review is still unbuilt, so the prompt must not advertise it —
+    // the agent reports `Tool '...' not found` for those, which reads as a crash
+    // rather than the explanation every other unavailable surface gives.
+    expect(registered.has('portfolio_review')).toBe(false);
+    expect(prompt).not.toContain('portfolio_review');
 
     // Guard against the inverse drift: a tool that exists but goes unmentioned.
-    expect(prompt).toContain('portfolio_query');
-    expect(registered.has('portfolio_query')).toBe(true);
+    for (const name of ['portfolio_query', 'portfolio_overview']) {
+      expect(registered.has(name)).toBe(true);
+      expect(prompt).toContain(name);
+    }
   });
 });

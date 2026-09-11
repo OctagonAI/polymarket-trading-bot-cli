@@ -1,7 +1,7 @@
 // ─── Shared help content for both TUI slash commands and CLI batch mode ─────
 import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 import { THEMES } from '../scan/theme-registry.js';
-import { isTradingCommand, TRADING_UNAVAILABLE_MESSAGE } from '../tools/polymarket/polymarket-trade.js';
+import { isCommandAvailable, commandUnavailableReason } from '../tools/polymarket/polymarket-trade.js';
 
 /** Context determines prefix style: slash commands use "/", CLI uses "polymarket" */
 type HelpContext = 'slash' | 'cli';
@@ -77,7 +77,6 @@ POLYMARKET_PRIVATE_KEY, which takes precedence over the saved file.`,
 
 ${p}portfolio                    Full overview: positions, P&L, risk snapshot
 ${p}portfolio positions          Open positions with P&L
-${p}portfolio orders             Resting orders
 ${p}portfolio balance            Account balance
 ${p}portfolio status             Exchange status${ctx === 'cli' ? ' and setup verification' : ''}
 ${ctx === 'cli' ? `
@@ -100,9 +99,9 @@ model_probability, market_probability, edge_pp, expected_return per ticker.
 Use single-ticker mode when you need the full deep-analysis pipeline
 (drivers, catalysts, Kelly sizing, risk gate).
 
-Position sizing needs a bankroll. Polymarket exposes no cash balance, so set it:
-  ${p}config risk.bankroll_usdc 1000
-Until then, analyze reports edge and catalysts but skips sizing.${ctx === 'cli' ? `
+Position sizing needs a bankroll. With a wallet configured it uses your on-chain
+pUSD balance; ${p}config risk.bankroll_usdc <amount> caps it lower. With neither,
+analyze reports edge and catalysts but skips sizing.${ctx === 'cli' ? `
 
 Legacy aliases (still work):
   ${p}edge [--ticker X]                    Edge history / snapshots (default: last 24h)
@@ -377,7 +376,7 @@ Legacy: ${p}search themes still lists category labels (the pre-registry view).`,
  * to hand-maintain a second copy of the command list.
  */
 function stripGatedLines(text: string): string {
-  const gated = (name: string) => isDeferredCommand(name) || isTradingCommand(name);
+  const gated = (name: string) => isDeferredCommand(name) || !isCommandAvailable(name);
 
   const kept = text.split('\n').filter((line) => {
     const m = line.match(/^\s{2}\/?([a-z-]+)/);
@@ -466,7 +465,6 @@ Account:
   wallet                        Create, import, or inspect your wallet
   portfolio                     Overview: positions, P&L, risk snapshot
   portfolio positions           Open positions
-  portfolio orders              Resting orders
   portfolio balance             Account balance
 
 System:
@@ -545,7 +543,6 @@ Account:
   /wallet                        Create, import, or inspect your wallet
   /portfolio                     Overview: positions, P&L, risk snapshot
   /portfolio positions           Open positions
-  /portfolio orders              Resting orders
   /portfolio balance             Account balance
 
 System:
@@ -573,9 +570,10 @@ export function buildHelp(ctx: HelpContext, topic?: string): { text: string } | 
   if (topic && isDeferredCommand(topic) && !octagonSupports(COMMAND_FEATURE[topic]!)) {
     return { text: octagonUnavailableMessage(COMMAND_FEATURE[topic]!, topic) };
   }
-  if (topic && isTradingCommand(topic)) {
+  const unavailable = topic ? commandUnavailableReason(topic) : null;
+  if (topic && unavailable) {
     const body = topics[topic];
-    return { text: body ? `${TRADING_UNAVAILABLE_MESSAGE}\n\nReference (for when it lands):\n\n${body}` : TRADING_UNAVAILABLE_MESSAGE };
+    return { text: body ? `${unavailable}\n\nReference:\n\n${body}` : unavailable };
   }
 
   if (topic && topics[topic]) {

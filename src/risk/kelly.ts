@@ -1,6 +1,7 @@
 import { fetchPortfolioValue, fetchPositions, getWalletAddress } from "../tools/polymarket/portfolio.js";
 import type { PolymarketMarket } from "../tools/polymarket/types.js";
 import { getBotSetting } from "../utils/bot-config.js";
+import { readPusdBalance } from "../chain/erc20.js";
 
 export interface KellySizeParams {
   edge: number; // model_prob - market_prob (signed)
@@ -22,26 +23,31 @@ export interface KellyResult {
   shares: number; // outcome shares to buy
   notionalUsdc: number; // shares * entryPrice
   entryPrice: number; // actual entry price used (ask, not midpoint), 0-1
-  availableBankroll: number; // cash - open exposure (USDC)
+  availableBankroll: number; // min(wallet cash, cap - open exposure), in USD
   openExposure: number; // sum of position current_value (USDC)
-  cashBalance: number; // configured bankroll (USDC)
+  cashBalance: number; // wallet balance, or the configured cap standing in for it
   portfolioValue: number; // mark-to-market position value (USDC)
   liquidityAdjusted: boolean;
   skippedReason?: string; // if shares=0, explains why
 }
+
+/** Where `availableBankroll` came from — surfaced so output can explain itself. */
+export type BankrollSource = 'none' | 'wallet' | 'config' | 'capped';
 
 export interface LiveBankroll {
   cashBalance: number; // USDC
   portfolioValue: number; // USDC
   openExposure: number; // USDC
   availableBankroll: number; // USDC
-  /** True when no bankroll is configured, so sizing cannot be computed. */
+  /** True when neither a wallet balance nor a configured cap is available. */
   bankrollUnset: boolean;
+  bankrollSource: BankrollSource;
+  /** The configured `risk.bankroll_usdc` ceiling, or null when unset. */
+  cap: number | null;
   /**
-   * Free collateral read from the chain, or null when it is not readable.
+   * Free pUSD read from the chain, or null when it is not readable.
    *
-   * Always null until wallet support lands — there is no chain read yet. It is
-   * deliberately NOT the configured `risk.bankroll_usdc`: that number is static,
+   * Deliberately NOT the configured `risk.bankroll_usdc`: that number is static,
    * so it would not fall as cash is spent, and equity would then appear to grow
    * every time a position is opened.
    */
@@ -57,44 +63,80 @@ export interface LiveBankroll {
 }
 
 /**
- * Fetch live bankroll, in USDC.
+ * Fetch live bankroll, in USD.
  *
- * Polymarket has no equivalent of Kalshi's /portfolio/balance: free collateral
- * is pUSD held on-chain, and the Data API reports only position value. Cash must therefore be
- * configured via `risk.bankroll_usdc`; when it is not, `bankrollUnset` is true and
- * callers should say so rather than size against a number we do not have.
+ * Two independent sources, and they mean different things:
+ *
+ *  - **`walletCash`** — free pUSD read from the chain. Polymarket has no
+ *    equivalent of Kalshi's /portfolio/balance, so this is an ERC-20 read
+ *    against the funding wallet. It is ALREADY net of open positions, because
+ *    positions are held as outcome tokens rather than as encumbered cash.
+ *  - **`risk.bankroll_usdc`** — a ceiling the user sets on what sizing may
+ *    risk in total. Static, so it does not fall as cash is spent.
+ *
+ * Because they mean different things they combine rather than override:
+ *
+ *     available = min( walletCash , cap - openExposure )
+ *
+ * with a missing term dropping out. Subtracting `openExposure` from the wallet
+ * balance would double-count — the classic error here — while not subtracting
+ * it from the cap would let a ceiling of 1,000 deploy 1,000 twice.
  */
 export async function fetchLiveBankroll(): Promise<LiveBankroll> {
   // Research and scanning must work without a wallet, so a missing or
   // unreachable wallet degrades to zeros instead of throwing.
   let value = { portfolio_value: 0, address: '' };
   let positions: Awaited<ReturnType<typeof fetchPositions>> = [];
-  if (getWalletAddress()) {
-    try {
-      [value, positions] = await Promise.all([fetchPortfolioValue(), fetchPositions()]);
-    } catch {
-      // Data API unreachable — fall through with zeros
-    }
+  let walletCash: number | null = null;
+
+  const address = getWalletAddress();
+  if (address) {
+    // allSettled, not all: the Data API and the Polygon RPC fail independently,
+    // and one being down must not blank the other. Issued together so the cash
+    // and position legs of equity are read at close to the same instant — they
+    // are still not atomic, so a snapshot taken across a fill can show a
+    // transient blip.
+    const [valueRes, positionsRes, cashRes] = await Promise.allSettled([
+      fetchPortfolioValue(),
+      fetchPositions(),
+      readPusdBalance(address),
+    ]);
+    if (valueRes.status === 'fulfilled') value = valueRes.value;
+    if (positionsRes.status === 'fulfilled') positions = positionsRes.value;
+    if (cashRes.status === 'fulfilled') walletCash = cashRes.value;
   }
 
-  const configured = Number(getBotSetting('risk.bankroll_usdc') ?? 0);
-  const cashBalance = Number.isFinite(configured) && configured > 0 ? configured : 0;
+  const rawCap = Number(getBotSetting('risk.bankroll_usdc') ?? 0);
+  const cap = Number.isFinite(rawCap) && rawCap > 0 ? rawCap : null;
+
   const portfolioValue = value.portfolio_value;
   const openExposure = positions.reduce((sum, p) => sum + (p.current_value || 0), 0);
-  const availableBankroll = Math.max(0, cashBalance - openExposure);
 
-  // No chain read exists yet, so cash is unknown rather than zero and equity is
-  // therefore unknown too. Snapshots taken now record NULL and are skipped by
-  // every high-water-mark walk, which is what stops them from being read later
-  // as an account that fell to nothing.
-  const walletCash: number | null = null;
+  // Each term is dropped when unknown rather than defaulted to zero: a failed
+  // balance read must not read as "no money", and an unset cap must not read as
+  // "cap of nothing".
+  const limits: number[] = [];
+  if (walletCash !== null) limits.push(walletCash);
+  if (cap !== null) limits.push(cap - openExposure);
+  const availableBankroll = limits.length > 0 ? Math.max(0, Math.min(...limits)) : 0;
+
+  const bankrollSource: BankrollSource =
+    walletCash !== null && cap !== null ? 'capped'
+    : walletCash !== null ? 'wallet'
+    : cap !== null ? 'config'
+    : 'none';
 
   return {
-    cashBalance,
+    // The real balance when we have one, else the configured figure standing in
+    // for it. `walletCash` stays separately available for anything that must
+    // not accept a stand-in — the equity maths, above all.
+    cashBalance: walletCash ?? cap ?? 0,
     portfolioValue,
     openExposure,
     availableBankroll,
-    bankrollUnset: cashBalance === 0,
+    bankrollUnset: bankrollSource === 'none',
+    bankrollSource,
+    cap,
     walletCash,
     equity: walletCash === null ? null : walletCash + portfolioValue,
   };
@@ -177,7 +219,9 @@ export async function kellySize(params: KellySizeParams): Promise<KellyResult> {
 
   if (bankroll.bankrollUnset) {
     return makeResult({
-      skippedReason: 'No bankroll configured — set risk.bankroll_usdc (Polymarket does not expose a cash balance)',
+      skippedReason:
+        'No bankroll available — configure a wallet (polymarket wallet create) so the ' +
+        'pUSD balance can be read, or set a limit with: polymarket config risk.bankroll_usdc <amount>',
     });
   }
 
@@ -229,7 +273,12 @@ export async function kellySize(params: KellySizeParams): Promise<KellyResult> {
 
   const skippedReason = shares === 0
     ? (availableBankroll === 0
-      ? 'No available bankroll'
+      // Naming the binding constraint matters: a cap swallowed by existing
+      // exposure looks identical to an empty wallet, and the fix is different.
+      ? (bankroll.cap !== null
+        ? `No available bankroll: the risk.bankroll_usdc limit of $${bankroll.cap.toFixed(2)} is fully `
+          + `used by $${openExposure.toFixed(2)} of open positions. Raise the limit to size new trades.`
+        : 'No available bankroll: the wallet has no free pUSD.')
       : entryPrice === 0
         ? 'Entry price rounds to zero'
         : `Position below the ${market?.min_order_size ?? 0}-share venue minimum`)

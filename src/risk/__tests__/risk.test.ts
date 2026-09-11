@@ -12,23 +12,32 @@ import { getCorrelationByCategory, isCorrelated } from '../correlation.js';
 import { CircuitBreaker } from '../circuit-breaker.js';
 import * as polyPortfolio from '../../tools/polymarket/portfolio.js';
 import * as botConfig from '../../utils/bot-config.js';
+import * as erc20 from '../../chain/erc20.js';
+import { resetWalletIdentityCache } from '../../wallet/identity.js';
 
 // --- Mock the Data API portfolio reads and the configured bankroll ---
 // Polymarket exposes no cash balance, so kelly reads `risk.bankroll_usdc`.
 
 let mockBankrollUsdc = 0;
 let mockPositions: Array<{ current_value: number }> = [];
+/** On-chain free pUSD. null means unreadable, which is not the same as zero. */
+let mockWalletCash: number | null = null;
 const spies: Array<{ mockRestore: () => void }> = [];
 
 const TEST_WALLET = '0x' + '1'.repeat(40);
 
 function installApiMock() {
-  // getWalletAddress returns undefined in production until the wallet phase, and
-  // fetchLiveBankroll skips the Data API entirely without one. These tests cover
-  // the sizing maths for when it is re-enabled, so the wallet is stubbed in
-  // rather than set via the env var, which is no longer read.
+  // The wallet is stubbed in rather than set via env, so these tests exercise
+  // the sizing maths regardless of what wallet the developer has configured.
+  //
+  // readPusdBalance MUST be stubbed too: with an address present,
+  // fetchLiveBankroll reads the chain, and an unstubbed call would both hit the
+  // network from a unit test and return ~0 for this fake address — which then
+  // caps every size at zero.
   const realGetBotSetting = botConfig.getBotSetting;
+  resetWalletIdentityCache();
   spies.push(
+    spyOn(erc20, 'readPusdBalance').mockImplementation(async () => mockWalletCash),
     spyOn(polyPortfolio, 'getWalletAddress').mockImplementation(() => TEST_WALLET),
     spyOn(polyPortfolio, 'fetchPortfolioValue').mockImplementation(
       async () => ({ portfolio_value: mockBankrollUsdc, address: TEST_WALLET }),
@@ -44,6 +53,8 @@ function installApiMock() {
 
 function restoreApiMock() {
   for (const spy of spies.splice(0)) spy.mockRestore();
+  mockWalletCash = null;
+  resetWalletIdentityCache();
 }
 
 // --- Helpers ---

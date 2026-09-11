@@ -1,5 +1,5 @@
 import { fetchExchangeStatus } from '../tools/polymarket/exchange.js';
-import { TRADING_UNAVAILABLE_MESSAGE } from '../tools/polymarket/polymarket-trade.js';
+import { TRADING_UNAVAILABLE_MESSAGE, commandUnavailableReason } from '../tools/polymarket/polymarket-trade.js';
 import { formatExchangeStatus } from './formatters.js';
 import { handleThemes, formatThemesHuman } from './themes.js';
 import type { ParsedArgs, Subcommand } from './parse-args.js';
@@ -29,6 +29,7 @@ import { handlePeers, formatPeersHuman } from './peers.js';
 import { handleCorrelate, formatCorrelationHuman } from './correlate.js';
 import { handleBasket, formatBasketHuman } from './basket.js';
 import { handleWallet, formatWalletHuman } from './wallet.js';
+import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
 import { handleEvents, formatEventsHuman } from './events.js';
 import { handleTrust, formatTrustHuman } from './trust.js';
 import { handleReport, formatReportHuman } from './report.js';
@@ -329,15 +330,24 @@ export async function executePendingTrade(_trade: NonNullable<CommandResult['pen
 // ─── Portfolio subview handler ──────────────────────────────────────────────
 
 /**
- * `/status` is the only account-adjacent view still available: it checks setup
- * and CLOB reachability, neither of which needs a wallet. Positions, balance and
- * resting orders all read an account, and configuring that wallet is part of the
- * trading setup that does not exist yet.
+ * `/status` checks setup and CLOB reachability and needs no wallet, so it is
+ * always available. Every other subview reads an account and therefore needs at
+ * least an address — reporting an empty portfolio for someone with no wallet
+ * would look exactly like a real, empty account.
  */
 async function handlePortfolioSlash(subview?: string): Promise<CommandResult> {
   const view = subview?.toLowerCase() ?? 'overview';
   if (view !== 'status') {
-    return { output: TRADING_UNAVAILABLE_MESSAGE };
+    const unavailable = commandUnavailableReason('portfolio');
+    if (unavailable) return { output: unavailable };
+    const parsed = parseArgs(['portfolio', ...(subview ? [subview] : [])]);
+    return {
+      output: 'Loading portfolio...',
+      asyncFollowUp: async () => {
+        const resp = await handlePortfolio(parsed);
+        return resp.ok ? formatPortfolioHuman(resp.data, resp.meta?.warnings ?? []) : (resp.error?.message ?? 'portfolio failed');
+      },
+    };
   }
   try {
     const data = await fetchExchangeStatus();

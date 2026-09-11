@@ -12,7 +12,7 @@ import { logger } from '../../utils/logger.js';
 import { getMarkets, getMarket, getMarketOrderbook, getMarketPriceHistory } from './markets.js';
 import { getEvents, getEvent, searchEventsTool } from './events.js';
 import { getSeries } from './series.js';
-import { getBalance, getPositions, getWalletAddress } from './portfolio.js';
+import { getPortfolioValue, getCashBalance, getPositions, getWalletAddress } from './portfolio.js';
 import { getExchangeStatus } from './exchange.js';
 
 export const POLYMARKET_SEARCH_DESCRIPTION = `
@@ -61,7 +61,7 @@ const MARKET_DATA_TOOLS: StructuredToolInterface[] = [
 ];
 
 /** Tools that need a configured wallet; every one throws without an address. */
-const WALLET_TOOLS: StructuredToolInterface[] = [getBalance, getPositions];
+const WALLET_TOOLS: StructuredToolInterface[] = [getPortfolioValue, getCashBalance, getPositions];
 
 /**
  * The routable tool set, resolved per call rather than once at module load.
@@ -122,7 +122,8 @@ search_events usually returns prices directly, so step 3 is often unnecessary.
 - **Known market slug / condition id / URL** -> get_market(ticker="xi-jinping-out-before-2027")
 - **Order book depth** -> get_market_orderbook(ticker=...)
 - **Price history** -> get_market_price_history(ticker=..., interval="1d")
-${getWalletAddress() ? `- **Portfolio value** -> get_balance
+${getWalletAddress() ? `- **Position value (mark-to-market)** -> get_portfolio_value
+- **Free cash / collateral** -> get_cash_balance
 - **Open positions** -> get_positions
 ` : ''}- **CLOB reachable?** -> get_exchange_status
 

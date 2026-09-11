@@ -145,7 +145,7 @@ Type help for commands, or just ask a question.
 | `sell <ticker> <count> [price] [yes\|no]` | Sell contracts — **⏳ trading not implemented yet** |
 | `cancel <order_id>` | Cancel a resting order — **⏳ trading not implemented yet** |
 | `backtest` | Model accuracy scorecard + live edge scanner |
-| `portfolio` | Positions, P&L, risk snapshot — **⏳ ships with trading support** |
+| `portfolio` | Cash, positions, P&L, risk snapshot — needs a wallet |
 | `setup` | Re-run setup wizard (inside TUI) |
 | `init` | Launch setup wizard from CLI (`polymarket init`) |
 | `clear-cache` | Delete local cache and rebuild (`polymarket clear-cache`) |
@@ -462,24 +462,34 @@ Polymarket's own CLI.
 
 ### Bankroll
 
-Position sizing needs a limit to work from. Polymarket has no cash-balance
-endpoint: free collateral is **pUSD**, an ERC-20 held on-chain by your funding
-wallet, not something the market-data APIs report. So the figure is a setting
-rather than something the CLI can discover:
+With a wallet configured, position sizing uses your on-chain **pUSD** balance
+automatically — nothing to set.
+
+`risk.bankroll_usdc` is an optional **cap** on top of that, for when the wallet
+holds more than you want this bot to trade:
 
 ```bash
 polymarket config risk.bankroll_usdc 1000
 ```
 
-The setup wizard asks for this. Until it is set, `analyze` still reports edge,
-probabilities and catalysts, but skips position sizing with *"No bankroll
-configured"* — it will not size against a number it does not have. This is not a
-deposit or a transfer; it is a ceiling on what sizing may risk, and you can
-change it at any time.
+The two combine as `min(wallet balance, cap − open exposure)`. Open exposure is
+subtracted from the cap but **not** from the wallet balance, because positions
+are held as outcome tokens rather than as reserved cash — the balance is already
+net of them.
 
-> Note this is a *limit*, not a balance. Reading your actual pUSD balance lands
-> with balance support; when it does, this setting becomes a cap on top of it,
-> so a value you set now keeps meaning the same thing.
+| Wallet | `risk.bankroll_usdc` | Sizing uses |
+|---|---|---|
+| yes | unset | the wallet balance |
+| yes | set | the lower of the two |
+| no | set | the cap, less open exposure |
+| no | unset | nothing — `analyze` reports edge but skips sizing |
+
+Without either, `analyze` still reports edge, probabilities and catalysts, but
+skips sizing with *"No bankroll available"* rather than sizing against a number
+it does not have.
+
+If the balance cannot be read — an unreachable RPC, say — that is reported as
+*unknown*, never as zero. A failed read must not look like an empty account.
 
 ### Runtime Settings
 

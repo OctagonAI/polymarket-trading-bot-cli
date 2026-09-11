@@ -30,6 +30,8 @@ function bankroll(walletCash: number | null, portfolioValue: number): LiveBankro
     openExposure: 0,
     availableBankroll: walletCash ?? 0,
     bankrollUnset: walletCash === null,
+    bankrollSource: walletCash === null ? 'none' : 'wallet',
+    cap: null,
     walletCash,
     equity: walletCash === null ? null : walletCash + portfolioValue,
   };

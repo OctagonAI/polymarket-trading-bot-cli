@@ -2,45 +2,56 @@ import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { callPolymarketApi, num } from './api.js';
 import { logger } from '../../utils/logger.js';
+import { loadWalletIdentity } from '../../wallet/identity.js';
+import { readPusdBalance } from '../../chain/erc20.js';
 import { formatToolResult } from '../types.js';
 import type { PolymarketBalance, PolymarketPosition } from './types.js';
 
 /**
- * Read-only portfolio access needs only a wallet address — no signing. Note this
- * is the *proxy* wallet that holds funds, which for most Polymarket users is not
- * the same as the signing EOA.
+ * Read-only portfolio access needs only an address — no signing.
  *
- * DELIBERATELY DISABLED until the wallet/trading phase.
+ * This is the *funding* (proxy) wallet, which for every Polymarket user is a
+ * different address from the signing EOA. Querying the EOA returns an empty
+ * account, so the distinction is not cosmetic.
  *
- * Reading the env var here would re-enable the whole account path — not just the
- * `portfolio` command, which is gated, but `fetchLiveBankroll`, which the scan
- * loop calls on every pass. That feeds `CircuitBreaker.snapshot`, where
- * `drawdown = (highWaterMark - portfolioValue) / highWaterMark` is computed from
- * mark-to-market position value with no cash term, because Polymarket exposes no
- * free-USDC balance. Closing positions then reads as a ~100% drawdown while
- * capital is intact, `drawdown_max` keeps it as a running maximum, and every
- * later `analyze` fails its drawdown gate.
- *
- * Returning undefined unconditionally makes `portfolioValue` always 0, so the
- * high-water mark stays 0 and the drawdown branch is never taken. Defining
- * drawdown properly is part of the wallet work; until then this is off rather
- * than latent, and POLYMARKET_WALLET_ADDRESS is not advertised anywhere.
- *
- * To re-enable, restore the read:
- *
- *   const addr = process.env.POLYMARKET_WALLET_ADDRESS?.trim();
- *   return addr && /^0x[0-9a-fA-F]{40}$/.test(addr) ? addr : undefined;
+ * Re-enabled now that drawdown is measured on equity rather than on position
+ * value alone. The previous hard-disable existed because `fetchLiveBankroll`
+ * runs on every scan pass and fed a drawdown formula with no cash term, so
+ * closing a position read as a ~100% drawdown and latched. That formula is gone
+ * (see `CircuitBreaker.snapshot`), and an unreadable balance now records a null
+ * equity rather than a zero.
  */
 export function getWalletAddress(): string | undefined {
-  return undefined;
+  return loadWalletIdentity().address;
+}
+
+/** True when a signing key is available, i.e. orders can be placed. */
+export function canSign(): boolean {
+  return loadWalletIdentity().tier === 'trade';
+}
+
+/**
+ * Throws unless a signing key is configured. For the order path only — reads
+ * work at the watch tier and must not call this.
+ */
+export function requireSigner(): string {
+  const id = loadWalletIdentity();
+  if (id.tier !== 'trade') {
+    throw new Error(
+      id.tier === 'watch'
+        ? `This wallet is watch-only (${id.address}). Run \`polymarket wallet import <private-key> --force\` to place orders.`
+        : 'No wallet configured. Run `polymarket wallet create` or `polymarket wallet import <private-key>`.',
+    );
+  }
+  return id.signer!;
 }
 
 export function requireWalletAddress(): string {
   const addr = getWalletAddress();
   if (!addr) {
     throw new Error(
-      'Portfolio reads are not available yet: they need a configured wallet, ' +
-        'which arrives with trading support.'
+      'No wallet configured. Run `polymarket wallet create` for a new one, or ' +
+        '`polymarket wallet import <address>` to read an existing account.'
     );
   }
   return addr;
@@ -152,10 +163,74 @@ export const getPositions = new DynamicStructuredTool({
   },
 });
 
-export const getBalance = new DynamicStructuredTool({
-  name: 'get_balance',
+/**
+ * Renamed from `get_balance`, which was actively misleading: it returns
+ * mark-to-market position value, so a router asking "what is my balance?" got a
+ * number that excludes every dollar of free cash.
+ */
+export const getPortfolioValue = new DynamicStructuredTool({
+  name: 'get_portfolio_value',
   description:
-    'Get total Polymarket portfolio value (mark-to-market of open positions) for the configured wallet. Free collateral (pUSD) is held on-chain and is not included.',
+    'Get the mark-to-market value of open Polymarket positions for the configured wallet. '
+    + 'This is NOT cash — free collateral is pUSD held on-chain; use get_cash_balance for that.',
   schema: z.object({}),
-  func: async () => formatToolResult({ balance: await fetchPortfolioValue() }),
+  func: async () => formatToolResult({ portfolio_value: await fetchPortfolioValue() }),
+});
+
+export const getCashBalance = new DynamicStructuredTool({
+  name: 'get_cash_balance',
+  description:
+    'Get free collateral (pUSD) held on-chain by the configured Polymarket funding wallet. '
+    + 'Returns null when the balance cannot be read — that means unknown, not zero.',
+  schema: z.object({}),
+  func: async () => {
+    const address = requireWalletAddress();
+    const balance = await readPusdBalance(address);
+    return formatToolResult({
+      address,
+      cash_balance: balance,
+      symbol: 'pUSD',
+      ...(balance === null ? { note: 'Balance could not be read; this is unknown, not zero.' } : {}),
+    });
+  },
+});
+
+/**
+ * One call for the whole account: cash, position value, and positions.
+ *
+ * Exists so the agent does not have to chain three tools and then reason about
+ * which of them means "money I can spend". Cash and position value are reported
+ * separately and never summed into a single "balance" — that conflation is what
+ * made the old `get_balance` misleading.
+ */
+export const portfolioOverviewTool = new DynamicStructuredTool({
+  name: 'portfolio_overview',
+  description: 'Portfolio overview: free cash (pUSD), position value, and open positions in one call.',
+  schema: z.object({}),
+  func: async () => {
+    const address = requireWalletAddress();
+    const [valueRes, positionsRes, cashRes] = await Promise.allSettled([
+      fetchPortfolioValue(address),
+      fetchPositions(address),
+      readPusdBalance(address),
+    ]);
+
+    const warnings: string[] = [];
+    if (valueRes.status === 'rejected') warnings.push('Position value unavailable (Data API).');
+    if (positionsRes.status === 'rejected') warnings.push('Positions unavailable (Data API).');
+
+    const cashBalance = cashRes.status === 'fulfilled' ? cashRes.value : null;
+    const portfolioValue = valueRes.status === 'fulfilled' ? valueRes.value.portfolio_value : null;
+
+    return formatToolResult({
+      address,
+      cash_balance: cashBalance,
+      cash_symbol: 'pUSD',
+      portfolio_value: portfolioValue,
+      equity: cashBalance !== null && portfolioValue !== null ? cashBalance + portfolioValue : null,
+      positions: positionsRes.status === 'fulfilled' ? positionsRes.value : [],
+      ...(cashBalance === null ? { cash_note: 'Cash balance could not be read; unknown, not zero.' } : {}),
+      ...(warnings.length > 0 ? { warnings } : {}),
+    });
+  },
 });

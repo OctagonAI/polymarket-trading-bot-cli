@@ -120,28 +120,30 @@ describe('ScanLoop', () => {
     expect(rows[0].ticker).toBe('MKT-YES');
   });
 
-  test('risk_snapshots record no account data while the wallet path is disabled', async () => {
+  test('a scan pass records a snapshot with account fields present', async () => {
     await loop.runOnce({ theme: 'test-theme' });
 
     const snapshot = getLatestSnapshot(db);
     expect(snapshot).not.toBeNull();
-    // The wallet is off until the trading phase, so the Data API is never read
-    // even though POLYMARKET_WALLET_ADDRESS is set above. Both of these are
-    // wallet-derived, so both stay 0.
-    expect(snapshot!.portfolio_value).toBe(0);
-    expect(snapshot!.open_exposure).toBe(0);
-    // cash_balance is deliberately NOT asserted: it comes from the
-    // risk.bankroll_usdc setting, not the wallet, and is legitimately non-zero
-    // for anyone who has configured one. Asserting 0 only passed because the
-    // default is 0, and made this test fail on a developer machine with a
-    // bankroll set — reading the real ~/.polymarket-bot/config.json.
+    // With a wallet address set, the Data API is read on every pass and its
+    // mocked values land in the snapshot — previously these columns were always
+    // 0 because the wallet path was switched off entirely.
+    expect(snapshot!.portfolio_value).not.toBeNull();
+    expect(snapshot!.open_exposure).not.toBeNull();
+    // No funded wallet and no RPC stub, so cash is unreadable — which must be
+    // recorded as unknown rather than as an account worth nothing.
+    expect(snapshot!.wallet_cash).toBeNull();
+    expect(snapshot!.equity).toBeNull();
+    // cash_balance is deliberately NOT asserted: with no readable wallet
+    // balance it falls back to the risk.bankroll_usdc setting, which is
+    // legitimately non-zero on a developer machine that has one configured.
   });
 
   test('drawdown stays 0 so the risk gate cannot trip on a phantom loss', async () => {
-    // portfolio_value is mark-to-market position value with no cash term, so if
-    // the wallet were live, closing positions would read as a ~100% drawdown and
-    // fail every later analyze. With the wallet off the high-water mark stays 0
-    // and the drawdown branch is never taken. Guards the regression directly.
+    // Drawdown is measured on equity now, so closing a position is not a loss.
+    // Here the balance is unreadable (no funded wallet in tests), which records
+    // a null equity — and a null equity must report drawdown 0 rather than
+    // treating "unknown" as "wiped out". Guards the regression directly.
     await loop.runOnce({ theme: 'test-theme' });
 
     const snapshot = getLatestSnapshot(db);

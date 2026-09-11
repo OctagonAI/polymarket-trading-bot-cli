@@ -38,7 +38,7 @@ import { ensureIndex, onIndexProgress, getRefreshPromise } from './tools/polymar
 import { TRADING_UNAVAILABLE_MESSAGE } from './tools/polymarket/polymarket-trade.js';
 import { isDeferredCommand } from './scan/octagon-capabilities.js';
 import { allThemeIds } from './scan/theme-registry.js';
-import { isTradingCommand } from './tools/polymarket/polymarket-trade.js';
+import { isCommandAvailable } from './tools/polymarket/polymarket-trade.js';
 import { SetupWizardController } from './setup/wizard.js';
 import { trackEvent } from './utils/telemetry.js';
 
@@ -513,7 +513,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     { name: 'quit', description: 'Quit CLI session' },
     // Commands gated by octagon-capabilities are hidden from autocomplete but
     // still reachable by typing, where they explain why they are unavailable.
-  ].filter((c) => !isDeferredCommand(c.name) && !isTradingCommand(c.name));
+  ].filter((c) => !isDeferredCommand(c.name) && isCommandAvailable(c.name));
   editor.setAutocompleteProvider(new CombinedAutocompleteProvider(slashCommands));
 
   tui.addChild(root);

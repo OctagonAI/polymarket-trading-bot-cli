@@ -22,7 +22,9 @@ function withWallet(address: string | undefined) {
   spies.push(spyOn(polyPortfolio, 'getWalletAddress').mockImplementation(() => address));
 }
 
-const WALLET_TOOL_NAMES = ['get_balance', 'get_positions'];
+// get_balance was renamed: it returned mark-to-market position value, so a
+// router asked for "my balance" got a number excluding every dollar of cash.
+const WALLET_TOOL_NAMES = ['get_portfolio_value', 'get_cash_balance', 'get_positions'];
 
 describe('polymarket_search wallet gating', () => {
   test('no wallet: the router is not offered tools that would throw', () => {
@@ -53,6 +55,16 @@ describe('polymarket_search wallet gating', () => {
     const names = getTools('test-model').map((t) => t.name);
     expect(names).not.toContain('portfolio_overview');
     expect(names).not.toContain('portfolio_review');
+  });
+
+  test('wallet configured: the registry gains portfolio_overview', () => {
+    withWallet('0x' + '1'.repeat(40));
+    expect(getTools('test-model').map((t) => t.name)).toContain('portfolio_overview');
+  });
+
+  test('get_balance is gone — its name claimed cash it never returned', () => {
+    withWallet('0x' + '1'.repeat(40));
+    expect(polymarketReadToolNames()).not.toContain('get_balance');
   });
 
   test('the meta-tool description flags that the wallet path is conditional', () => {

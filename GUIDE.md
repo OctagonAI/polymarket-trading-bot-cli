@@ -29,7 +29,7 @@ bunx polymarket-trading-bot-cli@latest
 
 That's it — no clone required. The setup wizard runs automatically on first launch and writes your API keys to `~/.polymarket-bot/.env`.
 
-The wizard also asks for a **bankroll** — a ceiling on what position sizing may risk. Polymarket has no cash-balance endpoint (free collateral is **pUSD**, an ERC-20 held on-chain by your funding wallet, not something the market-data APIs report), so the figure cannot be discovered and has to be set. It is a limit, not a balance:
+The wizard also asks about a **bankroll**. With a wallet configured you can leave it empty: sizing reads your on-chain **pUSD** balance. Set a figure only to cap risk below that balance. Without a wallet there is nothing to read, so the figure is the only thing sizing has:
 
 ```bash
 polymarket config risk.bankroll_usdc 1000
@@ -111,8 +111,8 @@ autocomplete, and running it explains why.
 | `/wallet` | Show your wallet: addresses, mode, on-chain status | `/wallet` |
 | `/wallet create` | Generate a new dedicated wallet | `/wallet create` |
 | `/wallet import <key\|address>` | Bring an existing wallet (key = trading, address = read-only) | `/wallet import 0x…` |
-| `/balance` ⏳ | Account balance — **needs trading support** | `/balance` |
-| `/positions` ⏳ | Open positions with P&L — **needs trading support** | `/positions` |
+| `/balance` | Free pUSD in your funding wallet | `/balance` |
+| `/positions` | Open positions with P&L | `/positions` |
 | `/orders` ⏳ | Resting (open) orders — **needs trading support** | `/orders` |
 | `/markets [series]` | Browse markets, optionally filter by series slug | `/markets bitcoin` |
 | `/market <market-slug>` | Market detail + top-of-book orderbook | `/market bitcoin-above-95k-by-april-30` |

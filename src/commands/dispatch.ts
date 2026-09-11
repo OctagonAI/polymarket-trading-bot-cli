@@ -10,7 +10,7 @@ import { handleStatus } from './status.js';
 import { handleThemes, formatThemesHuman } from './themes.js';
 import { handleWatch } from './watch.js';
 import { handleBacktest, formatBacktestHuman } from './backtest.js';
-import { TRADING_UNAVAILABLE_MESSAGE, isTradingCommand } from '../tools/polymarket/polymarket-trade.js';
+import { commandUnavailableReason } from '../tools/polymarket/polymarket-trade.js';
 import { buildHelp } from './help.js';
 import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 import { ensureIndex, forceRefreshIndex } from '../tools/polymarket/search-index.js';
@@ -25,6 +25,7 @@ import { handlePeers, formatPeersHuman } from './peers.js';
 import { handleCorrelate, formatCorrelationHuman } from './correlate.js';
 import { handleBasket, formatBasketHuman } from './basket.js';
 import { handleWallet, formatWalletHuman } from './wallet.js';
+import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
 import { searchOctagonMarkets, searchOctagonEvents, EVENT_SEARCH_TEXT_TIMEOUT_MS, getEventsWithEdge } from '../scan/octagon-api.js';
 import { formatMarketSearchHuman, formatEventSearchHuman, formatMarketsWithEdgeHuman } from './search-remote.js';
 import { findTheme } from '../scan/theme-registry.js';
@@ -168,16 +169,19 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       return;
     }
 
-    // ─── Commands that need wallet/trading support ────────────────────
-    // Order placement and every account read depend on a configured wallet,
-    // which is part of trading setup that does not exist yet. `status` is the
-    // exception: it resolves to a portfolio subview for historical reasons but
-    // only checks setup and CLOB reachability, neither of which needs a wallet.
-    if (isTradingCommand(resolved.canonical) && resolved.subview !== 'status') {
+    // ─── Commands whose availability depends on wallet state ──────────
+    // `portfolio` needs an address; orders additionally need a key. The reason
+    // is command- and tier-specific, so it says what is actually missing rather
+    // than one blanket "not available". `status` is the exception: it resolves
+    // to a portfolio subview for historical reasons but only checks setup and
+    // CLOB reachability, neither of which needs a wallet.
+    const unavailable =
+      resolved.subview === 'status' ? null : commandUnavailableReason(resolved.canonical);
+    if (unavailable) {
       if (json) {
-        console.log(JSON.stringify(wrapError(resolved.canonical, 'NOT_AVAILABLE', TRADING_UNAVAILABLE_MESSAGE)));
+        console.log(JSON.stringify(wrapError(resolved.canonical, 'NOT_AVAILABLE', unavailable)));
       } else {
-        console.error(TRADING_UNAVAILABLE_MESSAGE);
+        console.error(unavailable);
       }
       process.exit(ExitCode.USER_ERROR);
       return;
@@ -396,6 +400,21 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       } else {
         console.log(output);
       }
+      return;
+    }
+
+    // Full account view. Only `status` had a block before, so this path was
+    // unreachable from the CLI even once a wallet existed.
+    if (resolved.canonical === 'portfolio') {
+      const resp = await handlePortfolio(args);
+      if (json) {
+        console.log(JSON.stringify(resp));
+      } else if (resp.ok) {
+        console.log(formatPortfolioHuman(resp.data, resp.meta?.warnings ?? []));
+      } else {
+        console.error(resp.error?.message ?? 'portfolio failed');
+      }
+      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
       return;
     }
 

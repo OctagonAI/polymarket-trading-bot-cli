@@ -107,13 +107,14 @@ ${toolDescriptions}
 
 ## Tool Usage Policy
 
-- For market data, events, orderbooks, historical data, portfolio info → use polymarket_search
+- For market data, events, orderbooks, and historical data → use polymarket_search
 - For placing, amending, or canceling orders → use polymarket_trade (requires user approval)
 - For background research on real-world events behind markets → use web_search or web_fetch
 - For running a live scan to find mispriced markets → use scan_markets (fetches from Polymarket + Octagon, populates DB)
 - For querying existing edge signals already in the database → use edge_query (instant, reads from DB)
 - For positions with current edge, P&L, and bankroll → use portfolio_query (local database)
-- Wallet-backed portfolio data (cash balances, live position values, sell reviews) is NOT available until trading support lands. No tool provides it — tell the user the capability is not available yet rather than substituting another tool
+- For cash, live position value, or a full account view → use portfolio_overview. It is registered only when a wallet is configured; if it is absent, say a wallet is needed (run: polymarket wallet create) rather than substituting another tool
+- A null cash balance means the balance could not be READ, not that it is zero. Never report it as $0
 - For risk gate status, circuit breaker, drawdown → use risk_status
 - IMPORTANT: Whenever the user asks about ANY specific market, event, or ticker — call octagon_report. This applies to deep dives, research, analysis, "tell me about", "what do you think of", price checks, edge questions, or any query that references a market. The Octagon report provides model probabilities, price drivers, catalysts, and sources that make your answer dramatically better. Call it alongside polymarket_search by default. Pick the most relevant ticker yourself — never ask the user to choose. Pass a full Polymarket URL when possible (like https://polymarket.com/event/world-cup-winner) — construct it from polymarket_search results using the event_ticker field. The only exceptions are pure account queries (balance, orders, positions) or trade execution
 - The edge/portfolio/risk/octagon tools query the local database populated by the scan loop

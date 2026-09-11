@@ -1,5 +1,12 @@
-import { describe, test, expect } from 'bun:test';
-import { TRADING_COMMANDS, isTradingCommand } from '../../tools/polymarket/polymarket-trade.js';
+import { describe, test, expect, spyOn } from 'bun:test';
+import {
+  TRADING_COMMANDS,
+  ORDER_COMMANDS,
+  isTradingCommand,
+  isCommandAvailable,
+} from '../../tools/polymarket/polymarket-trade.js';
+import { resetWalletIdentityCache } from '../../wallet/identity.js';
+import * as walletStore from '../../wallet/store.js';
 import {
   DEFERRED_COMMANDS,
   COMMAND_FEATURE,
@@ -8,6 +15,33 @@ import {
   octagonUnavailableMessage,
 } from '../octagon-capabilities.js';
 import { buildHelp } from '../../commands/help.js';
+
+
+/**
+ * Run `fn` with no wallet visible from any source.
+ *
+ * The env vars alone are not enough: `loadWalletIdentity` also reads
+ * ~/.polymarket-bot/wallet.json, so without stubbing the store these assertions
+ * pass or fail depending on whether the developer running them has a wallet.
+ */
+function withNoWallet<T>(fn: () => T): T {
+  const prevKey = process.env.POLYMARKET_PRIVATE_KEY;
+  const prevAddr = process.env.POLYMARKET_WALLET_ADDRESS;
+  delete process.env.POLYMARKET_PRIVATE_KEY;
+  delete process.env.POLYMARKET_WALLET_ADDRESS;
+  const spy = spyOn(walletStore, 'readWalletFile').mockImplementation(() => null);
+  resetWalletIdentityCache();
+  try {
+    return fn();
+  } finally {
+    spy.mockRestore();
+    if (prevKey === undefined) delete process.env.POLYMARKET_PRIVATE_KEY;
+    else process.env.POLYMARKET_PRIVATE_KEY = prevKey;
+    if (prevAddr === undefined) delete process.env.POLYMARKET_WALLET_ADDRESS;
+    else process.env.POLYMARKET_WALLET_ADDRESS = prevAddr;
+    resetWalletIdentityCache();
+  }
+}
 
 describe('octagon capabilities', () => {
   test('every deferred command maps to a feature', () => {
@@ -42,10 +76,26 @@ describe('octagon capabilities', () => {
     }
   });
 
-  test('portfolio is gated with the trading commands, not the Octagon ones', () => {
-    // It reads an account, which needs the wallet trading setup provides.
+  test('portfolio is wallet-gated, not Octagon-gated', () => {
+    // It reads an account, so it needs an address — but not a key, and not
+    // anything Octagon provides.
     expect(isTradingCommand('portfolio')).toBe(true);
     expect(isDeferredCommand('portfolio')).toBe(false);
+  });
+
+  test('availability follows wallet state rather than a fixed list', () => {
+    withNoWallet(() => {
+      // No wallet: an account view would be all zeros, indistinguishable from a
+      // real empty account, so it stays hidden.
+      expect(isCommandAvailable('portfolio')).toBe(false);
+      for (const cmd of ORDER_COMMANDS) expect(isCommandAvailable(cmd)).toBe(false);
+
+      // Watch tier: reads work, orders still do not.
+      process.env.POLYMARKET_WALLET_ADDRESS = '0x' + '1'.repeat(40);
+      resetWalletIdentityCache();
+      expect(isCommandAvailable('portfolio')).toBe(true);
+      for (const cmd of ORDER_COMMANDS) expect(isCommandAvailable(cmd)).toBe(false);
+    });
   });
 
   test('status survives the portfolio gate', () => {
@@ -63,11 +113,17 @@ describe('help reflects the gate', () => {
     return 'text' in r ? r.text : '';
   };
 
-  test('overview hides gated and unimplemented commands', () => {
-    const text = overview();
-    for (const cmd of [...DEFERRED_COMMANDS, ...TRADING_COMMANDS]) {
-      expect(text).not.toMatch(new RegExp(`^\\s{2}${cmd}\\b`, 'm'));
-    }
+  test('overview hides what the current wallet state cannot run', () => {
+    withNoWallet(() => {
+      const text = overview();
+      // With no wallet that is still every trading command, but now because the
+      // wallet is absent rather than because a list says so.
+      for (const cmd of [...DEFERRED_COMMANDS, ...TRADING_COMMANDS]) {
+        expect(text).not.toMatch(new RegExp(`^\\s{2}${cmd}\\b`, 'm'));
+      }
+      // `wallet` is how you get out of that state, so it must always be listed.
+      expect(text).toMatch(/^\s{2}wallet\b/m);
+    });
   });
 
   test('overview still lists the commands that work', () => {
