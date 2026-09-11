@@ -137,6 +137,7 @@ Type help for commands, or just ask a question.
 | `themes report` | 25-theme dashboard with SEO + liquidity |
 | `themes audit` | Flag dead themes (high SEO + zero volume) |
 | `themes overlap` | Cross-theme dedupe report |
+| `wallet [show\|create\|import]` | Create, import, or inspect your Polymarket wallet |
 | `analyze <ticker>` | Deep analysis: edge, drivers, Kelly sizing |
 | `watch <ticker>` | Live price and orderbook feed |
 | `watch --theme <theme>` | Continuous theme scan |
@@ -180,6 +181,8 @@ Type help for commands, or just ask a question.
 | `--aggregate-by series` | Roll up search results to the series level |
 | `--active-only` | Drop non-active markets (defensive flag — open universe by default) |
 | `--series-prefix <prefix>` | Server-side series prefix match (e.g. `bitcoin` matches `bitcoin-above-…`) |
+| `--force` | Replace an existing wallet (`wallet create`, `wallet import`) |
+| `--proxy <address>` | Pin the funding address instead of deriving it (`wallet import`) |
 
 ### Discovery & Portfolio (Octagon-powered)
 
@@ -410,12 +413,52 @@ Polymarket market data is public, so there is no exchange key to set — reads w
 | `XAI_API_KEY` | xAI (Grok) |
 | `OPENROUTER_API_KEY` | OpenRouter (multi-model) |
 | `TAVILY_API_KEY` | Tavily web search for event research |
+| `POLYMARKET_PRIVATE_KEY` | Signing key, overriding `~/.polymarket-bot/wallet.json` for one session |
+| `POLYMARKET_WALLET_ADDRESS` | Read-only funding address, when you do not want a key on the machine |
+| `POLYMARKET_RPC_URL` | Polygon RPC (default `https://polygon.drpc.org`) |
 
 > **Note:** The bot defaults to GPT-5.4. If using a different provider, switch the model via the `config` command — otherwise queries will fail without `OPENAI_API_KEY`.
 
 ### Octagon Credits
 
 Each Octagon report costs 3 credits. Reports are cached with tiered TTLs based on market close proximity — markets closing soon get shorter cache windows. Use `--refresh` to force a fresh report. Set a daily credit ceiling with `config octagon.daily_credit_ceiling <n>`.
+
+### Wallet
+
+Research and market data need no wallet. Reading your balance, positions and P&L
+needs one, and placing trades needs its private key.
+
+```bash
+polymarket wallet create                # generate a new dedicated wallet
+polymarket wallet import <private-key>  # bring your own — enables trading
+polymarket wallet import <address>      # read-only: balances and positions
+polymarket wallet show                  # addresses, mode, on-chain status
+```
+
+A Polymarket account has **two** addresses, and confusing them is the classic
+way to see a zero balance on a funded account:
+
+| | |
+|---|---|
+| **Signing wallet** | The keypair. Signs orders, pays gas in POL. |
+| **Funding wallet** | A contract derived from it. Holds your pUSD. **Deposit here.** |
+
+`wallet show` prints both. An address you paste is treated as the *funding*
+wallet — that is the one polymarket.com shows you as your deposit address, and
+the one the Data API calls `proxyWallet`.
+
+**Use a wallet dedicated to this bot.** The private key is stored on this machine,
+and whatever it controls, this CLI controls. Fund it with what you intend to
+trade rather than pointing it at your main wallet. Polymarket's own CLI treats
+"make a fresh wallet for this tool" as the normal path, and so does this one.
+
+The key is written to `~/.polymarket-bot/wallet.json` with owner-only (`0600`)
+permissions — never to `.env`, which this CLI writes world-readable and which
+is easy to commit by accident. `POLYMARKET_PRIVATE_KEY` overrides the saved file
+for a single session.
+
+Only proxy wallets (signature type 1) are supported, matching the default in
+Polymarket's own CLI.
 
 ### Bankroll
 

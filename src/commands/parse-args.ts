@@ -15,6 +15,8 @@ const SUBCOMMANDS = [
   'trust',
   // Full markdown report viewer
   'report',
+  // Wallet management
+  'wallet',
 ] as const;
 
 export type Subcommand = (typeof SUBCOMMANDS)[number];
@@ -82,6 +84,10 @@ export interface ParsedArgs {
   daysToClose?: number;    // ergonomic shortcut: close_before = now + N days
   /** --market <ticker>: drill into a specific market within an event (trust). */
   market?: string;
+  /** --force: overwrite an existing wallet instead of refusing. */
+  force: boolean;
+  /** --proxy <address>: pin the funding address instead of deriving it. */
+  proxy?: string;
   parseErrors: string[];
 }
 
@@ -95,6 +101,8 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
   let minConfidence: string | undefined;
   let minEdge: number | undefined;
   let live = false;
+  let force = false;
+  let proxy: string | undefined;
   let refresh = false;
   let report = false;
   let side: 'yes' | 'no' | undefined;
@@ -212,6 +220,22 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
           side = lower;
         } else {
           parseErrors.push(`Invalid --side value: "${val}" (expected "yes" or "no")`);
+        }
+      }
+    } else if (arg === '--force') {
+      force = true;
+    } else if (arg === '--proxy') {
+      // Manual override for the derived proxy address. Derivation is the one
+      // wallet step that can be silently wrong, so a user who knows their
+      // deposit address can pin it rather than trust the derivation.
+      if (i + 1 >= argv.length) {
+        parseErrors.push('--proxy requires an address');
+      } else {
+        const value = argv[++i]!;
+        if (!/^0x[0-9a-fA-F]{40}$/.test(value)) {
+          parseErrors.push(`Invalid --proxy address: ${value}`);
+        } else {
+          proxy = value;
         }
       }
     } else if (arg === '--live') {
@@ -471,6 +495,7 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
     weights, bankroll, kellyMultiplier, n, maxPerCluster, maxCorrelation, minReturn, seriesTicker,
     sortBy, probabilities, tickers, query, showCluster, aggregateBy, activeOnly,
     seriesPrefix, sides, cells, autoProbs, daysToClose, market,
+    force, proxy,
     parseErrors,
   };
 }

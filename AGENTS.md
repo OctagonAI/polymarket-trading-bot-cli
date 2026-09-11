@@ -45,6 +45,12 @@ A CLI + TUI for AI-assisted prediction market research and trading on **Polymark
 When a command's flags or signature change, update **all** of: `src/commands/parse-args.ts`, `src/commands/help.ts`,
 `src/commands/index.ts`, `src/commands/dispatch.ts`, `src/cli.ts` (autocomplete `slashCommands`),
 `src/components/intro.ts`, `README.md`, `src/__tests__/e2e.test.ts`, `src/gateway/commands/handler.ts`.
+
+Adding a **non-optional** `ParsedArgs` field additionally breaks every copy of the defaults list.
+There are seven, not the two named above — `rg -l 'parseErrors: \[\],' src` finds them all, and
+`bun run typecheck` names any that were missed. A new wizard step also touches `src/setup/wizard.ts`,
+where the `Step N/M` titles are hard-coded in three parallel switches.
+
 This is the single largest source of drift in the repo — see `CLAUDE.md`.
 
 ## LLM Providers

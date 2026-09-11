@@ -24,6 +24,7 @@ import { handleClusters, formatClustersHuman } from './clusters.js';
 import { handlePeers, formatPeersHuman } from './peers.js';
 import { handleCorrelate, formatCorrelationHuman } from './correlate.js';
 import { handleBasket, formatBasketHuman } from './basket.js';
+import { handleWallet, formatWalletHuman } from './wallet.js';
 import { searchOctagonMarkets, searchOctagonEvents, EVENT_SEARCH_TEXT_TIMEOUT_MS, getEventsWithEdge } from '../scan/octagon-api.js';
 import { formatMarketSearchHuman, formatEventSearchHuman, formatMarketsWithEdgeHuman } from './search-remote.js';
 import { findTheme } from '../scan/theme-registry.js';
@@ -55,6 +56,16 @@ function resolveAlias(subcommand: Subcommand, positionalArgs: string[]): Resolve
     // `themes` is now the editorial-themes registry (curated narrative buckets).
     // Legacy "polymarket search themes" (Kalshi category labels) is still reachable
     // via `search themes`.
+
+    // wallet sub-routing (create/import/address/show) — telemetry granularity.
+    // The sub-verb is recorded; no address or key ever reaches telemetry.
+    case 'wallet': {
+      const sub = positionalArgs[0]?.toLowerCase();
+      if (sub === 'create' || sub === 'import' || sub === 'address' || sub === 'show') {
+        return { canonical: 'wallet', subview: sub };
+      }
+      return { canonical: 'wallet' };
+    }
 
     // basket sub-routing (build/backtest/size/candles) — exposed for telemetry granularity
     case 'basket': {
@@ -578,6 +589,19 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
     }
 
     // ─── basket (build, backtest, size, candles) ───────────────────────
+    if (resolved.canonical === 'wallet') {
+      const resp = await handleWallet(args);
+      if (json) {
+        console.log(JSON.stringify(resp));
+      } else if (resp.ok) {
+        console.log(formatWalletHuman(resp.data));
+      } else {
+        console.error(resp.error?.message ?? 'wallet failed');
+      }
+      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
+      return;
+    }
+
     if (resolved.canonical === 'basket') {
       const resp = await handleBasket(args);
       if (json) {

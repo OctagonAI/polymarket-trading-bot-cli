@@ -44,6 +44,35 @@ Examples:
 
 Tip: ${p}similar <market-slug> walks the event → series → category tree to find related markets.`,
 
+    wallet: `**${p}wallet** — Your Polymarket wallet
+
+${p}wallet                       Show the current wallet (same as \`show\`)
+${p}wallet create                Generate a new dedicated wallet
+${p}wallet import <private-key>  Bring an existing wallet (enables trading)
+${p}wallet import <address>      Read-only: balances and positions, no trading
+${p}wallet address               Print the funding address only
+${p}wallet show                  Addresses, mode, key source, on-chain proxy status
+
+Flags:
+  --force                           Replace an existing wallet
+  --proxy <address>                 Pin the funding address instead of deriving it
+
+A Polymarket account has two addresses:
+  Signing wallet   the keypair that signs. Pays gas in POL.
+  Funding wallet   a contract derived from it. Holds your pUSD. Deposit here.
+
+Reading a balance at the signing wallet always shows zero, so ${p}wallet show
+prints both. An address you paste is treated as the FUNDING wallet, which is
+what polymarket.com shows you as your deposit address.
+
+Use a dedicated wallet. The private key is stored on this machine and whatever
+it controls, this CLI controls — so fund it with what you intend to trade, not
+with everything you own.
+
+The key is written to ~/.polymarket-bot/wallet.json with owner-only (0600)
+permissions, never to .env. Override it for one session with
+POLYMARKET_PRIVATE_KEY, which takes precedence over the saved file.`,
+
     portfolio: `**${p}portfolio** — Account state
 
 ${p}portfolio                    Full overview: positions, P&L, risk snapshot
@@ -434,6 +463,7 @@ Analysis:
   backtest --unresolved         Live edge scanner only
 
 Account:
+  wallet                        Create, import, or inspect your wallet
   portfolio                     Overview: positions, P&L, risk snapshot
   portfolio positions           Open positions
   portfolio orders              Resting orders
@@ -512,6 +542,7 @@ Analysis:
   /cancel <order_id>                   Cancel a resting order
 
 Account:
+  /wallet                        Create, import, or inspect your wallet
   /portfolio                     Overview: positions, P&L, risk snapshot
   /portfolio positions           Open positions
   /portfolio orders              Resting orders

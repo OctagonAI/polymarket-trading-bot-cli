@@ -59,7 +59,11 @@ bun start        # or `bun run dev` for hot-reload
 
 ### Environment Variables
 
-Polymarket market data is public — there is no exchange key or private key to set.
+Polymarket market data is public — no credentials are needed to research. Reading
+your own balance and positions needs a wallet address; trading needs its private
+key. Prefer `polymarket wallet create` / `wallet import` over setting these by
+hand: that writes `~/.polymarket-bot/wallet.json` with owner-only permissions,
+whereas `.env` is written world-readable.
 
 | Variable | Required | Description |
 |---|---|---|
@@ -72,6 +76,9 @@ Polymarket market data is public — there is no exchange key or private key to 
 | `OPENROUTER_API_KEY` | One of these | OpenRouter API key |
 | `OLLAMA_BASE_URL` | No | Ollama endpoint (default `http://127.0.0.1:11434`) |
 | `TAVILY_API_KEY` | No | Enables web search tool for background research |
+| `POLYMARKET_PRIVATE_KEY` | No | Signing key; overrides the saved wallet for one session |
+| `POLYMARKET_WALLET_ADDRESS` | No | Read-only funding address, with no key on the machine |
+| `POLYMARKET_RPC_URL` | No | Polygon RPC (default `https://polygon.drpc.org`) |
 | `LANGSMITH_API_KEY` | No | LangSmith tracing for debugging |
 
 
@@ -101,6 +108,9 @@ autocomplete, and running it explains why.
 |---|---|---|
 | `/help` | Show all available commands | `/help` |
 | `/status` | Setup check: connectivity, API keys | `/status` |
+| `/wallet` | Show your wallet: addresses, mode, on-chain status | `/wallet` |
+| `/wallet create` | Generate a new dedicated wallet | `/wallet create` |
+| `/wallet import <key\|address>` | Bring an existing wallet (key = trading, address = read-only) | `/wallet import 0x…` |
 | `/balance` ⏳ | Account balance — **needs trading support** | `/balance` |
 | `/positions` ⏳ | Open positions with P&L — **needs trading support** | `/positions` |
 | `/orders` ⏳ | Resting (open) orders — **needs trading support** | `/orders` |

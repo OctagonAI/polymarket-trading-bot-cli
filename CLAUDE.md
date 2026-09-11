@@ -13,3 +13,9 @@
   - `README.md` — commands table, flags table, and examples
   - `src/__tests__/e2e.test.ts` — `makeParsedArgs()` defaults
   - `src/gateway/commands/handler.ts` — `makeArgs()` defaults
+
+- Adding a **non-optional** `ParsedArgs` field breaks every copy of the defaults list.
+  There are seven, not just the two listed above — `rg -l 'parseErrors: \[\],' src` finds
+  them all, and `bun run typecheck` names any that were missed.
+- A new setup-wizard step also touches `src/setup/wizard.ts`, where the `Step N/M` titles
+  are hard-coded in three parallel switches (`getTitle`, `getDescription`, `getFooter`).

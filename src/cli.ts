@@ -373,6 +373,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       { value: 'series', label: 'series', description: 'Series rollup / NAV' },
       { value: 'catalysts', label: 'catalysts', description: 'Upcoming market closes by week' },
       { value: 'themes', label: 'themes', description: 'Editorial narrative registry + dashboard' },
+      { value: 'wallet', label: 'wallet', description: 'Wallet setup: create, import, inspect' },
       { value: 'portfolio', label: 'portfolio', description: 'Account state' },
       { value: 'analyze', label: 'analyze', description: 'Market analysis' },
       { value: 'watch', label: 'watch', description: 'Live monitoring' },
@@ -474,6 +475,16 @@ export async function runCli(options?: { forceSetup?: boolean }) {
         { value: 'create <name> --tickers KX-A,KX-B', label: 'create', description: 'Add a new theme' },
         { value: 'add-series <name> KX-A,KX-B', label: 'add-series', description: 'Map series to a theme' },
         { value: 'export themes.json', label: 'export', description: 'Save registry to JSON' },
+      ];
+      if (!typed) return opts;
+      return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
+    }},
+    { name: 'wallet', description: 'Create, import, or inspect your Polymarket wallet', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
+      const opts = [
+        { value: 'show', label: 'show', description: 'Funding + signing address, mode, and on-chain proxy status' },
+        { value: 'create', label: 'create', description: 'Generate a new dedicated wallet' },
+        { value: 'import', label: 'import', description: '<private-key|address>  Bring an existing wallet' },
+        { value: 'address', label: 'address', description: 'Print the funding address only' },
       ];
       if (!typed) return opts;
       return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));

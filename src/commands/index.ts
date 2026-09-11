@@ -12,6 +12,7 @@ function defaultArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
     unresolved: false,
     behavioral: false, ranked: false, showCluster: false,
     activeOnly: false, cells: false, autoProbs: false,
+    force: false,
     parseErrors: [],
     ...overrides,
   };
@@ -27,6 +28,7 @@ import { handleClusters, formatClustersHuman } from './clusters.js';
 import { handlePeers, formatPeersHuman } from './peers.js';
 import { handleCorrelate, formatCorrelationHuman } from './correlate.js';
 import { handleBasket, formatBasketHuman } from './basket.js';
+import { handleWallet, formatWalletHuman } from './wallet.js';
 import { handleEvents, formatEventsHuman } from './events.js';
 import { handleTrust, formatTrustHuman } from './trust.js';
 import { handleReport, formatReportHuman } from './report.js';
@@ -59,6 +61,13 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
   // distinguish e.g. "basket build" vs "basket backtest", or thematic vs
   // behavioral clusters. Outer command name is always tracked.
   const slashMeta: Record<string, string | boolean> = { command: command ?? '' };
+  if (command === 'wallet') {
+    const sub = args[0]?.toLowerCase();
+    // Sub-verb only. An address or key must never reach telemetry.
+    if (sub === 'create' || sub === 'import' || sub === 'address' || sub === 'show') {
+      slashMeta.subview = sub;
+    }
+  }
   if (command === 'basket') {
     const sub = args[0]?.toLowerCase();
     if (sub === 'build' || sub === 'backtest' || sub === 'size' || sub === 'candles') {
@@ -221,6 +230,17 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
         asyncFollowUp: async () => {
           const resp = await handleCorrelate(parsed);
           return resp.ok ? formatCorrelationHuman(resp.data) : (resp.error?.message ?? 'correlate failed');
+        },
+      };
+    }
+    case 'wallet': {
+      const parsed = parseArgs(['wallet', ...args]);
+      const sub = parsed.positionalArgs[0] ?? 'show';
+      return {
+        output: `Running wallet ${sub}...`,
+        asyncFollowUp: async () => {
+          const resp = await handleWallet(parsed);
+          return resp.ok ? formatWalletHuman(resp.data) : (resp.error?.message ?? 'wallet failed');
         },
       };
     }

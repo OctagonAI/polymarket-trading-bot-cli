@@ -63,6 +63,7 @@ function makeParsedArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
     activeOnly: false,
     cells: false,
     autoProbs: false,
+    force: false,
     parseErrors: [],
     ...overrides,
   };
