@@ -307,35 +307,40 @@ analysis_last_updated when available — so you can decide whether to --refresh.
 Error paths (missing ticker, event not found, no report body yet) print just
 the error message instead.`,
 
-    trust: `**${p}trust** — Trader Trust scorecard (market-integrity metrics)
+    trust: `**${p}trust** — Octagon Trust Index for an event
 
-${p}trust <event-slug>                       Table across all markets in the event
+${p}trust <event-slug>                       Trust Index (overall score + profile)
+${p}trust <event-slug> --verbose             …plus per-contract market quality
 ${p}trust <event-slug> --market <market-slug>     Single-market detail card
 ${p}trust <event-slug> --market <market-slug> --verbose
-                                            Include raw evidence + confidence/freshness
+                                            Include raw evidence + confidence
 
-Six per-market scores (each 0-100), produced by Octagon's deterministic
-Trader Trust calculation:
+The Trust Index (0-100, higher = better) combines two axes:
 
-  trader_trust       Overall composite                      (higher = better)
-  liquidity_quality  Depth/spread/fill behavior             (higher = better)
-  move_quality       Price-move plausibility                (higher = better)
-  resolution_risk    Resolution clarity (higher = clearer)  (higher = better)
-  market_avoid       Avoidance signal                       (higher = WORSE)
-  quote_risk         Quote-side risk                        (higher = WORSE)
+  Integrity      Market integrity, info fairness, resolution quality
+  Trade quality  Cost to trade, including whether a $1,000 order can fill
+
+It is a weighted blend with hard caps: a critically weak safety pillar, or a
+severe trading anomaly, caps the total regardless of the rest. The trust
+profile breaks out the three integrity pillars and the event's liquidity,
+move quality and rule clarity.
+
+The --market detail card shows four per-market scores (each 0-100, higher =
+better): market_quality (composite), liquidity, move_quality and
+resolution_clarity.
 
 Flags:
   --market <slug>     Drill into one market in the event
-  --verbose           Show evidence (raw metrics), confidence, data freshness
+  --verbose           Add per-contract market quality to the Trust Index; with
+                      --market, show evidence (raw metrics) and confidence
   --json              JSON envelope output
 
 Notes:
   - When trader_trust_json is null (older reports), prints "no trust scorecard for
     this event yet" — not an error.
-  - Higher-is-better vs. higher-is-worse semantics differ per score; tables and
-    detail views color and annotate accordingly.
-  - "(as of report time)" is shown for scores whose data_freshness is
-    point_in_time (e.g. quote_risk, liquidity_quality on snapshot reports).`,
+  - A score can be unscored (not applicable, or insufficient data); it renders
+    as "—", never as 0.
+  - Detail cards show fair value and bid/ask in cents.`,
 
     events: `**${p}events** — Octagon event rollups (event ↔ outcome ladder)
 

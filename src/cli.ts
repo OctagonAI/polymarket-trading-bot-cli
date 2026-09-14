@@ -368,7 +368,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       { value: 'correlate', label: 'correlate', description: 'Pairwise correlation matrix' },
       { value: 'basket', label: 'basket', description: 'Build / backtest / size baskets' },
       { value: 'events', label: 'events', description: 'Octagon events (event ↔ outcome ladder)' },
-      { value: 'trust', label: 'trust', description: 'Trader Trust scorecard (per-market integrity scores)' },
+      { value: 'trust', label: 'trust', description: 'Octagon Trust Index for an event' },
       { value: 'report', label: 'report', description: 'Full Octagon markdown report for an event' },
       { value: 'series', label: 'series', description: 'Series rollup / NAV' },
       { value: 'catalysts', label: 'catalysts', description: 'Upcoming market closes by week' },
@@ -442,7 +442,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     { name: 'peers', description: 'Find markets in the same cluster as a ticker', getArgumentCompletions: usageHint('<market-slug> [--behavioral] [--limit N] [--show-cluster]', 'e.g. will-btc-hit-100k --limit 20') },
     { name: 'correlate', description: 'Pairwise correlation matrix (2-100 tickers)', getArgumentCompletions: usageHint('<slug1> <slug2> [...] [--window-days N]', 'e.g. slug-a slug-b slug-c --window-days 90') },
     { name: 'events', description: 'Octagon events — outcome ladder per event', getArgumentCompletions: usageHint('<event-slug> | --category Politics | --min-volume 10000', 'e.g. fed-decision-in-september-762 to drill in') },
-    { name: 'trust', description: 'Trader Trust scorecard (per-market integrity scores)', getArgumentCompletions: usageHint('<event-slug> [--market <market-slug>] [--verbose]', 'e.g. epl-2027-champion --market will-arsenal-win-the-2026-27-english-premier-league-championship') },
+    { name: 'trust', description: 'Octagon Trust Index for an event', getArgumentCompletions: usageHint('<event-slug> [--market <market-slug>] [--verbose]', 'e.g. epl-2027-champion --market will-arsenal-win-the-2026-27-english-premier-league-championship') },
     { name: 'report', description: 'Print the full Octagon markdown report for an event', getArgumentCompletions: usageHint('<event-slug | market-slug | polymarket url> [--refresh]', 'e.g. fed-decision-in-september-762 --refresh') },
     { name: 'series', description: 'Series rollup (24h vol, market count)', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
       const opts = [

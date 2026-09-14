@@ -81,7 +81,7 @@ export class IntroComponent extends Container {
       ['/clusters', '[--ranked|--behavioral]  Browse thematic & behavioral clusters'],
       ['/peers', '<ticker>  Markets in the same cluster'],
       ['/events', '[ticker]  Octagon events + outcome ladder'],
-      ['/trust', '<event_ticker>  Trader Trust scorecard (per-market integrity)'],
+      ['/trust', '<event_ticker>  Octagon Trust Index (--verbose for per-contract)'],
       ['/report', '<event_ticker>  Full Octagon markdown report (--refresh for fresh)'],
       ['/series', '[ticker]  Series rollup; /series candles <SERIES> for NAV'],
       ['/themes', 'list|show|report|audit|overlap  Editorial narrative registry'],

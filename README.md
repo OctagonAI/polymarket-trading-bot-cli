@@ -111,12 +111,25 @@ Type help for commands, or just ask a question.
 
 > trust fed-decision-in-september-762
 
-  Trader Trust scorecard — Fed Decision in September?
-  Event quality  72/100  Healthy  ·  5/5 markets scored
+  Trust Index — fed-decision-in-september-762 · Fed Decision in September?
 
-  Market                    Quality  Liquidity  Move  Resol.  Fair  Spread
-  no-change                     78         81    64      95   53¢      1¢
-  25-bps-decrease               74         77     —      95   44¢      1¢
+  ██████████████████░░░░░░░░░░░░   59  ● Caution
+
+  HOW IT ADDS UP
+  Integrity       80% of score   54  ● Caution
+  Trade quality   20% of score   76  ● Good
+  ──────────────────────────────────────────────
+  = Trust score                  59  ● Caution
+
+  TRUST PROFILE
+  Integrity   4 screens run · 3 don't apply · 3 awaiting data
+    Market integrity     74  ● Good
+    Info fairness        30  ● High Risk
+    Resolution quality   60  ● Caution
+  Trade quality
+    Liquidity            75  ● Tradeable
+    Move quality         70  ● Stable
+    Rule clarity         95  ● Clear
 ```
 
 <sub>`buy` and `portfolio` appear in the command table below but are not enabled yet — see the port status note at the top.</sub>
@@ -130,7 +143,7 @@ Type help for commands, or just ask a question.
 | `similar <market-slug\|"query">` | Related markets: same event → series → category, or keyword query |
 | `events` / `events <event-slug>` | Octagon events list + outcome ladder per event |
 | `catalysts upcoming --days N` | Markets closing in the next N days, grouped by week |
-| `trust <event-slug>` | Trader Trust scorecard — per-market integrity scores (table view) |
+| `trust <event-slug>` | Octagon Trust Index — overall score, how Integrity and Trade quality add up, and the trust profile. `--verbose` adds per-contract market quality |
 | `trust <event-slug> --market <market-slug>` | Single-market Trader Trust detail card (use `--verbose` for evidence) |
 | `report <event-slug>` | Full Octagon markdown report for an event (accepts event slug, market slug, or URL). `--refresh` forces a fresh pull. |
 | `themes` (registry) | Editorial narrative buckets — list/show/import/create/delete/add-series |
