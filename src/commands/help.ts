@@ -15,7 +15,9 @@ function buildTopics(ctx: HelpContext): Record<string, string> {
   return {
     search: `**${p}search** — Discovery (Octagon-powered when OCTAGON_API_KEY is set)
 
-${p}search [theme|ticker|query]  Full-text market search (server-side when key is set, else local index)
+${p}search [theme|query]         Find EVENTS matching a theme or free text
+${p}search <event-slug>          Drill into one event: list its markets
+${p}search <theme>:<subtheme>    Narrow a theme, e.g. crypto:btc, sports:baseball
 ${p}search themes                List all available themes and subcategories
 
 Themes (a bare theme name returns that whole category):
@@ -37,8 +39,15 @@ Search flags (server-side path):
   --aggregate-by series Roll up results by series (calls series rollup)
   --active-only         Drop non-active markets (defensive; the live universe is active by default)
 
+Results are events by default — markets live inside an event, so pass an event
+slug to see them. Any market-level filter (--min-volume, --close-before,
+--sort-by, --category, --series) searches markets instead, since the event
+route does not support them.
+
 Examples:
-  ${p}search crypto
+  ${p}search crypto                  events in the Crypto category
+  ${p}search crypto:btc              narrowed to BTC
+  ${p}search fed-decision-in-september-762
   ${p}search "bitcoin price" --min-volume 10000
   ${p}search edge --min-edge 30 --category crypto
 

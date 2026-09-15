@@ -25,8 +25,8 @@ import {
   WorkingIndicatorComponent,
   createApiKeyConfirmSelector,
   createBrowseActionSelector,
+  createBrowseEventSelector,
   createBrowseMarketSelector,
-  updateBrowseMarketSelector,
   createModelSelector,
   createProviderSelector,
 } from './components/index.js';
@@ -864,16 +864,16 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     }
 
     if (browseState.appState === 'event_list') {
-      // If the cached selector still matches, update labels in-place (no flicker)
+      // Event rows carry no hydrated model probabilities, so the cached
+      // selector's labels cannot go stale — reuse it as-is to avoid flicker.
       if (cachedBrowseSelector && cachedBrowseTheme === browseState.theme
           && cachedBrowseEventCount === browseState.events.length) {
-        updateBrowseMarketSelector(cachedBrowseSelector, browseState.events);
         tui.requestRender();
         return;
       }
-      const selector = createBrowseMarketSelector(
+      const selector = createBrowseEventSelector(
         browseState.events,
-        (eventTicker, marketTicker) => browseController.selectMarket(eventTicker, marketTicker),
+        (eventTicker) => browseController.selectEvent(eventTicker),
         () => browseController.cancelBrowse(),
         browseState.lastError,
         browseState.progressMessage,
@@ -886,7 +886,27 @@ export async function runCli(options?: { forceSetup?: boolean }) {
         `Browse: ${browseState.theme}`,
         `${browseState.events.length} events, ${browseState.events.reduce((n, e) => n + e.markets.length, 0)} markets`,
         selector,
-        'Enter to select · esc to exit',
+        'Enter to open an event · esc to exit',
+        focusTarget,
+      );
+      return;
+    }
+
+    if (browseState.appState === 'market_list' && browseState.selectedEvent) {
+      const event = browseState.selectedEvent;
+      const selector = createBrowseMarketSelector(
+        [event],
+        (eventTicker, marketTicker) => browseController.selectMarket(eventTicker, marketTicker),
+        () => browseController.cancelBrowse(),
+        browseState.lastError,
+        browseState.progressMessage,
+      );
+      const focusTarget = (selector as any)._browseList;
+      renderScreenView(
+        event.eventTicker,
+        `${event.title} — ${event.markets.length} market${event.markets.length !== 1 ? 's' : ''}`,
+        selector,
+        'Enter to select · esc to go back',
         focusTarget,
       );
       return;

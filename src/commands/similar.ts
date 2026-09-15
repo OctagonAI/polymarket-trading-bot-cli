@@ -48,7 +48,15 @@ function fmtVol(v: number | null | undefined): string {
   return v.toFixed(0);
 }
 
-function looksLikeSlug(s: string): boolean {
+/**
+ * Does this look like an identifier rather than a query?
+ *
+ * Exported because `search` uses it to decide whether to drill into an event
+ * before searching. It cannot tell an EVENT slug from a MARKET slug — both are
+ * lowercase and hyphenated, in one namespace — so callers must resolve the
+ * identifier rather than trust the shape.
+ */
+export function looksLikeSlug(s: string): boolean {
   // Polymarket slugs are hyphenated, spaceless and alphanumeric
   // (`will-btc-hit-100k-by-dec-2026`). Anything containing a space is a query.
   return /^[A-Z0-9._-]+$/i.test(s) && /[A-Z]/i.test(s) && s.includes('-');

@@ -29,7 +29,8 @@ import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
 import { handleOrders, handleCancelOrders, formatOrdersHuman, formatCancelHuman } from './orders.js';
 import { searchOctagonMarkets, searchOctagonEvents, EVENT_SEARCH_TEXT_TIMEOUT_MS, getEventsWithEdge } from '../scan/octagon-api.js';
 import { formatMarketSearchHuman, formatEventSearchHuman, formatMarketsWithEdgeHuman } from './search-remote.js';
-import { findTheme } from '../scan/theme-registry.js';
+import { findTheme, parseThemeQuery } from '../scan/theme-registry.js';
+import { looksLikeSlug } from './similar.js';
 import { handleEvents, formatEventsHuman } from './events.js';
 import { handleTrust, formatTrustHuman } from './trust.js';
 import { handleReport, formatReportHuman } from './report.js';
@@ -294,18 +295,47 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
           args.seriesTicker !== undefined ||
           args.seriesPrefix !== undefined;
 
-        const theme = findTheme(query);
+        // A slug names one event: list its markets rather than searching for
+        // the literal string. Event and market slugs share one namespace shape
+        // (fed-decision-in-september-762 vs will-the-fed-...-863), so nothing
+        // lexical can tell them apart — resolution decides. handleEvents calls
+        // resolveOctagonEvent, which tries the slug route then the ticker route,
+        // and we fall through to search when neither resolves.
+        if (!usesMarketFilters && query && looksLikeSlug(query)) {
+          const resp = await handleEvents({ ...args, positionalArgs: [query] });
+          if (resp.ok) {
+            if (json) {
+              console.log(JSON.stringify(resp));
+            } else {
+              console.log(formatEventsHuman(resp.data));
+            }
+            return;
+          }
+        }
+
+        // `theme:subtheme` (crypto:btc) splits here. findTheme alone is a flat
+        // lookup, so the composite string missed and fell through to a literal
+        // free-text search for "crypto:btc" — which matches nothing, even
+        // though `search themes` advertises the syntax and both `scan` and the
+        // TUI honour it.
+        const { theme, subtheme } = parseThemeQuery(query);
         if (theme && !usesMarketFilters) {
           // meta_category is case-sensitive and a closed set — it comes from
-          // the registry, never from the raw query string.
+          // the registry, never from the raw query string. `q` is raw user
+          // text and is safe to pass through: it is a search term, not a
+          // closed-vocabulary filter. The two AND together.
           const page = await searchOctagonEvents({
             meta_category: theme.metaCategory,
+            // Autocomplete offers kebab-cased tags (oil-and-energy); q is full
+            // text, so hyphens have to become spaces or it matches nothing.
+            ...(subtheme ? { q: subtheme.replace(/-/g, ' ') } : {}),
             limit: args.limit ?? 30,
           });
+          const describe = subtheme ? `theme ${theme.id}:${subtheme}` : `theme ${theme.id}`;
           if (json) {
             console.log(JSON.stringify(wrapSuccess('search', page)));
           } else {
-            console.log(formatEventSearchHuman(`theme ${theme.id}`, page));
+            console.log(formatEventSearchHuman(describe, page));
           }
           return;
         }

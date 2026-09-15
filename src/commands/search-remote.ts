@@ -94,6 +94,12 @@ export function formatEventSearchHuman(
     e.category ?? '-',
   ]);
   lines.push(formatTable(['Slug', 'Event', 'Last', '24h Vol', 'Category'], rows));
+  const first = page.data[0];
+  if (first) {
+    const slug = first.native_event_ticker ?? stripVenuePrefix(first.event_ticker);
+    lines.push('');
+    lines.push(`Drill into one event: search ${slug}`);
+  }
   return lines.join('\n');
 }
 
