@@ -67,6 +67,13 @@ export function isMarketActive(m: MarketRow): boolean {
 export interface BrowseMarketRow {
   ticker: string;
   title: string;
+  /**
+   * The per-contract label. On Polymarket this is usually "Yes" — the outcome
+   * lives in `title` instead — so the renderer shows whichever of the two
+   * actually varies within the event. Kept symmetrical with the Kalshi CLI,
+   * where the venues are mirror images of each other.
+   */
+  label: string | null;
   marketProb: number | null;
   modelProb: number | null;
   edge: number | null;
@@ -585,6 +592,9 @@ export class BrowseController {
     return {
       ticker: m.ticker,
       title: m.title ?? m.subtitle ?? m.ticker,
+      // The index persists yes_sub_title but not subtitle, so that is the one
+      // that actually arrives here for index-sourced markets.
+      label: m.yes_sub_title ?? m.subtitle ?? null,
       marketProb,
       modelProb,
       edge,

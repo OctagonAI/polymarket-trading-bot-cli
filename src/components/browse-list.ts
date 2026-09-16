@@ -12,12 +12,35 @@ function fmtPct(val: number | null): string {
   return `${(val * 100).toFixed(1)}%`;
 }
 
+/**
+ * A contract's own identity: the market slug minus its event prefix.
+ *
+ * Polymarket market slugs average 57 characters against a 20-wide column, so
+ * every row used to render as the same truncated prefix — all 371 markets of
+ * `nfl-den-kc-2026-09-15` showed as `nfl-den-kc-2026-09-`.
+ */
+function contractOf(marketTicker: string, eventTicker: string): string {
+  const prefix = `${eventTicker}-`;
+  return marketTicker.startsWith(prefix) ? marketTicker.slice(prefix.length) : marketTicker;
+}
+
+/**
+ * Within one event, show whichever of label/title actually varies. On
+ * Polymarket that is nearly always `title` (the outcome), since `yes_sub_title`
+ * is "Yes" on ~70% of markets; the Kalshi CLI is the mirror image.
+ */
+function describeMarket(m: BrowseMarketRow, labelsVary: boolean): string {
+  if (labelsVary && m.label) return m.label;
+  return m.title;
+}
+
 function buildMarketItems(events: BrowseEventRow[]): SelectItem[] {
   const items: SelectItem[] = [];
   for (const ev of events) {
+    const labelsVary = new Set(ev.markets.map((m) => m.label ?? '')).size > 1;
     for (const m of ev.markets) {
-      const ticker = pad(m.ticker, 20);
-      const title = pad(m.title, 48);
+      const ticker = pad(contractOf(m.ticker, ev.eventTicker), 24);
+      const title = pad(describeMarket(m, labelsVary), 44);
       const mktPct = pad(fmtPct(m.marketProb), 7);
       const isPending = ev.pending === true;
       const modelPct = pad(isPending && m.modelProb === null ? '...' : fmtPct(m.modelProb), 7);
@@ -74,7 +97,7 @@ export function createBrowseMarketSelector(
   }
 
   // Header row
-  const header = `${pad('Ticker', 20)} ${pad('Title', 48)} ${pad('Mkt %', 7)} ${pad('Model%', 7)} ${pad('Edge', 7)} ${pad('Conf', 8)}`;
+  const header = `${pad('Contract', 24)} ${pad('Outcome / Title', 44)} ${pad('Mkt %', 7)} ${pad('Model%', 7)} ${pad('Edge', 7)} ${pad('Conf', 8)}`;
   container.addChild(new Text(theme.muted(header), 0, 0));
 
   if (items.length === 0) {

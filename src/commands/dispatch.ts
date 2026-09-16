@@ -28,8 +28,8 @@ import { handleWallet, formatWalletHuman } from './wallet.js';
 import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
 import { handleOrders, handleCancelOrders, formatOrdersHuman, formatCancelHuman } from './orders.js';
 import { handleTrade, formatTradeHuman } from './trade.js';
-import { searchOctagonMarkets, searchOctagonEvents, EVENT_SEARCH_TEXT_TIMEOUT_MS, getEventsWithEdge } from '../scan/octagon-api.js';
-import { formatMarketSearchHuman, formatEventSearchHuman, formatMarketsWithEdgeHuman } from './search-remote.js';
+import { searchOctagonMarkets, searchOctagonEvents, EVENT_SEARCH_TEXT_TIMEOUT_MS, getEventsWithEdge, addVenuePrefix } from '../scan/octagon-api.js';
+import { formatMarketSearchHuman, formatEventSearchHuman, formatMarketsWithEdgeHuman, formatEventMarketsHuman } from './search-remote.js';
 import { findTheme, parseThemeQuery } from '../scan/theme-registry.js';
 import { looksLikeSlug } from './similar.js';
 import { handleEvents, formatEventsHuman } from './events.js';
@@ -307,16 +307,22 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
         // A slug names one event: list its markets rather than searching for
         // the literal string. Event and market slugs share one namespace shape
         // (fed-decision-in-september-762 vs will-the-fed-...-863), so nothing
-        // lexical can tell them apart — resolution decides. handleEvents calls
-        // resolveOctagonEvent, which tries the slug route then the ticker route,
-        // and we fall through to search when neither resolves.
+        // lexical can tell them apart — resolution decides, and we fall through
+        // to search when the event has no markets.
+        //
+        // This is the same venue-agnostic route the Kalshi CLI drills through,
+        // so both surfaces answer from one corpus. It matches `event_ticker`
+        // against the namespaced id, never the bare slug the user typed.
         if (!usesMarketFilters && query && looksLikeSlug(query)) {
-          const resp = await handleEvents({ ...args, positionalArgs: [query] });
-          if (resp.ok) {
+          const drill = await searchOctagonMarkets({
+            event_ticker: addVenuePrefix(query),
+            limit: args.limit ?? 30,
+          });
+          if (drill.data.length > 0) {
             if (json) {
-              console.log(JSON.stringify(resp));
+              console.log(JSON.stringify(wrapSuccess('search', drill)));
             } else {
-              console.log(formatEventsHuman(resp.data));
+              console.log(formatEventMarketsHuman(query, drill));
             }
             return;
           }

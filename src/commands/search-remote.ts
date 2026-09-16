@@ -103,6 +103,69 @@ export function formatEventSearchHuman(
   return lines.join('\n');
 }
 
+/**
+ * The contract's own identity: the market slug minus its event prefix.
+ *
+ * Both ids are normalised to their bare form first — `event_ticker` arrives
+ * namespaced (`polymarket__<slug>`) while `native_ticker` is already bare.
+ */
+export function contractOf(marketTicker: string, eventTicker: string): string {
+  const market = stripVenuePrefix(marketTicker);
+  const prefix = `${stripVenuePrefix(eventTicker)}-`;
+  return market.startsWith(prefix) ? market.slice(prefix.length) : market;
+}
+
+/**
+ * Pick the column that actually distinguishes rows within this event.
+ *
+ * Polymarket and Kalshi are mirror images: here `yes_subtitle` is "Yes" on ~70%
+ * of markets and the outcome lives in `title` ("Lara Trump"), while a Kalshi
+ * strike ladder shares one title and differs by subtitle. Choosing by which
+ * field varies handles both without a venue switch.
+ */
+function labelColumn(rows: OctagonMarketRow[]): { header: string; pick: (m: OctagonMarketRow) => string } {
+  const subOf = (m: OctagonMarketRow) => m.yes_subtitle ?? m.subtitle ?? '';
+  const distinctSubs = new Set(rows.map(subOf)).size;
+  const distinctTitles = new Set(rows.map((m) => m.title ?? '')).size;
+  if (distinctSubs > 1 && distinctSubs >= distinctTitles) {
+    return { header: 'Strike', pick: (m) => subOf(m) || '-' };
+  }
+  return { header: 'Outcome', pick: (m) => m.title ?? '-' };
+}
+
+/** One event's markets, reached by drilling into an event slug. */
+export function formatEventMarketsHuman(eventTicker: string, page: PagedResult<OctagonMarketRow>): string {
+  const lines: string[] = [];
+  const bare = stripVenuePrefix(eventTicker);
+  const more = page.has_more ? ' (more available)' : '';
+  lines.push(`Markets in ${bare} — ${page.data.length} shown${more}`);
+  lines.push('');
+
+  if (page.data.length === 0) {
+    lines.push(`No markets found for ${bare}.`);
+    return lines.join('\n');
+  }
+
+  const { header, pick } = labelColumn(page.data);
+  const sorted = [...page.data].sort((a, b) =>
+    contractOf(a.native_ticker ?? a.market_ticker, eventTicker).localeCompare(
+      contractOf(b.native_ticker ?? b.market_ticker, eventTicker),
+      undefined,
+      { numeric: true },
+    ),
+  );
+
+  const rows: string[][] = sorted.map((m) => [
+    truncate(contractOf(m.native_ticker ?? m.market_ticker, eventTicker), 40),
+    truncate(pick(m), 40),
+    fmtMoney(m.last_price ?? m.yes_ask),
+    fmtVol(m.volume_24h),
+    fmtCloseDate(m.close_time),
+  ]);
+  lines.push(formatTable(['Contract', header, 'Last', '24h Vol', 'Closes'], rows));
+  return lines.join('\n');
+}
+
 export function formatMarketsWithEdgeHuman(data: MarketsWithEdgeResponse, minEdgePp: number): string {
   const lines: string[] = [];
   // Guard against invalid date strings — new Date('garbage').toISOString() throws RangeError.
