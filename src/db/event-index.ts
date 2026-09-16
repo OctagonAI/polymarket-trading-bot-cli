@@ -144,6 +144,124 @@ function filterActiveMarketsJson(markets_json: string | null, nowIso: string): s
 /**
  * Clear and repopulate the event index in a single transaction.
  */
+export interface IndexEventInput {
+  event_ticker: string;
+  series_ticker?: string;
+  title: string;
+  category?: string;
+  strike_date?: string;
+  sub_title?: string;
+  tags?: string[];
+  markets?: PolymarketMarket[];
+}
+
+/** The fields the index keeps per market. */
+function toCompactMarkets(markets: PolymarketMarket[] | undefined): Array<Record<string, unknown>> | undefined {
+  // Prices here are decimal 0-1. Keep token_ids so the book is reachable from
+  // an index hit without a round-trip to Gamma.
+  return markets?.map((m) => ({
+    ticker: m.ticker,
+    condition_id: m.condition_id,
+    token_ids: m.token_ids,
+    title: m.title,
+    yes_sub_title: m.yes_sub_title,
+    yes_bid: m.yes_bid,
+    yes_ask: m.yes_ask,
+    no_bid: m.no_bid,
+    no_ask: m.no_ask,
+    last_price: m.last_price,
+    volume: m.volume ?? 0,
+    volume_24h: m.volume_24h ?? 0,
+    close_time: m.close_time,
+    status: m.status,
+    result: m.result,
+  }));
+}
+
+/**
+ * Insert or update a batch of events, leaving every other row alone.
+ *
+ * Lets a rebuild stream in page by page instead of buffering the whole universe
+ * and replacing the table in one shot, so the index stays queryable throughout.
+ * `tags` is carried through here (unlike the Kalshi CLI, Gamma nests tags on the
+ * event itself, so there is no separate pass to preserve them from).
+ */
+export function upsertIndexEvents(db: Database, events: IndexEventInput[]): number {
+  if (events.length === 0) return 0;
+  const now = Date.now();
+  // OR REPLACE because Gamma pages with limit/offset over a volume-ordered set:
+  // rows shift between requests, so the same event can arrive on two pages.
+  const insert = db.prepare(`
+    INSERT OR REPLACE INTO event_index (event_ticker, series_ticker, title, category, strike_date, sub_title, tags, markets_json, indexed_at)
+    VALUES ($event_ticker, $series_ticker, $title, $category, $strike_date, $sub_title, $tags, $markets_json, $indexed_at)
+  `);
+
+  db.transaction(() => {
+    for (const event of events) {
+      const compactMarkets = toCompactMarkets(event.markets);
+      insert.run({
+        $event_ticker: event.event_ticker,
+        $series_ticker: event.series_ticker ?? null,
+        $title: event.title,
+        $category: event.category ?? null,
+        $strike_date: event.strike_date ?? null,
+        $sub_title: event.sub_title ?? null,
+        $tags: event.tags?.length ? event.tags.join(',') : null,
+        $markets_json: compactMarkets ? JSON.stringify(compactMarkets) : null,
+        $indexed_at: now,
+      });
+    }
+  })();
+  return events.length;
+}
+
+/**
+ * Drop events with no tradeable market left, and any row not seen since
+ * `staleBefore`.
+ *
+ * The second half removes events that have left the open universe: one Gamma no
+ * longer returns stops having its `indexed_at` advanced, while every live row's
+ * moves forward. A closed-market check alone misses those whose markets still
+ * look active.
+ *
+ * It is only sound when the caller's walk was COMPLETE — on a truncated walk
+ * "not seen" means "not reached", and sweeping would delete live events. Pass
+ * `staleBefore = 0` to skip this half and prune on tradeability alone.
+ */
+export function pruneStaleEvents(db: Database, staleBefore: number): number {
+  const nowIso = new Date().toISOString();
+  const rows = db
+    .query('SELECT event_ticker, markets_json, indexed_at FROM event_index')
+    .all() as Array<{ event_ticker: string; markets_json: string | null; indexed_at: number }>;
+
+  // isActiveMarketRecord checks status and close_time but not `result`, so a
+  // market that settled while still flagged active reads as tradeable there.
+  const tradeable = (m: Record<string, unknown>) => {
+    if (!isActiveMarketRecord(m, nowIso)) return false;
+    const result = m.result;
+    return !(typeof result === 'string' && result !== '');
+  };
+
+  const doomed: string[] = [];
+  for (const r of rows) {
+    if (r.indexed_at < staleBefore) {
+      doomed.push(r.event_ticker);
+      continue;
+    }
+    const markets = parseMarketsJsonSafe(r.markets_json);
+    if (markets.length > 0 && !markets.some(tradeable)) {
+      doomed.push(r.event_ticker);
+    }
+  }
+  if (doomed.length === 0) return 0;
+
+  const del = db.prepare('DELETE FROM event_index WHERE event_ticker = ?');
+  db.transaction(() => {
+    for (const ticker of doomed) del.run(ticker);
+  })();
+  return doomed.length;
+}
+
 export function clearAndPopulateIndex(
   db: Database,
   events: Array<{
