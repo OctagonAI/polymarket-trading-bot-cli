@@ -7,6 +7,7 @@ import { webFetchTool, WEB_FETCH_DESCRIPTION } from './fetch/web-fetch.js';
 import { edgeQueryTool, EDGE_QUERY_DESCRIPTION } from './v2/edge-query.js';
 import { portfolioQueryTool, PORTFOLIO_QUERY_DESCRIPTION } from './v2/portfolio-query.js';
 import { portfolioOverviewTool, getWalletAddress } from './polymarket/portfolio.js';
+import { portfolioReviewTool, PORTFOLIO_REVIEW_DESCRIPTION } from './v2/portfolio-review.js';
 import { riskStatusTool, RISK_STATUS_DESCRIPTION } from './v2/risk-status.js';
 import { octagonReportTool, OCTAGON_REPORT_DESCRIPTION } from './v2/octagon-report.js';
 import { scanTool, SCAN_DESCRIPTION } from './v2/scan.js';
@@ -38,8 +39,8 @@ export interface RegisteredTool {
  * read-only tool. The difference is that a refusal carries information there,
  * and here it would not.
  *
- * portfolio_review follows in the order phase: reviewPortfolio needs positions
- * the CLI cannot yet write, so it would report an empty book on every call.
+ * portfolio_review is registered on the same condition. It reviews open
+ * positions for exit signals, and those are now written when an order fills.
  */
 const PORTFOLIO_OVERVIEW_DESCRIPTION = `
 Quick portfolio overview tool. Returns total portfolio value and all open positions in a single call.
@@ -98,11 +99,18 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       description: PORTFOLIO_QUERY_DESCRIPTION,
     },
     ...(getWalletAddress()
-      ? [{
-          name: 'portfolio_overview',
-          tool: portfolioOverviewTool,
-          description: PORTFOLIO_OVERVIEW_DESCRIPTION,
-        }]
+      ? [
+          {
+            name: 'portfolio_overview',
+            tool: portfolioOverviewTool,
+            description: PORTFOLIO_OVERVIEW_DESCRIPTION,
+          },
+          {
+            name: 'portfolio_review',
+            tool: portfolioReviewTool,
+            description: PORTFOLIO_REVIEW_DESCRIPTION,
+          },
+        ]
       : []),
     {
       name: 'risk_status',

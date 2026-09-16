@@ -4,23 +4,13 @@ import { formatToolResult } from '../types.js';
 import { loadWalletIdentity } from '../../wallet/identity.js';
 
 /**
- * Order placement is not implemented yet.
- *
- * Polymarket orders are EIP-712 messages signed with a Polygon key, submitted to
- * the CLOB with derived L2 HMAC credentials — a different model from Kalshi's
- * RSA-signed REST calls, and it additionally needs on-chain pUSD/CTF allowances
- * and the right proxy-wallet signature type.
- *
- * All of that now exists: `src/clob/client.ts` authenticates, `wallet approve`
- * grants the allowances, and `orders` / `cancel` use both. What is missing is
- * order CONSTRUCTION — sizing, tick rounding, and choosing an order type. Until
- * that lands this tool exists so the agent gets a clear refusal instead of
- * silently routing trade intent into a read-only tool.
+ * Order placement exists as of the order phase. This message now covers only
+ * the case where the agent is asked to trade and the wallet cannot sign.
  */
 export const TRADING_UNAVAILABLE_MESSAGE =
-  'Order placement is not available yet in the Polymarket CLI. Everything around it ' +
-  'is in place — wallet, pUSD balance, on-chain approvals, and `orders` / `cancel` ' +
-  'for orders already resting — only placing a new one is missing.';
+  'Placing orders needs a wallet with a private key. Run `polymarket wallet create` ' +
+  'for a new one or `polymarket wallet import <private-key>` to bring your own, fund ' +
+  'it with pUSD, then `polymarket wallet approve`.';
 
 /**
  * Commands hidden until wallet/trading support lands.
@@ -36,11 +26,13 @@ export const TRADING_UNAVAILABLE_MESSAGE =
  */
 export const TRADING_COMMANDS = ['buy', 'sell', 'cancel', 'orders', 'portfolio'] as const;
 
-/** Placement — not implemented yet at any tier. */
-export const ORDER_COMMANDS = ['buy', 'sell'] as const;
-
-/** Implemented, but need a signing key to authenticate against the CLOB. */
-export const KEY_COMMANDS = ['cancel', 'orders'] as const;
+/**
+ * Everything that needs a signing key.
+ *
+ * `buy`/`sell` moved here from a not-implemented list once placement shipped;
+ * there is no longer any command gated on the feature rather than the wallet.
+ */
+export const KEY_COMMANDS = ['buy', 'sell', 'cancel', 'orders'] as const;
 
 /** Need an address, but not a key — the watch tier is enough. */
 export const ACCOUNT_COMMANDS = ['portfolio'] as const;
@@ -77,13 +69,6 @@ export function commandUnavailableReason(name: string): string | null {
       : 'No wallet configured. Run `polymarket wallet create` or ' +
           '`polymarket wallet import <private-key>`.';
   }
-  if ((ORDER_COMMANDS as readonly string[]).includes(name)) {
-    // Order placement does not exist yet at any tier, so the reason is the same
-    // for everyone. Telling a watch-only user to import a key would imply that
-    // doing so unlocks trading, which it does not — the tier check belongs here
-    // once orders are actually implemented.
-    return TRADING_UNAVAILABLE_MESSAGE;
-  }
   return null;
 }
 
@@ -92,27 +77,68 @@ export function isCommandAvailable(name: string): boolean {
 }
 
 export const POLYMARKET_TRADE_DESCRIPTION = `
-Trade execution for Polymarket. NOT YET AVAILABLE — this tool always returns an error.
+Prepare a Polymarket order for the user to place. This tool does NOT place orders.
 
 ## When to Use
 
-Never, for now. Order placement is not implemented. If the user asks to buy, sell,
-or cancel, call this tool once so they get an accurate explanation rather than a
-guess, then stop.
+- The user asks to buy or sell and you have a market slug, a share count, and a side
+- Returns the exact command they can run, after checking the wallet can trade
+
+## Important
+
+You cannot place an order. Only the user can, by running the command this returns.
+Present it to them; do not claim the trade is done, and do not look for another
+tool that would place it — there isn't one.
 
 ## When NOT to Use
 
 - Market research, prices, or order books (use polymarket_search instead)
-- Portfolio positions or value (use polymarket_search instead)
+- Portfolio positions or value (use portfolio_overview instead)
+- Cancelling: tell the user to run \`polymarket orders\` then \`polymarket cancel <id>\`
 `.trim();
 
+/**
+ * Prepares an order; it cannot place one.
+ *
+ * The separation is structural on purpose. "Never trade without explicit
+ * confirmation" is a prompt instruction, and a prompt instruction is something a
+ * model can be argued out of — by a jailbreak, a confusing conversation, or a
+ * market description written to read like an instruction. Not giving the agent a
+ * code path that spends money is a guarantee instead of a request.
+ *
+ * The user runs the returned command, which has its own confirmation showing the
+ * cost.
+ */
 export function createPolymarketTrade(_model: string): DynamicStructuredTool {
   return new DynamicStructuredTool({
     name: 'polymarket_trade',
     description: POLYMARKET_TRADE_DESCRIPTION,
     schema: z.object({
-      query: z.string().describe('The trade the user asked for (recorded for the explanation only)'),
+      action: z.enum(['buy', 'sell']).describe('Whether to buy or sell'),
+      market: z.string().describe('Market slug, e.g. will-btc-hit-100k'),
+      shares: z.number().positive().describe('Number of shares'),
+      outcome: z.string().optional().describe('yes | no, or an outcome name. Defaults to yes.'),
+      price: z.number().optional().describe('Limit price, decimal USD in (0,1). Omit for a market order.'),
     }),
-    func: async () => formatToolResult({ error: TRADING_UNAVAILABLE_MESSAGE, available: false }),
+    func: async (input) => {
+      const tier = loadWalletIdentity().tier;
+      if (tier !== 'trade') {
+        return formatToolResult({ error: TRADING_UNAVAILABLE_MESSAGE, available: false });
+      }
+      const parts = [
+        `polymarket ${input.action}`,
+        input.market,
+        String(input.shares),
+        ...(input.price !== undefined ? [String(input.price)] : []),
+        input.outcome ?? 'yes',
+      ];
+      return formatToolResult({
+        available: true,
+        placed: false,
+        command: parts.join(' '),
+        order_type: input.price === undefined ? 'market' : 'limit',
+        note: 'Not placed. Give the user this command to run — it confirms the cost before sending.',
+      });
+    },
   });
 }

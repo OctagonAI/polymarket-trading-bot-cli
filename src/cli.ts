@@ -35,7 +35,6 @@ import { handleSlashCommand, executePendingTrade } from './commands/index.js';
 import type { CommandResult } from './commands/index.js';
 import { formatResponse } from './utils/markdown-table.js';
 import { ensureIndex, onIndexProgress, getRefreshPromise } from './tools/polymarket/search-index.js';
-import { TRADING_UNAVAILABLE_MESSAGE } from './tools/polymarket/polymarket-trade.js';
 import { isDeferredCommand } from './scan/octagon-capabilities.js';
 import { allThemeIds } from './scan/theme-registry.js';
 import { isCommandAvailable } from './tools/polymarket/polymarket-trade.js';
@@ -844,8 +843,15 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       if (ticker) {
         refreshError();
         renderMainView();
-        // Trading is deferred until wallet signing lands.
-        chatLog.finalizeAnswer(`Trade **${ticker}**\n\n${TRADING_UNAVAILABLE_MESSAGE}`);
+        // Browse has a market but no size or side, so it hands over the exact
+        // command rather than inventing them.
+        chatLog.finalizeAnswer(
+          `Trade **${ticker}**\n\n` +
+            'Place an order with:\n' +
+            `  /buy ${ticker} <shares> [price] [yes|no]\n` +
+            `  /sell ${ticker} <shares> [price] [yes|no]\n\n` +
+            'Omit the price for a market order. `/analyze ' + ticker + '` sizes it for you first.',
+        );
         tui.requestRender();
         return;
       }

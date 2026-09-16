@@ -150,34 +150,39 @@ Theme mode runs recurring Octagon scans and displays an edge table.`}`,
 
     buy: `**${p}buy** — Buy shares
 
-${p}buy <market-slug> <shares> [price] [yes|no]${ctx === 'slash' ? '   Buy shares (price 0-1)' : ''}
+${p}buy <market-slug> <shares> [price] [outcome]
 
-Example${ctx === 'cli' ? 's' : ''}:
-  ${p}buy bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '          Buy at best ask (10 YES shares)' : '0.56'}
-  ${p}buy bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '0.56      Limit order at $0.56/share' : '0.56 no  Buy NO shares'}
-${ctx === 'cli' ? `  ${p}buy bitcoin-above-100k-2026 10 0.56 no  Limit order for NO shares at $0.56` : ''}
-Side defaults to YES if omitted.`,
+  shares    Number of shares. Fractional is fine.
+  price     Decimal USD in (0,1), e.g. 0.56. OMIT for a market order.
+  outcome   yes | no, or an outcome name. Defaults to Yes.
 
-    sell: `**${p}sell** — Sell shares
+Examples:
+  ${p}buy bitcoin-above-100k-2026 10            Market order, 10 Yes shares
+  ${p}buy bitcoin-above-100k-2026 10 0.56       Limit at $0.56, rests on the book
+  ${p}buy bitcoin-above-100k-2026 10 0.56 no    Limit on the No side
+  ${p}buy epl-ars-che-2026 25 Arsenal           Non-binary market, by outcome name
 
-${p}sell <market-slug> <shares> [price] [yes|no]${ctx === 'slash' ? '  Sell shares (price 0-1)' : ''}
+A market order fills now or not at all. A limit order rests until it fills,
+expires, or you cancel it — see ${p}orders and ${p}cancel.
 
-Example${ctx === 'cli' ? 's' : ''}:
-  ${p}sell bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '         Sell at best ask (10 YES shares)' : '0.72'}
-  ${p}sell bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '0.72      Limit order at $0.72/share' : '0.72 no  Sell NO shares'}
-${ctx === 'cli' ? `  ${p}sell bitcoin-above-100k-2026 10 0.72 no  Limit order for NO shares at $0.72` : ''}
-Side defaults to YES if omitted.`,
+Every order shows the price and total cost and asks before it is sent. --yes
+skips that prompt for scripting, and is the only way to skip it.
 
-    orders: `**${p}orders** — Your resting orders
+The circuit breaker (daily loss limit, max drawdown) blocks orders outright;
+--force overrides it deliberately.`,
 
-${p}orders                       Every order still working on the book
+    sell: `**${p}sell** — Sell shares you hold
 
-Shows the remaining size, what has filled so far, and the order id to cancel
-with. Needs a wallet with a private key: the CLOB authenticates each request
-with credentials derived from it.
+${p}sell <market-slug> <shares> [price] [outcome]
 
-An order rests until it fills, expires, or you cancel it. Nothing here places
-orders — see ${p}buy and ${p}sell.`,
+Same shape as ${p}buy. Omit the price to sell at the best bid.
+
+Examples:
+  ${p}sell bitcoin-above-100k-2026 10           Market sell, 10 Yes shares
+  ${p}sell bitcoin-above-100k-2026 10 0.72      Limit at $0.72
+
+Selling more than this CLI has recorded warns rather than blocks — positions
+opened elsewhere are not in its local book, and the venue is the authority.`,
 
     cancel: `**${p}cancel** — Cancel resting orders
 
@@ -513,6 +518,8 @@ Analysis:
 Account:
   wallet                        Create, import, or inspect your wallet
   wallet approve --check        Check the on-chain trading approvals
+  buy <slug> <shares> [price]   Buy shares (omit price for a market order)
+  sell <slug> <shares> [price]  Sell shares you hold
   orders                        Your resting orders on the CLOB
   cancel <order_id>             Cancel a resting order (--all for every one)
   portfolio                     Overview: positions, P&L, risk snapshot
@@ -594,6 +601,8 @@ Analysis:
 Account:
   /wallet                        Create, import, or inspect your wallet
   /wallet approve --check        Check the on-chain trading approvals
+  /buy <slug> <shares> [price]   Buy shares (omit price for a market order)
+  /sell <slug> <shares> [price]  Sell shares you hold
   /orders                        Your resting orders on the CLOB
   /cancel <order_id>             Cancel a resting order (--all for every one)
   /portfolio                     Overview: positions, P&L, risk snapshot

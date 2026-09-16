@@ -50,6 +50,39 @@ export function closePosition(db: Database, positionId: string, closedAt: number
   ).run({ $closed_at: closedAt, $id: positionId });
 }
 
+/**
+ * Reduce an open position by `size`, closing it when nothing is left.
+ *
+ * Selling part of a holding is ordinary, and the table stores one row per
+ * position with a single size — so a partial sale has to shrink the row rather
+ * than close it. Treating every sale as a close would drop the remainder from
+ * the correlation and concentration checks, which is the quiet direction to be
+ * wrong in: it would let more risk through, not less.
+ */
+export function reducePosition(db: Database, positionId: string, size: number, closedAt: number): void {
+  const row = db.query('SELECT size FROM positions WHERE position_id = $id').get({
+    $id: positionId,
+  }) as { size: number } | null;
+  if (!row) return;
+
+  // Floating point: 49.999999 shares left after selling 50 of 50 is closed.
+  if (row.size - size <= 1e-6) {
+    closePosition(db, positionId, closedAt);
+    return;
+  }
+  db.prepare('UPDATE positions SET size = $size WHERE position_id = $id').run({
+    $size: row.size - size,
+    $id: positionId,
+  });
+}
+
+/** Open positions on a given market, newest first. */
+export function getOpenPositionsForTicker(db: Database, ticker: string): Position[] {
+  return db.query(
+    "SELECT * FROM positions WHERE status = 'open' AND ticker = $ticker ORDER BY opened_at DESC",
+  ).all({ $ticker: ticker }) as Position[];
+}
+
 export function getOpenPositions(db: Database): Position[] {
   return db.query("SELECT * FROM positions WHERE status = 'open'").all() as Position[];
 }

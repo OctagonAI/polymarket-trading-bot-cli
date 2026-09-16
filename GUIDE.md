@@ -137,7 +137,7 @@ placing an order; Polymarket orders need EIP-712 wallet signing and on-chain
 USDC/CTF allowances. When they land, `/buy` and `/sell` will show a confirmation
 prompt before executing.
 
-**Price format:** Prices are decimal USDC in [0, 1]. `0.56` = $0.56 per share = 56% implied probability.
+**Price format:** Prices are decimal USDC in [0, 1]. `0.56` = $0.56 per share = 56% implied probability. Omit the price on `/buy` or `/sell` for a market order.
 
 ---
 

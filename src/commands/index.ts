@@ -34,6 +34,7 @@ import { handleBasket, formatBasketHuman } from './basket.js';
 import { handleWallet, formatWalletHuman } from './wallet.js';
 import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
 import { handleOrders, handleCancelOrders, formatOrdersHuman, formatCancelHuman } from './orders.js';
+import { handleTrade, formatTradeHuman } from './trade.js';
 import { handleEvents, formatEventsHuman } from './events.js';
 import { handleTrust, formatTrustHuman } from './trust.js';
 import { handleReport, formatReportHuman } from './report.js';
@@ -344,8 +345,19 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
   }
 }
 
-export async function executePendingTrade(_trade: NonNullable<CommandResult['pendingTrade']>): Promise<string> {
-  return TRADING_UNAVAILABLE_MESSAGE;
+export async function executePendingTrade(trade: NonNullable<CommandResult['pendingTrade']>): Promise<string> {
+  // Already user-approved at the point this is called, so the handler's own
+  // prompt would be a second confirmation for the same decision.
+  const parsed = parseArgs([
+    trade.action,
+    trade.ticker,
+    String(trade.count),
+    ...(trade.price !== undefined ? [String(trade.price)] : []),
+    trade.side,
+    '--yes',
+  ]);
+  const resp = await handleTrade(trade.action, parsed);
+  return resp.ok ? formatTradeHuman(resp.data) : (resp.error?.message ?? `${trade.action} failed`);
 }
 
 // ─── Portfolio subview handler ──────────────────────────────────────────────
@@ -401,32 +413,20 @@ function parseSide(val: string | undefined): 'yes' | 'no' | null {
   return null;
 }
 
+/**
+ * The stub this replaces parsed ticker, count, price and side and then threw it
+ * all away. Argument shape now lives in `handleTrade`, so the TUI and the CLI
+ * cannot drift apart on what `/buy 10 0.42 no` means.
+ */
 function handleTradeCommand(action: 'buy' | 'sell', args: string[]): CommandResult {
-  const [ticker, countStr, ...rest] = args;
-
-  if (!ticker || !countStr) {
-    return { output: `Usage: /${action} <ticker> <count> [price_in_cents] [yes|no]` };
-  }
-
-  // Extract side and price from remaining args: [price] [side], [side], or nothing
-  let side: 'yes' | 'no' = 'yes';
-  let priceArg: string | undefined;
-
-  if (rest.length >= 2) {
-    // e.g. /buy TICKER 10 50 no
-    priceArg = rest[0];
-    side = parseSide(rest[1]) ?? 'yes';
-  } else if (rest.length === 1) {
-    // Could be price or side: /buy TICKER 10 50  OR  /buy TICKER 10 no
-    const asSide = parseSide(rest[0]);
-    if (asSide) {
-      side = asSide;
-    } else {
-      priceArg = rest[0];
-    }
-  }
-
-  return { output: TRADING_UNAVAILABLE_MESSAGE };
+  const parsed = parseArgs([action, ...args]);
+  return {
+    output: `Placing ${action} order...`,
+    asyncFollowUp: async () => {
+      const resp = await handleTrade(action, parsed);
+      return resp.ok ? formatTradeHuman(resp.data) : (resp.error?.message ?? `${action} failed`);
+    },
+  };
 }
 
 /** Reads open positions, so it needs the wallet trading setup provides. */

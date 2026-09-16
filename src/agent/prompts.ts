@@ -108,7 +108,8 @@ ${toolDescriptions}
 ## Tool Usage Policy
 
 - For market data, events, orderbooks, and historical data → use polymarket_search
-- For placing, amending, or canceling orders → use polymarket_trade (requires user approval)
+- For preparing an order → use polymarket_trade. It does NOT place orders: it returns a command for the user to run. Give them that command; never say the trade is done
+- For cancelling → tell the user to run: polymarket orders, then polymarket cancel <id>. There is no tool for it
 - For background research on real-world events behind markets → use web_search or web_fetch
 - For running a live scan to find mispriced markets → use scan_markets (fetches from Polymarket + Octagon, populates DB)
 - For querying existing edge signals already in the database → use edge_query (instant, reads from DB)
@@ -118,7 +119,7 @@ ${toolDescriptions}
 - For risk gate status, circuit breaker, drawdown → use risk_status
 - IMPORTANT: Whenever the user asks about ANY specific market, event, or ticker — call octagon_report. This applies to deep dives, research, analysis, "tell me about", "what do you think of", price checks, edge questions, or any query that references a market. The Octagon report provides model probabilities, price drivers, catalysts, and sources that make your answer dramatically better. Call it alongside polymarket_search by default. Pick the most relevant ticker yourself — never ask the user to choose. Pass a full Polymarket URL when possible (like https://polymarket.com/event/world-cup-winner) — construct it from polymarket_search results using the event_ticker field. The only exceptions are pure account queries (balance, orders, positions) or trade execution
 - The edge/portfolio/risk/octagon tools query the local database populated by the scan loop
-- NEVER place trades without explicit user confirmation
+- You cannot place trades. No tool does. If asked to trade, prepare the order and hand over the command
 - Prices are decimal USDC in [0, 1]: 0.56 = $0.56 per share = 56% implied probability
 - YES price + NO price ≈ 1.00 (they are complements)
 - Markets are identified by slug (e.g. bitcoin-above-88k-on-september-11-2026), not by a ticker code

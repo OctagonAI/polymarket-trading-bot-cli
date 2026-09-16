@@ -27,6 +27,7 @@ import { handleBasket, formatBasketHuman } from './basket.js';
 import { handleWallet, formatWalletHuman } from './wallet.js';
 import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
 import { handleOrders, handleCancelOrders, formatOrdersHuman, formatCancelHuman } from './orders.js';
+import { handleTrade, formatTradeHuman } from './trade.js';
 import { searchOctagonMarkets, searchOctagonEvents, EVENT_SEARCH_TEXT_TIMEOUT_MS, getEventsWithEdge } from '../scan/octagon-api.js';
 import { formatMarketSearchHuman, formatEventSearchHuman, formatMarketsWithEdgeHuman } from './search-remote.js';
 import { findTheme, parseThemeQuery } from '../scan/theme-registry.js';
@@ -431,6 +432,15 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       } else {
         console.log(output);
       }
+      return;
+    }
+
+    if (resolved.canonical === 'buy' || resolved.canonical === 'sell') {
+      const resp = await handleTrade(resolved.canonical, args);
+      if (json) console.log(JSON.stringify(resp));
+      else if (resp.ok) console.log(formatTradeHuman(resp.data));
+      else console.error(resp.error?.message ?? `${resolved.canonical} failed`);
+      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
       return;
     }
 

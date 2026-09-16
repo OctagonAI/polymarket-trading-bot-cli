@@ -95,7 +95,7 @@ export class IntroComponent extends Container {
       ['/backtest', 'Model accuracy scorecard + live edge scanner'],
       ['/orders', 'Your resting orders on the CLOB'],
       ['/cancel', '<order_id> | --all   Cancel resting orders'],
-      ['/buy /sell', '<ticker> <n> [price]'],
+      ['/buy /sell', '<slug> <shares> [price] [outcome]'],
       ['/help', '[command]  Show help (/help <command> for details)'],
       ['/quit', 'Quit CLI session'],
     ];

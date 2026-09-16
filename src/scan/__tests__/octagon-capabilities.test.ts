@@ -1,7 +1,7 @@
 import { describe, test, expect, spyOn } from 'bun:test';
 import {
   TRADING_COMMANDS,
-  ORDER_COMMANDS,
+  KEY_COMMANDS,
   isTradingCommand,
   isCommandAvailable,
 } from '../../tools/polymarket/polymarket-trade.js';
@@ -88,13 +88,20 @@ describe('octagon capabilities', () => {
       // No wallet: an account view would be all zeros, indistinguishable from a
       // real empty account, so it stays hidden.
       expect(isCommandAvailable('portfolio')).toBe(false);
-      for (const cmd of ORDER_COMMANDS) expect(isCommandAvailable(cmd)).toBe(false);
+      for (const cmd of KEY_COMMANDS) expect(isCommandAvailable(cmd)).toBe(false);
 
-      // Watch tier: reads work, orders still do not.
+      // Watch tier: reads work, anything needing a signature still does not.
       process.env.POLYMARKET_WALLET_ADDRESS = '0x' + '1'.repeat(40);
       resetWalletIdentityCache();
       expect(isCommandAvailable('portfolio')).toBe(true);
-      for (const cmd of ORDER_COMMANDS) expect(isCommandAvailable(cmd)).toBe(false);
+      for (const cmd of KEY_COMMANDS) expect(isCommandAvailable(cmd)).toBe(false);
+
+      // Trade tier: everything opens up.
+      delete process.env.POLYMARKET_WALLET_ADDRESS;
+      process.env.POLYMARKET_PRIVATE_KEY = '0x' + '11'.repeat(32);
+      resetWalletIdentityCache();
+      for (const cmd of KEY_COMMANDS) expect(isCommandAvailable(cmd)).toBe(true);
+      expect(isCommandAvailable('portfolio')).toBe(true);
     });
   });
 

@@ -502,9 +502,9 @@ describe('E2E Integration Tests', () => {
     // registered: it needs an address, which is present. Registration is a
     // function of wallet state rather than a fixed list.
     expect(names).toContain('portfolio_overview');
-    // portfolio_review still needs positions the CLI cannot write yet, so it
-    // would report an empty book on every call.
-    expect(names).not.toContain('portfolio_review');
+    // portfolio_review is registered on the same condition now that fills are
+    // written to the positions table.
+    expect(names).toContain('portfolio_review');
     expect(names).toContain('exchange_status');
     expect(names).toContain('web_fetch');
   });
@@ -516,14 +516,10 @@ describe('E2E Integration Tests', () => {
     const registered = new Set(getToolRegistry('gpt-4o').map((t) => t.name));
     const prompt = buildSystemPrompt('gpt-4o');
 
-    // portfolio_review is still unbuilt, so the prompt must not advertise it —
-    // the agent reports `Tool '...' not found` for those, which reads as a crash
-    // rather than the explanation every other unavailable surface gives.
-    expect(registered.has('portfolio_review')).toBe(false);
-    expect(prompt).not.toContain('portfolio_review');
-
-    // Guard against the inverse drift: a tool that exists but goes unmentioned.
-    for (const name of ['portfolio_query', 'portfolio_overview']) {
+    // Guard against drift in both directions: the prompt must not name a tool
+    // the registry does not build (the agent reports `Tool '...' not found`,
+    // which reads as a crash), and must name the ones it does.
+    for (const name of ['portfolio_query', 'portfolio_overview', 'portfolio_review']) {
       expect(registered.has(name)).toBe(true);
       expect(prompt).toContain(name);
     }

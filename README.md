@@ -2,15 +2,15 @@
 
 AI-powered Polymarket research CLI that finds edge across prediction markets.
 
-> **⏳ Read-only for now.** Market data, search, analysis and watch run natively
-> against Polymarket (Gamma / CLOB / Data APIs) and need no credentials. Octagon
-> powers the research commands — `search`, `search edge`, `similar`, `events`,
-> `trust`, `report`.
+> **Research works with no credentials.** Market data, search, analysis and watch
+> run natively against Polymarket (Gamma / CLOB / Data APIs). Octagon powers the
+> research commands — `search`, `search edge`, `similar`, `events`, `trust`,
+> `report`.
 >
-> **Order placement is not implemented yet** — `buy`, `sell` and `cancel` return a clear
-> error. Polymarket orders need EIP-712 wallet signing and on-chain USDC/CTF allowances.
-> `portfolio` is gated with them: every view it offers reads an account, and the wallet
-> that requires is part of the same trading setup. Run `status` to check your setup.
+> **Trading needs a wallet.** `polymarket wallet create` (or `wallet import`),
+> pUSD in the funding wallet, POL in the signing wallet for gas, and
+> `polymarket wallet approve` once. Then `buy`, `sell`, `orders`, `cancel` and
+> `portfolio` all work. Run `status` to check your setup.
 
 Runs deep fundamental research on every market — independent probability estimates, ranked price drivers, catalyst calendars — then computes edge as the spread between model price and the live order book. Signals are sized using half-Kelly and filtered through a 5-gate risk engine before a dollar is risked.
 
@@ -154,8 +154,8 @@ Type help for commands, or just ask a question.
 | `analyze <ticker>` | Deep analysis: edge, drivers, Kelly sizing |
 | `watch <ticker>` | Live price and orderbook feed |
 | `watch --theme <theme>` | Continuous theme scan |
-| `buy <ticker> <count> [price] [yes\|no]` | Buy contracts — **⏳ trading not implemented yet** |
-| `sell <ticker> <count> [price] [yes\|no]` | Sell contracts — **⏳ trading not implemented yet** |
+| `buy <slug> <shares> [price] [outcome]` | Buy shares — omit price for a market order |
+| `sell <slug> <shares> [price] [outcome]` | Sell shares you hold |
 | `orders` | Your resting orders on the CLOB — needs a wallet with a key |
 | `cancel <order_id>` | Cancel a resting order, or `--all` for every one |
 | `backtest` | Model accuracy scorecard + live edge scanner |
@@ -195,10 +195,10 @@ Type help for commands, or just ask a question.
 | `--aggregate-by series` | Roll up search results to the series level |
 | `--active-only` | Drop non-active markets (defensive flag — open universe by default) |
 | `--series-prefix <prefix>` | Server-side series prefix match (e.g. `bitcoin` matches `bitcoin-above-…`) |
-| `--force` | Replace an existing wallet (`wallet create`, `wallet import`) |
+| `--force` | Replace an existing wallet (`wallet create`, `wallet import`); override the circuit breaker (`buy`, `sell`) |
 | `--proxy <address>` | Pin the funding address instead of deriving it (`wallet import`) |
 | `--check` | Report state without sending anything (`wallet approve`) |
-| `--yes` | Skip the confirmation prompt (`wallet approve`) |
+| `--yes` | Skip the confirmation prompt (`wallet approve`, `buy`, `sell`) |
 | `--all` | Include grants trading does not require (`wallet approve`); cancel every order (`cancel`) |
 
 ### Discovery & Portfolio (Octagon-powered)
