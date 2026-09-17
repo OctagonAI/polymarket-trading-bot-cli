@@ -18,23 +18,19 @@ import { buildHelp } from '../../commands/help.js';
 
 
 /**
- * Run `fn` with no wallet visible from any source.
+ * Run `fn` with no wallet visible.
  *
- * The env vars alone are not enough: `loadWalletIdentity` also reads
- * ~/.polymarket-bot/wallet.json, so without stubbing the store these assertions
- * pass or fail depending on whether the developer running them has a wallet.
+ * The store is the only source of one, and `loadWalletIdentity` reads
+ * ~/.polymarket-bot/wallet.json, so without this stub these assertions pass or
+ * fail depending on whether the developer running them has a wallet.
  */
 function withNoWallet<T>(fn: () => T): T {
-  const prevAddr = process.env.POLYMARKET_WALLET_ADDRESS;
-  delete process.env.POLYMARKET_WALLET_ADDRESS;
   const spy = spyOn(walletStore, 'readWalletFile').mockImplementation(() => null);
   resetWalletIdentityCache();
   try {
     return fn();
   } finally {
     spy.mockRestore();
-    if (prevAddr === undefined) delete process.env.POLYMARKET_WALLET_ADDRESS;
-    else process.env.POLYMARKET_WALLET_ADDRESS = prevAddr;
     resetWalletIdentityCache();
   }
 }
@@ -87,14 +83,18 @@ describe('octagon capabilities', () => {
       for (const cmd of KEY_COMMANDS) expect(isCommandAvailable(cmd)).toBe(false);
 
       // Watch tier: reads work, anything needing a signature still does not.
-      process.env.POLYMARKET_WALLET_ADDRESS = '0x' + '1'.repeat(40);
+      const watching = spyOn(walletStore, 'readWalletFile').mockImplementation(() => ({
+        version: 1 as const,
+        address: '0x18eD5C15CeD1bFdf88e701601C4a0BbD4F5142dE',
+        createdAt: 0,
+      }));
       resetWalletIdentityCache();
       expect(isCommandAvailable('portfolio')).toBe(true);
       for (const cmd of KEY_COMMANDS) expect(isCommandAvailable(cmd)).toBe(false);
+      watching.mockRestore();
 
-      // Trade tier: everything opens up. A saved wallet is the only way here —
-      // there is no environment key to stand in for one.
-      delete process.env.POLYMARKET_WALLET_ADDRESS;
+      // Trade tier: everything opens up. A saved wallet is the only way to any
+      // tier — the environment cannot supply a key or an address.
       const saved = spyOn(walletStore, 'readWalletFile').mockImplementation(() => ({
         version: 1 as const,
         type: 'deposit' as const,

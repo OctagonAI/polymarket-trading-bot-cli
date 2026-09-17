@@ -11,6 +11,8 @@ import { upsertTheme } from '../../db/themes.js';
 import { getLatestSnapshot } from '../../db/risk.js';
 import { RiskSnapshotError } from '../../risk/circuit-breaker.js';
 import * as erc20 from '../../chain/erc20.js';
+import * as walletStore from '../../wallet/store.js';
+import { resetWalletIdentityCache } from '../../wallet/identity.js';
 import type { OctagonVariant } from '../types.js';
 
 function makeAudit(): { audit: AuditTrail; path: string } {
@@ -47,9 +49,18 @@ describe('ScanLoop', () => {
     audit = a.audit;
     auditPath = a.path;
 
-    // Set, but deliberately inert: getWalletAddress ignores it until the wallet
-    // phase. Kept here so this test fails loudly if that ever silently changes.
-    process.env.POLYMARKET_WALLET_ADDRESS = '0x' + '1'.repeat(40);
+    // A watch-tier wallet. The snapshot refusal below is gated on there being
+    // an account to protect, and a saved wallet is the only way to have one.
+    // Stubbing the store also keeps this off whatever wallet the machine
+    // running the tests happens to have.
+    spies.push(
+      spyOn(walletStore, 'readWalletFile').mockImplementation(() => ({
+        version: 1 as const,
+        address: '0x18eD5C15CeD1bFdf88e701601C4a0BbD4F5142dE',
+        createdAt: 0,
+      })),
+    );
+    resetWalletIdentityCache();
 
     // Seed theme with one event ticker
     upsertTheme(db, { theme_id: 'test-theme', name: 'Test', tickers: '["EV-1"]' });
@@ -111,7 +122,7 @@ describe('ScanLoop', () => {
     for (const sp of spies.splice(0)) sp.mockRestore();
     globalThis.fetch = originalFetch;
     loop.stop();
-    delete process.env.POLYMARKET_WALLET_ADDRESS;
+    resetWalletIdentityCache();
   });
 
   test('runs one full scan cycle', async () => {

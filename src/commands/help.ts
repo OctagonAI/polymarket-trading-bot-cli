@@ -85,9 +85,9 @@ Whatever the key controls, this CLI controls — so keep in that account only
 what you intend to trade.
 
 The key is written to ~/.polymarket-bot/wallet.json with owner-only (0600)
-permissions, never to .env, and there is no environment variable that overrides
-it. To switch wallets, import again with --force or re-run the setup wizard;
-either resolves the account and saves it as a unit.
+permissions, never to .env. No environment variable can supply a key or an
+address — the saved wallet is the only one. To switch, import again with --force
+or re-run the setup wizard; either resolves the account and saves it as a unit.
 `,
 
     portfolio: `**${p}portfolio** — Account state

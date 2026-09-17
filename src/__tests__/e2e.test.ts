@@ -17,8 +17,13 @@ import { getToolRegistry } from '../tools/registry.js';
 import { buildSystemPrompt } from '../agent/prompts.js';
 import type { OctagonVariant } from '../scan/types.js';
 import type { ParsedArgs } from '../commands/parse-args.js';
+import * as walletStore from '../wallet/store.js';
+import { resetWalletIdentityCache } from '../wallet/identity.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/** A watch-tier funding address. Checksummed, because `isAddress` checks. */
+const WATCH_ADDRESS = '0x18eD5C15CeD1bFdf88e701601C4a0BbD4F5142dE';
 
 function makeAudit(): { audit: AuditTrail; path: string } {
   const path = join(tmpdir(), `e2e-audit-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
@@ -186,6 +191,7 @@ describe('E2E Integration Tests', () => {
   let audit: AuditTrail;
   let auditPath: string;
   let originalFetch: typeof globalThis.fetch;
+  const spies: Array<{ mockRestore: () => void }> = [];
 
   beforeEach(() => {
     db = createDb(':memory:');
@@ -193,8 +199,17 @@ describe('E2E Integration Tests', () => {
     audit = a.audit;
     auditPath = a.path;
 
-    // Reads need no credentials; portfolio reads need a wallet address.
-    process.env.POLYMARKET_WALLET_ADDRESS = '0x' + '1'.repeat(40);
+    // Reads need no credentials; portfolio reads need a wallet address. A saved
+    // wallet is the only source of one — stubbing the store also keeps these
+    // assertions off whatever wallet the machine running them happens to have.
+    spies.push(
+      spyOn(walletStore, 'readWalletFile').mockImplementation(() => ({
+        version: 1 as const,
+        address: WATCH_ADDRESS,
+        createdAt: 0,
+      })),
+    );
+    resetWalletIdentityCache();
 
     originalFetch = globalThis.fetch;
     setupFetchMock(originalFetch);
@@ -202,7 +217,8 @@ describe('E2E Integration Tests', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    delete process.env.POLYMARKET_WALLET_ADDRESS;
+    for (const sp of spies.splice(0)) sp.mockRestore();
+    resetWalletIdentityCache();
   });
 
   // Test 1: scan --theme runs full cycle
@@ -503,7 +519,7 @@ describe('E2E Integration Tests', () => {
 
     expect(names).toContain('polymarket_search');
     expect(names).toContain('polymarket_trade');
-    // This suite sets POLYMARKET_WALLET_ADDRESS, so portfolio_overview IS
+    // This suite stubs in a watch-tier wallet, so portfolio_overview IS
     // registered: it needs an address, which is present. Registration is a
     // function of wallet state rather than a fixed list.
     expect(names).toContain('portfolio_overview');

@@ -421,7 +421,6 @@ Polymarket market data is public, so there is no exchange key to set — reads w
 | `XAI_API_KEY` | xAI (Grok) |
 | `OPENROUTER_API_KEY` | OpenRouter (multi-model) |
 | `TAVILY_API_KEY` | Tavily web search for event research |
-| `POLYMARKET_WALLET_ADDRESS` | Read-only funding address, when you do not want a key on the machine |
 | `POLYMARKET_RPC_URL` | Polygon RPC (default `https://polygon.drpc.org`) |
 
 > **Note:** The bot defaults to GPT-5.4. If using a different provider, switch the model via the `config` command — otherwise queries will fail without `OPENAI_API_KEY`.
@@ -466,10 +465,10 @@ this machine, so keep in that account only what you intend to trade.
 
 The key is written to `~/.polymarket-bot/wallet.json` with owner-only (`0600`)
 permissions — never to `.env`, which this CLI writes world-readable and which
-is easy to commit by accident. There is no environment override for the key:
-switching wallets is `polymarket wallet import <private-key> --force`, or the
-setup wizard. `POLYMARKET_WALLET_ADDRESS` still works for read-only inspection
-of another account.
+is easy to commit by accident. There is no environment override for the key or
+for the address: switching wallets is `polymarket wallet import <private-key>
+--force`, or the setup wizard. To watch an account without a key on the machine,
+import the address instead: `polymarket wallet import <address>`.
 
 #### Trading approvals
 

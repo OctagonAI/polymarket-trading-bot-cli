@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { privateKeyToAccount } from 'viem/accounts';
-import { resolveIdentity, type IdentityEnv } from '../identity.js';
+import { resolveIdentity } from '../identity.js';
 import { isAddress, isPrivateKey, normalizePrivateKey } from '../keys.js';
 import type { StoredWallet } from '../store.js';
 
@@ -20,49 +20,38 @@ function fileWallet(overrides: Partial<StoredWallet> = {}): StoredWallet {
 
 describe('tier resolution', () => {
   test('nothing configured is tier none', () => {
-    expect(resolveIdentity({}, null)).toEqual({ tier: 'none', source: 'none' });
-  });
-
-  test('a saved key is unaffected by an environment address', () => {
-    // The address is a read-only override for inspecting another account.
-    // Letting it redirect a wallet that can sign would read one account while
-    // trading another.
-    const id = resolveIdentity(
-      { POLYMARKET_WALLET_ADDRESS: OTHER },
-      fileWallet({ signer: SIGNER_A, privateKey: KEY_A }),
-    );
-    expect(id).toMatchObject({ tier: 'trade', address: SAVED, source: 'file' });
+    expect(resolveIdentity(null)).toEqual({ tier: 'none', source: 'none' });
   });
 
   test('a stored key gives trading, and carries the resolved wallet type', () => {
-    const id = resolveIdentity({}, fileWallet({ signer: SIGNER_A, privateKey: KEY_A }));
+    const id = resolveIdentity(fileWallet({ signer: SIGNER_A, privateKey: KEY_A }));
     expect(id.tier).toBe('trade');
     expect(id.address).toBe(SAVED);
     expect(id.walletType).toBe('deposit');
     expect(id.source).toBe('file');
   });
 
-  test('an address alone gives watch, from either source', () => {
-    expect(resolveIdentity({ POLYMARKET_WALLET_ADDRESS: OTHER }, null)).toMatchObject({
+  test('an address alone gives watch', () => {
+    expect(resolveIdentity(fileWallet())).toMatchObject({
       tier: 'watch',
-      address: OTHER,
-      source: 'env-address',
+      address: SAVED,
+      source: 'file',
     });
-    expect(resolveIdentity({}, fileWallet())).toMatchObject({ tier: 'watch', source: 'file' });
   });
 
-  test('a stored key outranks a watch-only env address', () => {
-    const id = resolveIdentity(
-      { POLYMARKET_WALLET_ADDRESS: OTHER } as IdentityEnv,
-      fileWallet({ signer: SIGNER_A, privateKey: KEY_A }),
-    );
-    expect(id.tier).toBe('trade');
+  test('the saved wallet is the only way in', () => {
+    // The environment cannot supply an identity. `source` has exactly two
+    // values left, and neither is an env var: a wallet came from the file or
+    // there is no wallet. Reintroducing an override means reintroducing a
+    // `WalletSource`, which this assertion fails on.
+    const sources = [resolveIdentity(null).source, resolveIdentity(fileWallet()).source];
+    expect(sources).toEqual(['none', 'file']);
   });
 
   test('an older account type resolves like any other', () => {
     // Accounts made on polymarket.com before deposit wallets existed are
     // proxies or Safes. Polymarket still reports them, so they still load.
-    const id = resolveIdentity({}, fileWallet({ type: 'proxy', signer: SIGNER_A, privateKey: KEY_A }));
+    const id = resolveIdentity(fileWallet({ type: 'proxy', signer: SIGNER_A, privateKey: KEY_A }));
     expect(id.tier).toBe('trade');
     expect(id.walletType).toBe('proxy');
   });
@@ -79,5 +68,24 @@ describe('input recognition', () => {
     expect(isPrivateKey(OTHER)).toBe(false);
     expect(isAddress(OTHER)).toBe(true);
     expect(isAddress(`0x${'a'.repeat(64)}`)).toBe(false);
+  });
+
+  test('an address whose checksum does not match is rejected', () => {
+    // The point of EIP-55. Every 40-hex string is *some* address, so a typo
+    // cannot be caught by shape — only by the capitalisation the checksum
+    // encodes. Accepting this one would have the user reading an account that
+    // is not theirs, which looks exactly like an empty portfolio.
+    const typo = `${SAVED.slice(0, -1)}${SAVED.endsWith('E') ? 'e' : 'E'}`;
+    expect(typo).toHaveLength(42);
+    expect(typo).not.toBe(SAVED);
+    expect(isAddress(typo)).toBe(false);
+  });
+
+  test('a checksummed address is accepted, in either allowed casing', () => {
+    // Mixed case must match the checksum; all-lowercase carries no checksum at
+    // all and is the form a user gets from a block explorer's "copy" button.
+    expect(isAddress(SAVED)).toBe(true);
+    expect(isAddress(SAVED.toLowerCase())).toBe(true);
+    expect(isAddress(`  ${SAVED}  `)).toBe(true);
   });
 });

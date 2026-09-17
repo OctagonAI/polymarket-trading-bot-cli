@@ -17,23 +17,25 @@
  * the first time someone added a debug line. `loadPrivateKey()` is a separate,
  * explicit call.
  *
- * There is no environment override for the signing key. One existed, and it
- * could pair an environment key with the *saved* wallet's cached CLOB
- * credentials — authenticating as one account with another's credentials, then
- * writing the session's credentials back over the saved file. Switching wallets
- * is `wallet import --force` or the setup wizard, both of which resolve the
- * account and save it as a unit. `POLYMARKET_WALLET_ADDRESS` remains, because
- * an address is read-only and carries no credential to confuse.
+ * There is no environment override for either the signing key or the address.
+ * Both existed. The key could pair an environment key with the *saved* wallet's
+ * cached CLOB credentials — authenticating as one account with another's
+ * credentials, then writing the session's credentials back over the saved file.
+ * The address was harmless by comparison but pulled its weight in confusion: it
+ * silently outranked a saved watch-only wallet, so `wallet show` could report an
+ * account the user had never imported, and nothing on screen said where the
+ * address came from. A wallet now comes from one place. Switching is
+ * `wallet import --force` or the setup wizard, both of which resolve the account
+ * and save it as a unit.
  */
 import { privateKeyToAccount } from 'viem/accounts';
-import { getAddress } from 'viem';
 import { readWalletFile, type StoredWallet, type WalletType } from './store.js';
-import { isAddress, isPrivateKey, normalizePrivateKey } from './keys.js';
+import { isPrivateKey, normalizePrivateKey } from './keys.js';
 import { logger } from '../utils/logger.js';
 
 export type WalletTier = 'none' | 'watch' | 'trade';
 
-export type WalletSource = 'env-address' | 'file' | 'none';
+export type WalletSource = 'file' | 'none';
 
 export interface WalletIdentity {
   tier: WalletTier;
@@ -46,28 +48,17 @@ export interface WalletIdentity {
   source: WalletSource;
 }
 
-export interface IdentityEnv {
-  POLYMARKET_WALLET_ADDRESS?: string;
-}
-
 /**
- * Resolve a tier from inputs. Pure: no disk, no network, no cache.
+ * Resolve a tier from the saved wallet. Pure: no disk, no network, no cache.
  *
- * A saved key outranks `POLYMARKET_WALLET_ADDRESS`: the address is a read-only
- * override for inspecting some other account, and letting it silently redirect
- * a wallet that can sign would read one account while trading another.
+ * A key gives `trade`, an address alone gives `watch`, and no file at all gives
+ * `none`. Taking the file as an argument rather than reading it keeps the whole
+ * table testable without touching disk.
  */
-export function resolveIdentity(env: IdentityEnv, file: StoredWallet | null): WalletIdentity {
-  const envAddress = env.POLYMARKET_WALLET_ADDRESS?.trim();
-  const envFunder = envAddress && isAddress(envAddress) ? getAddress(envAddress) : undefined;
-
+export function resolveIdentity(file: StoredWallet | null): WalletIdentity {
   if (file?.privateKey && isPrivateKey(file.privateKey)) {
     const signer = file.signer ?? privateKeyToAccount(normalizePrivateKey(file.privateKey)).address;
     return { tier: 'trade', address: file.address, signer, walletType: file.type, source: 'file' };
-  }
-
-  if (envFunder) {
-    return { tier: 'watch', address: envFunder, source: 'env-address' };
   }
 
   if (file) {
@@ -100,7 +91,7 @@ export function loadWalletIdentity(): WalletIdentity {
   } catch (err) {
     logger.warn(`Ignoring unreadable wallet file: ${err instanceof Error ? err.message : String(err)}`);
   }
-  cached = resolveIdentity(process.env as IdentityEnv, file);
+  cached = resolveIdentity(file);
   return cached;
 }
 
