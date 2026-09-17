@@ -4,7 +4,7 @@ import { getDefaultModelForProvider } from '../utils/model.js';
 
 /**
  * Verify setup: check connectivity, API keys, and optional services.
- * Designed to be the first command a new user runs after `cp env.example .env`.
+ * Designed to be the first command a new user runs after the setup wizard.
  *
  * Note what is NOT checked: exchange credentials. Polymarket's market data is
  * public, so there is nothing to authenticate for reads — the Kalshi original
@@ -19,11 +19,10 @@ export async function handleStatus(): Promise<string> {
   lines.push('');
 
   // 1. Market data — public, so this is a plain reachability check
-  const staging = process.env.POLYMARKET_USE_STAGING === 'true';
   try {
     const data = await fetchExchangeStatus();
     if (data.exchange_active) {
-      lines.push(`✓ Polymarket CLOB reachable${staging ? ' (staging)' : ''} — no credentials needed for market data`);
+      lines.push('✓ Polymarket CLOB reachable — no credentials needed for market data');
     } else {
       lines.push('✗ Polymarket CLOB unreachable');
       allGood = false;
@@ -31,9 +30,6 @@ export async function handleStatus(): Promise<string> {
   } catch (e: any) {
     lines.push(`✗ Cannot reach Polymarket: ${e.message}`);
     allGood = false;
-  }
-  if (staging) {
-    lines.push('⚠ POLYMARKET_USE_STAGING=true — staging hosts are unverified and may not resolve');
   }
 
   // 2. LLM provider — detect which provider is configured and show its default model

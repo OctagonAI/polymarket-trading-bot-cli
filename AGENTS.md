@@ -74,7 +74,7 @@ agent policy in `src/agent/prompts.ts` must not name them: an unregistered tool 
 ## Environment Variables
 
 - Exchange: none — Gamma / CLOB / Data reads are public. Order placement will use a Polygon wallet signature, not an API key.
-- Endpoints: `POLYMARKET_USE_STAGING`, `POLYMARKET_GAMMA_URL`, `POLYMARKET_CLOB_URL`, `POLYMARKET_DATA_URL`
+- Endpoints: `POLYMARKET_GAMMA_URL`, `POLYMARKET_CLOB_URL`, `POLYMARKET_DATA_URL` (no staging/testnet exists)
 - Research: `OCTAGON_API_KEY`, `OCTAGON_BASE_URL`, `OCTAGON_CONCURRENCY`
 - LLM: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_BASE_URL`, `DEFAULT_MODEL`
 - Other: `TAVILY_API_KEY`, `TELEMETRY_ENABLED`

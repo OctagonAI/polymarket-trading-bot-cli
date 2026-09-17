@@ -305,10 +305,6 @@ UNRESOLVED (105 markets)
   ...
 ```
 
-### Staging
-
-Set `POLYMARKET_USE_STAGING=true` in your `.env` to point the Gamma, CLOB and Data clients at Polymarket's staging hosts. Those hostnames are documented but do not currently resolve, so treat this as unverified. Individual services can also be overridden with `POLYMARKET_GAMMA_URL`, `POLYMARKET_CLOB_URL` and `POLYMARKET_DATA_URL`.
-
 ## Scripting & Parallel Use
 
 The `bunx polymarket-trading-bot-cli@latest …` form is great for one-off interactive use, but it has two gotchas when you script against it:
@@ -404,11 +400,9 @@ The `watch --theme` command outputs NDJSON (one JSON object per scan cycle), sui
 
 ### Environment Variables
 
-The setup wizard (run automatically on first launch, or invoke with `polymarket init`) handles this interactively. To edit by hand:
+The setup wizard (run automatically on first launch, or invoke with `polymarket init`) writes `~/.polymarket-bot/.env` for you. Edit that file directly to change anything below.
 
-```bash
-cp env.example ~/.polymarket-bot/.env
-```
+> **There is no testnet.** Polymarket runs a single environment, so every order this tool places is real money. Nothing here is a paper-trading mode.
 
 **Required:**
 
@@ -423,8 +417,8 @@ Polymarket market data is public, so there is no exchange key to set — reads w
 
 | Variable | Description |
 |----------|-------------|
-| `POLYMARKET_USE_STAGING` | `true` to target Polymarket's staging hosts (unverified) |
-| `POLYMARKET_GAMMA_URL` / `POLYMARKET_CLOB_URL` / `POLYMARKET_DATA_URL` | Override an individual service base URL |
+| `DEFAULT_MODEL` | Override the default LLM (default `gpt-5.4`) |
+| `POLYMARKET_GAMMA_URL` / `POLYMARKET_CLOB_URL` / `POLYMARKET_DATA_URL` | Override an individual service base URL, for a local proxy or mock |
 | `ANTHROPIC_API_KEY` | Anthropic (Claude) |
 | `GOOGLE_API_KEY` | Google (Gemini) |
 | `XAI_API_KEY` | xAI (Grok) |

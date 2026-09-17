@@ -13,12 +13,10 @@ export class IntroComponent extends Container {
   constructor(model: string) {
     super();
 
-    // POLYMARKET_USE_STAGING is the flag the API client actually honors. The
-    // Kalshi original keyed this banner off POLYMARKET_USE_DEMO, which nothing
-    // in the Polymarket client reads — so it would promise "no real money"
-    // while every request still went to production.
-    const isStaging = process.env.POLYMARKET_USE_STAGING === 'true';
-    const welcomeText = isStaging ? 'Polymarket Trading Bot CLI  [STAGING]' : 'Polymarket Trading Bot CLI';
+    // No demo banner is possible here: Polymarket has one environment and no
+    // testnet, so every session is real money. The Kalshi original keyed a
+    // banner off POLYMARKET_USE_DEMO, which nothing reads.
+    const welcomeText = 'Polymarket Trading Bot CLI';
     const versionText = ` v${packageJson.version}`;
     const fullText = welcomeText + versionText;
     const padding = Math.max(0, Math.floor((INTRO_WIDTH - fullText.length - 2) / 2));
@@ -58,16 +56,6 @@ export class IntroComponent extends Container {
       ),
     );
 
-    if (isStaging) {
-      this.addChild(new Spacer(1));
-      this.addChild(
-        new Text(
-          theme.warning('  ⚠  STAGING — reads are pointed at Polymarket staging hosts  ⚠'),
-          0,
-          0,
-        ),
-      );
-    }
 
     this.addChild(new Spacer(1));
     this.addChild(new Text('AI-powered prediction market terminal.', 0, 0));

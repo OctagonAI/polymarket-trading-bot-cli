@@ -19,24 +19,17 @@ const PROD_BASE_URLS: Record<PolymarketService, string> = {
   data: 'https://data-api.polymarket.com',
 };
 
-const STAGING_BASE_URLS: Record<PolymarketService, string> = {
-  gamma: 'https://gamma-api-staging.polymarket.com',
-  clob: 'https://clob-staging.polymarket.com',
-  data: 'https://data-api-staging.polymarket.com',
-};
-
 /**
- * Per-service override wins, then the staging switch, then production.
+ * Per-service override wins, then production.
  *
- * Note: the staging hosts are documented by Polymarket but did not resolve in
- * DNS at the time of writing. Treat POLYMARKET_USE_STAGING as unverified until
- * someone confirms it against real credentials.
+ * There is no testnet, demo or sandbox: Polymarket runs one environment, and
+ * the staging hosts this once pointed at are internal and do not resolve. The
+ * per-service override is left in for a local proxy or mock.
  */
 export function getBaseUrl(service: PolymarketService): string {
   const override = process.env[`POLYMARKET_${service.toUpperCase()}_URL`];
   if (override) return override.replace(/\/$/, '');
-  const useStaging = process.env.POLYMARKET_USE_STAGING === 'true';
-  return (useStaging ? STAGING_BASE_URLS : PROD_BASE_URLS)[service];
+  return PROD_BASE_URLS[service];
 }
 
 // --- Error class ---

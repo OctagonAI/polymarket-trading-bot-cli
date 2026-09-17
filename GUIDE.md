@@ -67,8 +67,7 @@ whereas `.env` is written world-readable.
 
 | Variable | Required | Description |
 |---|---|---|
-| `POLYMARKET_USE_STAGING` | No | Point reads at Polymarket's staging hosts (unverified) |
-| `POLYMARKET_GAMMA_URL` / `POLYMARKET_CLOB_URL` / `POLYMARKET_DATA_URL` | No | Override an individual service base URL |
+| `POLYMARKET_GAMMA_URL` / `POLYMARKET_CLOB_URL` / `POLYMARKET_DATA_URL` | No | Override an individual service base URL, for a local proxy or mock |
 | `OPENAI_API_KEY` | One of these | OpenAI API key |
 | `ANTHROPIC_API_KEY` | One of these | Anthropic API key |
 | `GOOGLE_API_KEY` | One of these | Google AI API key |
@@ -421,7 +420,7 @@ share, which implies a **56% probability** of that outcome. YES + NO prices sum 
 
 ## Tips
 
-- **Staging**: Set `POLYMARKET_USE_STAGING=true` to point reads at Polymarket's staging hosts (currently unverified — the documented hostnames do not resolve)
+- **No testnet**: Polymarket runs one environment. There is no demo, sandbox or paper-trading mode — every order is real money
 - **Multi-step research**: The search router automatically drills down — ask "what's the implied probability of X" and it will find the event, then fetch contract-level prices
 - **Be specific**: "BTC markets closing this week" works better than "crypto"
 - **Trade safely**: when trading lands, all orders will require explicit confirmation — the agent shows the order details and asks for approval
