@@ -1,4 +1,4 @@
-import { Container, ProcessTerminal, Spacer, Text, TUI, CombinedAutocompleteProvider, isKeyRelease } from '@mariozechner/pi-tui';
+import { Container, ProcessTerminal, Spacer, Text, TUI, CombinedAutocompleteProvider, isKeyRelease, parseKey } from '@mariozechner/pi-tui';
 import type { SlashCommand, AutocompleteItem } from '@mariozechner/pi-tui';
 import type {
   ApprovalDecision,
@@ -229,7 +229,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
 
   tui.addInputListener((data: string) => {
     if (!pendingTrade) return;
-    switch (confirmKeyAction(data, isKeyRelease(data))) {
+    switch (confirmKeyAction(parseKey(data), isKeyRelease(data))) {
       case 'passthrough':
         return;
       case 'submit':
@@ -435,8 +435,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       { value: 'watch', label: 'watch', description: 'Live monitoring' },
       { value: 'buy', label: 'buy', description: 'Buy contracts' },
       { value: 'sell', label: 'sell', description: 'Sell contracts' },
-      { value: 'cancel', label: 'cancel', description: 'Cancel a resting order' },
-      { value: 'orders', label: 'orders', description: 'List resting orders' },
+      { value: 'orders', label: 'orders', description: 'List, inspect or cancel resting orders' },
       { value: 'backtest', label: 'backtest', description: 'Model accuracy & edge scanner' },
       { value: 'help', label: 'help', description: 'Show help' },
       { value: 'scripting', label: 'scripting', description: 'Tips for agents, pipelines, parallel use' },
@@ -455,7 +454,6 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     { name: 'watch', description: 'Live monitoring: ticker feed or continuous theme scan', getArgumentCompletions: watchSubcommands },
     { name: 'buy', description: 'Buy contracts (defaults to YES side)', getArgumentCompletions: usageHint('<market-slug> <shares> [price] [yes|no]', 'e.g. bitcoin-above-88k-on-september-11-2026 10 0.56') },
     { name: 'sell', description: 'Sell contracts (defaults to YES side)', getArgumentCompletions: usageHint('<market-slug> <shares> [price] [yes|no]', 'e.g. bitcoin-above-88k-on-september-11-2026 10 0.56') },
-    { name: 'cancel', description: 'Cancel a resting order', getArgumentCompletions: usageHint('<order_id>', 'the order UUID') },
     // Analysis
     { name: 'backtest', description: 'Model accuracy scorecard + live edge scanner', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
       const opts = [
@@ -536,9 +534,10 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       if (!typed) return opts;
       return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
     }},
-    { name: 'orders', description: 'List your resting orders on the CLOB' },
-    { name: 'cancel', description: 'Cancel a resting order by id, or --all', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
-      const opts = [{ value: '--all', label: '--all', description: 'Cancel every resting order' }];
+    { name: 'orders', description: 'List, inspect or cancel resting orders', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
+      const opts = [
+        { value: 'cancel', label: 'cancel', description: '<order> | --all   Cancel resting orders' },
+      ];
       if (!typed) return opts;
       return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
     }},
