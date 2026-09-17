@@ -453,7 +453,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     { name: 'analyze', description: 'Full market analysis: edge, research, Kelly sizing', getArgumentCompletions: usageHint('<market-slug>', 'e.g. bitcoin-above-88k-on-september-11-2026') },
     { name: 'watch', description: 'Live monitoring: ticker feed or continuous theme scan', getArgumentCompletions: watchSubcommands },
     { name: 'buy', description: 'Buy contracts (defaults to YES side)', getArgumentCompletions: usageHint('<market-slug> <shares> [price] [yes|no]', 'e.g. bitcoin-above-88k-on-september-11-2026 10 0.56') },
-    { name: 'sell', description: 'Sell contracts (defaults to YES side)', getArgumentCompletions: usageHint('<market-slug> <shares> [price] [yes|no]', 'e.g. bitcoin-above-88k-on-september-11-2026 10 0.56') },
+    { name: 'sell', description: 'Sell contracts (defaults to YES side)', getArgumentCompletions: usageHint('<market-slug> <shares|max> [price] [yes|no]', 'e.g. bitcoin-above-88k-on-september-11-2026 10 0.56') },
     // Analysis
     { name: 'backtest', description: 'Model accuracy scorecard + live edge scanner', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
       const opts = [

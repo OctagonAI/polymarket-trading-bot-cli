@@ -17,7 +17,8 @@
  *  4. **Which half of the fill is shares.** The response reports the maker and
  *     taker legs, and which one is shares flips with the side — see `postOrder`.
  */
-import { OrderSide, OrderType, type SignedOrder, type OrderResponse } from '@polymarket/client';
+import { OrderSide, OrderType, type AssetType, type SignedOrder, type OrderResponse } from '@polymarket/client';
+import { fetchBalanceAllowance } from '@polymarket/client/actions';
 import { getClobClient } from './client.js';
 import { roundToTick } from '../tools/polymarket/api.js';
 import type { PolymarketMarket } from '../tools/polymarket/types.js';
@@ -123,6 +124,33 @@ export function resolveOutcome(market: PolymarketMarket, wanted: string): Resolv
   }
 
   return { label: outcomes[index]!, tokenId: tokenIds[index]!, index };
+}
+
+/**
+ * Shares of an outcome this wallet can actually sell, or null if unreadable.
+ *
+ * The venue is the authority. The local position book misses anything opened
+ * outside this CLI, and — more to the point — a market buy is denominated in
+ * dollars, so it almost never leaves a round share count behind: $1.034 of a
+ * $0.047 outcome is 21.914894 shares, and an attempt to sell "22" is rejected
+ * for a balance the venue reports in base units.
+ *
+ * Null means unknown, never zero. A wallet that genuinely holds nothing and a
+ * CLOB that cannot be reached must not look the same.
+ */
+export async function readSellableShares(tokenId: string): Promise<number | null> {
+  try {
+    const client = await getClobClient();
+    const { balance } = await fetchBalanceAllowance(client, {
+      // The enum is types-only at runtime; CONDITIONAL is its outcome-token arm.
+      assetId: tokenId,
+      assetType: 'CONDITIONAL' as AssetType,
+    });
+    const shares = Number(balance) / UNITS;
+    return Number.isFinite(shares) ? shares : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The price a taker would actually get on this side right now. */

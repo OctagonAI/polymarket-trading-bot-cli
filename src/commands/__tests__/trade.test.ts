@@ -48,6 +48,8 @@ function setup(opts: {
   tier?: identity.WalletTier;
   filled?: number;
   orderId?: string;
+  /** Shares the venue says the wallet holds. null = balance unreadable. */
+  held?: number | null;
 } = {}) {
   const tier = opts.tier ?? 'trade';
   const built = {
@@ -73,6 +75,9 @@ function setup(opts: {
     })),
     spyOn(analyze, 'resolveMarket').mockImplementation(async () => market()),
     spyOn(orders, 'buildOrder').mockImplementation(async () => built as never),
+    spyOn(orders, 'readSellableShares').mockImplementation(
+      async () => (opts.held === undefined ? 1000 : opts.held),
+    ),
     postSpy,
   );
   return postSpy;
@@ -206,6 +211,68 @@ describe('trade — what gets written', () => {
 
     await run(['sell', 'slug', '50', '0.45', '--yes']);
     expect(getOpenPositions(db)).toHaveLength(0);
+  });
+});
+
+describe('trade — selling what you actually hold', () => {
+  test('selling more than the venue says you hold is refused, in shares', async () => {
+    // A market buy spends dollars, so it leaves 21.914894 shares behind, and
+    // the venue refuses "22" with "balance: 21914894, order amount: 22000000".
+    // That is not a number anyone can act on.
+    const post = setup({ held: 21.914894 });
+    const resp = await run(['sell', 'slug', '22', '--yes']);
+
+    expect(resp.ok).toBe(false);
+    expect(resp.error?.code).toBe('INSUFFICIENT_SHARES');
+    expect(resp.error?.message).toContain('21.914894');
+    expect(resp.error?.message).toContain('max');
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  test('`sell <slug> max` sells the exact holding', async () => {
+    const buildSpy = spyOn(orders, 'buildOrder');
+    setup({ held: 21.914894, filled: 21.914894 });
+    await run(['sell', 'slug', 'max', '--yes']);
+
+    expect(buildSpy.mock.calls[0]![0]).toMatchObject({ shares: 21.914894 });
+  });
+
+  test('selling exactly what is held is allowed', async () => {
+    const post = setup({ held: 21.914894, filled: 21.914894 });
+    const resp = await run(['sell', 'slug', '21.914894', '--yes']);
+
+    expect(resp.ok).toBe(true);
+    expect(post).toHaveBeenCalled();
+  });
+
+  test('an unreadable balance warns rather than blocking', async () => {
+    // The venue is the authority, but losing the read must not lose the order:
+    // a wallet that holds nothing and a CLOB that cannot be reached are not the
+    // same thing.
+    const post = setup({ held: null, filled: 50 });
+    const resp = await run(['sell', 'slug', '50', '--yes']);
+
+    expect(resp.ok).toBe(true);
+    expect(resp.data.warnings.join(' ')).toContain('Could not read your on-chain balance');
+    expect(post).toHaveBeenCalled();
+  });
+
+  test('`max` with no readable balance refuses rather than guessing', async () => {
+    const post = setup({ held: null });
+    const resp = await run(['sell', 'slug', 'max', '--yes']);
+
+    expect(resp.ok).toBe(false);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  test('`max` is not a size for a buy', async () => {
+    // There is no holding to derive it from, so it stays an invalid size.
+    const post = setup();
+    const resp = await run(['buy', 'slug', 'max', '--yes']);
+
+    expect(resp.ok).toBe(false);
+    expect(resp.error?.code).toBe('INVALID_ARG');
+    expect(post).not.toHaveBeenCalled();
   });
 });
 

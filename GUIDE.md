@@ -124,7 +124,7 @@ Quick commands that bypass the AI agent and call the exchange or Octagon API dir
 | `/themes audit` | Flag dead themes (high SEO + zero volume) | `/themes audit` |
 | `/themes overlap` | Cross-theme dedupe report | `/themes overlap` |
 | `/buy <market-slug> <shares> [price]` | Buy shares (price 0-1; omit for a market order) | `/buy bitcoin-above-95k-by-april-30 5 0.56` |
-| `/sell <market-slug> <shares> [price]` | Sell shares you hold | `/sell bitcoin-above-95k-by-april-30 5 0.60` |
+| `/sell <market-slug> <shares\|max> [price]` | Sell shares you hold (`max` = the whole position) | `/sell bitcoin-above-95k-by-april-30 max` |
 
 **Trading is not available yet.** These commands return an explanation instead of
 placing an order; Polymarket orders need EIP-712 wallet signing and on-chain

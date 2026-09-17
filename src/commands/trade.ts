@@ -35,8 +35,15 @@ import * as readline from 'node:readline';
 import { randomUUID } from 'crypto';
 import type { ParsedArgs } from './parse-args.js';
 import { wrapSuccess, wrapError, type CLIResponse } from './json.js';
-import { validateTradeArgs } from './help.js';
-import { buildOrder, postOrder, OrderError, type TradeAction } from '../clob/orders.js';
+import { validateTradeArgs, validatePriceOnly } from './help.js';
+import {
+  buildOrder,
+  postOrder,
+  resolveOutcome,
+  readSellableShares,
+  OrderError,
+  type TradeAction,
+} from '../clob/orders.js';
 import { ClobAuthError } from '../clob/client.js';
 import { loadWalletIdentity } from '../wallet/identity.js';
 import { resolveMarket } from './analyze.js';
@@ -109,9 +116,10 @@ export async function prepareTrade(
     return fail(wrapError(
       action,
       'MISSING_ARG',
-      `Usage: polymarket ${action} <market-slug> <shares> [price] [outcome]\n` +
+      `Usage: polymarket ${action} <market-slug> <shares${action === 'sell' ? '|max' : ''}> [price] [outcome]\n` +
         `  price   decimal USD in (0,1). Omit for a market order.\n` +
-        `  outcome yes|no, or an outcome name for a multi-outcome market.`,
+        `  outcome yes|no, or an outcome name for a multi-outcome market.` +
+        (action === 'sell' ? `\n  max     sell the whole position.` : ''),
     ));
   }
 
@@ -124,7 +132,12 @@ export async function prepareTrade(
     else outcomeArg ??= token;
   }
 
-  const parsed = validateTradeArgs(sharesArg, priceArg);
+  // `sell <slug> max` — a market buy is priced in dollars, so it leaves an
+  // unround holding behind and the whole position is the common thing to sell.
+  const sellEverything = action === 'sell' && /^max$/i.test(sharesArg);
+  const parsed = sellEverything
+    ? { count: 0, ...validatePriceOnly(priceArg) }
+    : validateTradeArgs(sharesArg, priceArg);
   if ('error' in parsed) return fail(wrapError(action, 'INVALID_ARG', parsed.error));
 
   const id = loadWalletIdentity();
@@ -163,15 +176,49 @@ export async function prepareTrade(
 
   const outcome = outcomeArg ?? defaultOutcome(market);
 
-  // Selling more than you hold is rejected by the venue with an unhelpful
-  // message; the local book is not authoritative, so this warns rather than
-  // blocks — positions opened outside this CLI are not in it.
+  // Selling more than you hold is refused by the venue in base units
+  // ("balance: 21914894, order amount: 22000000"), which is not a number anyone
+  // can act on. Ask the venue what the wallet actually holds and say it in
+  // shares — and if the read fails, fall back to the local book as a warning
+  // rather than blocking, since it is not authoritative.
+  let shares = parsed.count;
   if (action === 'sell') {
-    const held = getOpenPositionsForTicker(db, market.ticker)
-      .filter((p) => p.direction.toLowerCase() === outcome.toLowerCase())
-      .reduce((sum, p) => sum + p.size, 0);
-    if (held > 0 && parsed.count > held) {
-      warnings.push(`Selling ${parsed.count} but this CLI only tracks ${held} share(s) of ${outcome}.`);
+    let held: number | null = null;
+    let label = outcome;
+    try {
+      const resolved = resolveOutcome(market, outcome);
+      label = resolved.label;
+      held = await readSellableShares(resolved.tokenId);
+    } catch (err) {
+      if (err instanceof OrderError) return fail(wrapError(action, 'ORDER_INVALID', err.message));
+      throw err;
+    }
+
+    if (held === null) {
+      if (sellEverything) {
+        return fail(
+          wrapError(action, 'CLOB_ERROR', 'Could not read your balance, so there is no "max" to sell.'),
+        );
+      }
+      const tracked = getOpenPositionsForTicker(db, market.ticker)
+        .filter((p) => p.direction.toLowerCase() === outcome.toLowerCase())
+        .reduce((sum, p) => sum + p.size, 0);
+      warnings.push('Could not read your on-chain balance; the order may be rejected.');
+      if (tracked > 0 && shares > tracked) {
+        warnings.push(`Selling ${shares} but this CLI only tracks ${tracked} share(s) of ${label}.`);
+      }
+    } else if (sellEverything) {
+      shares = held;
+    } else if (shares > held) {
+      return fail(
+        wrapError(
+          action,
+          'INSUFFICIENT_SHARES',
+          `You hold ${held} share(s) of ${label}, not ${shares}. ` +
+            `A market buy spends a dollar amount, so it rarely leaves a round number behind. ` +
+            `Sell ${held}, or use \`${action} ${slug} max\`.`,
+        ),
+      );
     }
   }
 
@@ -181,7 +228,7 @@ export async function prepareTrade(
       market,
       action,
       outcome,
-      shares: parsed.count,
+      shares,
       ...(parsed.price !== undefined ? { limitPrice: parsed.price } : {}),
     });
   } catch (err) {

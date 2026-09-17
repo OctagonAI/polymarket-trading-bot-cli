@@ -164,16 +164,23 @@ The circuit breaker (daily loss limit, max drawdown) blocks orders outright;
 
     sell: `**${p}sell** — Sell shares you hold
 
-${p}sell <market-slug> <shares> [price] [outcome]
+${p}sell <market-slug> <shares|max> [price] [outcome]
 
 Same shape as ${p}buy. Omit the price to sell at the best bid.
 
 Examples:
   ${p}sell bitcoin-above-100k-2026 10           Market sell, 10 Yes shares
+  ${p}sell bitcoin-above-100k-2026 max          The whole position
   ${p}sell bitcoin-above-100k-2026 10 0.72      Limit at $0.72
 
-Selling more than this CLI has recorded warns rather than blocks — positions
-opened elsewhere are not in its local book, and the venue is the authority.`,
+Use \`max\` more often than you would expect. A market buy spends a dollar
+amount rather than buying a share count, so it leaves an unround holding behind
+— $1.03 of a $0.047 outcome is 21.914894 shares, and asking to sell 22 is
+refused for a balance you do not have.
+
+The size is checked against what the venue says you hold, not against this
+CLI's own records, so positions opened elsewhere count too. If that balance
+cannot be read the order still goes through, with a warning.`,
 
     orders: `**${p}orders** — Resting orders on the CLOB
 
@@ -667,6 +674,18 @@ export function buildHelp(ctx: HelpContext, topic?: string): { text: string } | 
  * per-market (`PolymarketMarket.tick_size` / `min_order_size`) and belong to the
  * order path, which can name the actual limit.
  */
+/** The price half of `validateTradeArgs`, for sizes that are not a number. */
+export function validatePriceOnly(
+  priceStr?: string,
+): { price: number | undefined } | { error: string } {
+  if (priceStr === undefined) return { price: undefined };
+  const parsed = Number(priceStr);
+  if (!/^\d*\.?\d+$/.test(priceStr) || !Number.isFinite(parsed) || parsed <= 0 || parsed >= 1) {
+    return { error: `Invalid price: ${priceStr}. Price is decimal USDC between 0 and 1, e.g. 0.56 for 56c.` };
+  }
+  return { price: parsed };
+}
+
 export function validateTradeArgs(
   countStr: string,
   priceStr?: string,

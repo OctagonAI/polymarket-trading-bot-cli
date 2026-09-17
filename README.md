@@ -155,7 +155,7 @@ Type help for commands, or just ask a question.
 | `watch <ticker>` | Live price and orderbook feed |
 | `watch --theme <theme>` | Continuous theme scan |
 | `buy <slug> <shares> [price] [outcome]` | Buy shares — omit price for a market order |
-| `sell <slug> <shares> [price] [outcome]` | Sell shares you hold |
+| `sell <slug> <shares\|max> [price] [outcome]` | Sell shares you hold — `max` sells the whole position |
 | `orders [<order>]` | Your resting orders on the CLOB — needs a wallet with a key. With an id, or a short prefix of one, the full detail for a single order |
 | `orders cancel <order>` | Cancel a resting order, or `--all` for every one |
 | `backtest` | Model accuracy scorecard + live edge scanner |
@@ -197,7 +197,7 @@ Type help for commands, or just ask a question.
 | `--series-prefix <prefix>` | Server-side series prefix match (e.g. `bitcoin` matches `bitcoin-above-…`) |
 | `--force` | Replace an existing wallet (`wallet import`); override the circuit breaker (`buy`, `sell`) |
 | `--yes` | Skip the confirmation prompt (`buy`, `sell`) |
-| `--all` | Cancel every resting order (`cancel`) |
+| `--all` | Cancel every resting order (`orders cancel`) |
 
 ### Discovery & Portfolio (Octagon-powered)
 
