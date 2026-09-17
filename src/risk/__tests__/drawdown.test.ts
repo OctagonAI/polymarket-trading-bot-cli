@@ -10,6 +10,7 @@ import {
 import { CircuitBreaker, RiskSnapshotError } from '../circuit-breaker.js';
 import * as kelly from '../kelly.js';
 import type { LiveBankroll } from '../kelly.js';
+import * as identity from '../../wallet/identity.js';
 
 /**
  * Drawdown is measured on equity (cash + position value) rather than on
@@ -44,6 +45,23 @@ function stubBankroll(b: LiveBankroll) {
   spies.push(spyOn(kelly, 'fetchLiveBankroll').mockImplementation(async () => b));
 }
 
+/**
+ * `snapshot()` refuses an unreadable balance only for a wallet that has
+ * something to lose, so every test here has to say which case it is. Left to
+ * the real `loadWalletIdentity`, the answer would be whatever wallet.json the
+ * machine running the tests happens to have — passing on a developer's funded
+ * laptop and failing in CI, where there is none.
+ */
+function stubWallet(tier: 'trade' | 'none') {
+  spies.push(
+    spyOn(identity, 'loadWalletIdentity').mockImplementation(() =>
+      tier === 'trade'
+        ? { tier, address: '0xfund', signer: '0xsigner', source: 'file' as const }
+        : { tier, source: 'none' as const },
+    ),
+  );
+}
+
 describe('equity-based drawdown', () => {
   let db: Database;
   let breaker: CircuitBreaker;
@@ -51,6 +69,7 @@ describe('equity-based drawdown', () => {
   beforeEach(() => {
     db = createDb(':memory:');
     breaker = new CircuitBreaker();
+    stubWallet('trade');
   });
 
   afterEach(() => {
@@ -138,6 +157,18 @@ describe('equity-based drawdown', () => {
     await expect(breaker.snapshot(db)).rejects.toThrow(RiskSnapshotError);
 
     expect(getLatestSnapshot(db)!.drawdown_max).toBeCloseTo(0.3, 10);
+  });
+
+  test('with no wallet an unreadable balance is not a failure', async () => {
+    // Nothing to protect: a research-only user has no equity to know and no
+    // position to lose, and throwing here would break `scan` and `watch` for
+    // them. The row is written with a null equity and excluded from the walk.
+    for (const s of spies.splice(0)) s.mockRestore();
+    stubWallet('none');
+    stubBankroll(bankroll(null, 0));
+
+    const after = await breaker.snapshot(db);
+    expect(after.equity).toBeNull();
   });
 
   test('daily P&L is the equity delta, in USDC', async () => {
