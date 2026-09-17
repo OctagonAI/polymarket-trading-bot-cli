@@ -69,8 +69,11 @@ no Polymarket history, and polymarket.com deposits only into the account it made
 for you — so the way in is to import the key for the account you already have.
 
 A Polymarket account has two addresses:
-  Signing wallet   the keypair that signs. Pays gas in POL. Holds nothing.
+  Signing wallet   the keypair that signs orders. Holds nothing.
   Funding wallet   a contract it controls. Holds your pUSD. Deposit here.
+
+Orders are signed messages, not transactions — Polymarket settles them — so
+this CLI never sends anything on-chain and you never need POL for gas.
 
 Reading a balance at the signing wallet always shows zero, so ${p}wallet show
 prints both. Which contract is the funding wallet is not computable from the
@@ -84,12 +87,7 @@ what you intend to trade.
 The key is written to ~/.polymarket-bot/wallet.json with owner-only (0600)
 permissions, never to .env. Override it for one session with
 POLYMARKET_PRIVATE_KEY, which takes precedence over the saved file.
-
-Approvals
-  Trading needs on-chain permissions, and Polymarket grants them during
-  onboarding — an account made on polymarket.com arrives ready. This CLI never
-  reads or sends them. If one is somehow missing, the venue rejects the order
-  and says so, and placing a trade on polymarket.com prompts for it.`,
+`,
 
     portfolio: `**${p}portfolio** — Account state
 

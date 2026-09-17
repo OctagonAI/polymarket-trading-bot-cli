@@ -453,7 +453,7 @@ way to see a zero balance on a funded account:
 
 | | |
 |---|---|
-| **Signing wallet** | The keypair. Signs orders, pays gas in POL. Holds nothing. |
+| **Signing wallet** | The keypair. Signs orders. Holds nothing, pays nothing. |
 | **Funding wallet** | A contract it controls. Holds your pUSD. **Deposit here.** |
 
 `wallet show` prints both. Which contract is the funding wallet depends on when
