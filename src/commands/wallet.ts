@@ -42,8 +42,6 @@ export interface WalletData {
   walletType?: WalletType;
   source?: string;
   configPath?: string;
-  /** Env and saved wallet disagree about which account to use. */
-  conflict?: string;
   message?: string;
 }
 
@@ -150,7 +148,6 @@ async function showHandler(): Promise<CLIResponse<WalletData>> {
     source: id.source,
     ...(id.walletType ? { walletType: id.walletType } : {}),
     configPath: walletPath(),
-    ...(id.conflict ? { conflict: id.conflict } : {}),
   });
 }
 
@@ -205,13 +202,6 @@ export function formatWalletHuman(data: WalletData): string {
     lines.push(`    Wallet type      ${theme.muted(WALLET_TYPE_LABEL[data.walletType])}`);
   }
 
-  // logger.warn only buffers for the TUI, so a conflict would otherwise be
-  // invisible in CLI mode — and signing as a different account than the one
-  // saved is precisely what a user needs told.
-  if (data.conflict) {
-    lines.push('');
-    lines.push(theme.error(`    ${data.conflict}`));
-  }
   if (data.message) {
     lines.push('');
     lines.push(theme.muted(`    ${data.message}`));

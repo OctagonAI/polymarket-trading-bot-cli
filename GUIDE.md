@@ -61,10 +61,10 @@ bun start        # or `bun run dev` for hot-reload
 
 Polymarket market data is public — no credentials are needed to research. Reading
 your own balance and positions needs a wallet address; trading needs its private
-key. Prefer `polymarket wallet import` over setting these by hand: it writes
-`~/.polymarket-bot/wallet.json` with owner-only permissions, whereas `.env` is
-written world-readable. `POLYMARKET_PRIVATE_KEY` needs `POLYMARKET_WALLET_ADDRESS`
-alongside it — the funding address cannot be derived from the key.
+key, and the only way to supply one is `polymarket wallet import`, which writes
+`~/.polymarket-bot/wallet.json` with owner-only permissions. There is no
+environment variable for the key. `POLYMARKET_WALLET_ADDRESS` sets a read-only
+address for inspecting another account.
 
 | Variable | Required | Description |
 |---|---|---|
@@ -76,7 +76,6 @@ alongside it — the funding address cannot be derived from the key.
 | `OPENROUTER_API_KEY` | One of these | OpenRouter API key |
 | `OLLAMA_BASE_URL` | No | Ollama endpoint (default `http://127.0.0.1:11434`) |
 | `TAVILY_API_KEY` | No | Enables web search tool for background research |
-| `POLYMARKET_PRIVATE_KEY` | No | Signing key; overrides the saved wallet for one session |
 | `POLYMARKET_WALLET_ADDRESS` | No | Read-only funding address, with no key on the machine |
 | `POLYMARKET_RPC_URL` | No | Polygon RPC (default `https://polygon.drpc.org`) |
 | `LANGSMITH_API_KEY` | No | LangSmith tracing for debugging |

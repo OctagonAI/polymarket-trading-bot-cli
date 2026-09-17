@@ -23,25 +23,15 @@ describe('tier resolution', () => {
     expect(resolveIdentity({}, null)).toEqual({ tier: 'none', source: 'none' });
   });
 
-  test('an env key alone gives trading but no account to read', () => {
-    // Which contract holds the funds is not derivable from the key, so there is
-    // nothing honest to put in `address`. Inventing one would name a real,
-    // empty account — indistinguishable from an unfunded wallet.
-    const id = resolveIdentity({ POLYMARKET_PRIVATE_KEY: KEY_A }, null);
-    expect(id.tier).toBe('trade');
-    expect(id.signer).toBe(SIGNER_A);
-    expect(id.address).toBeUndefined();
-    expect(id.source).toBe('env-key');
-    expect(id.conflict).toContain('POLYMARKET_WALLET_ADDRESS');
-  });
-
-  test('an env key paired with an address is complete and quiet', () => {
+  test('a saved key is unaffected by an environment address', () => {
+    // The address is a read-only override for inspecting another account.
+    // Letting it redirect a wallet that can sign would read one account while
+    // trading another.
     const id = resolveIdentity(
-      { POLYMARKET_PRIVATE_KEY: KEY_A, POLYMARKET_WALLET_ADDRESS: OTHER },
-      null,
+      { POLYMARKET_WALLET_ADDRESS: OTHER },
+      fileWallet({ signer: SIGNER_A, privateKey: KEY_A }),
     );
-    expect(id).toMatchObject({ tier: 'trade', signer: SIGNER_A, address: OTHER, source: 'env-key' });
-    expect(id.conflict).toBeUndefined();
+    expect(id).toMatchObject({ tier: 'trade', address: SAVED, source: 'file' });
   });
 
   test('a stored key gives trading, and carries the resolved wallet type', () => {
@@ -61,37 +51,12 @@ describe('tier resolution', () => {
     expect(resolveIdentity({}, fileWallet())).toMatchObject({ tier: 'watch', source: 'file' });
   });
 
-  test('the env address wins over the file and reports the disagreement', () => {
-    // Reading one account while signing for another is the failure this exists
-    // to prevent, so the two must never be merged silently.
-    const id = resolveIdentity(
-      { POLYMARKET_PRIVATE_KEY: KEY_A, POLYMARKET_WALLET_ADDRESS: OTHER },
-      fileWallet(),
-    );
-    expect(id.address).toBe(OTHER);
-    expect(id.conflict).toContain(SAVED);
-  });
-
-  test('no conflict is reported when env and file agree', () => {
-    const id = resolveIdentity(
-      { POLYMARKET_PRIVATE_KEY: KEY_A, POLYMARKET_WALLET_ADDRESS: SAVED },
-      fileWallet(),
-    );
-    expect(id.conflict).toBeUndefined();
-  });
-
   test('a stored key outranks a watch-only env address', () => {
     const id = resolveIdentity(
       { POLYMARKET_WALLET_ADDRESS: OTHER } as IdentityEnv,
       fileWallet({ signer: SIGNER_A, privateKey: KEY_A }),
     );
     expect(id.tier).toBe('trade');
-  });
-
-  test('a malformed env key is ignored rather than crashing the session', () => {
-    const id = resolveIdentity({ POLYMARKET_PRIVATE_KEY: 'nonsense' }, fileWallet());
-    expect(id.tier).toBe('watch');
-    expect(id.address).toBe(SAVED);
   });
 
   test('an older account type resolves like any other', () => {

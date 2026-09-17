@@ -25,9 +25,7 @@ import { buildHelp } from '../../commands/help.js';
  * pass or fail depending on whether the developer running them has a wallet.
  */
 function withNoWallet<T>(fn: () => T): T {
-  const prevKey = process.env.POLYMARKET_PRIVATE_KEY;
   const prevAddr = process.env.POLYMARKET_WALLET_ADDRESS;
-  delete process.env.POLYMARKET_PRIVATE_KEY;
   delete process.env.POLYMARKET_WALLET_ADDRESS;
   const spy = spyOn(walletStore, 'readWalletFile').mockImplementation(() => null);
   resetWalletIdentityCache();
@@ -35,8 +33,6 @@ function withNoWallet<T>(fn: () => T): T {
     return fn();
   } finally {
     spy.mockRestore();
-    if (prevKey === undefined) delete process.env.POLYMARKET_PRIVATE_KEY;
-    else process.env.POLYMARKET_PRIVATE_KEY = prevKey;
     if (prevAddr === undefined) delete process.env.POLYMARKET_WALLET_ADDRESS;
     else process.env.POLYMARKET_WALLET_ADDRESS = prevAddr;
     resetWalletIdentityCache();
@@ -96,12 +92,25 @@ describe('octagon capabilities', () => {
       expect(isCommandAvailable('portfolio')).toBe(true);
       for (const cmd of KEY_COMMANDS) expect(isCommandAvailable(cmd)).toBe(false);
 
-      // Trade tier: everything opens up.
+      // Trade tier: everything opens up. A saved wallet is the only way here —
+      // there is no environment key to stand in for one.
       delete process.env.POLYMARKET_WALLET_ADDRESS;
-      process.env.POLYMARKET_PRIVATE_KEY = '0x' + '11'.repeat(32);
+      const saved = spyOn(walletStore, 'readWalletFile').mockImplementation(() => ({
+        version: 1 as const,
+        type: 'deposit' as const,
+        address: '0x' + '2'.repeat(40),
+        signer: '0x' + '3'.repeat(40),
+        privateKey: '0x' + '11'.repeat(32),
+        createdAt: 0,
+      }));
       resetWalletIdentityCache();
-      for (const cmd of KEY_COMMANDS) expect(isCommandAvailable(cmd)).toBe(true);
-      expect(isCommandAvailable('portfolio')).toBe(true);
+      try {
+        for (const cmd of KEY_COMMANDS) expect(isCommandAvailable(cmd)).toBe(true);
+        expect(isCommandAvailable('portfolio')).toBe(true);
+      } finally {
+        saved.mockRestore();
+        resetWalletIdentityCache();
+      }
     });
   });
 

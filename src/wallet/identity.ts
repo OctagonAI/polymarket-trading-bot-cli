@@ -16,6 +16,14 @@
  * object is passed around, logged, and spread into JSON; a key on it would leak
  * the first time someone added a debug line. `loadPrivateKey()` is a separate,
  * explicit call.
+ *
+ * There is no environment override for the signing key. One existed, and it
+ * could pair an environment key with the *saved* wallet's cached CLOB
+ * credentials — authenticating as one account with another's credentials, then
+ * writing the session's credentials back over the saved file. Switching wallets
+ * is `wallet import --force` or the setup wizard, both of which resolve the
+ * account and save it as a unit. `POLYMARKET_WALLET_ADDRESS` remains, because
+ * an address is read-only and carries no credential to confuse.
  */
 import { privateKeyToAccount } from 'viem/accounts';
 import { getAddress } from 'viem';
@@ -25,7 +33,7 @@ import { logger } from '../utils/logger.js';
 
 export type WalletTier = 'none' | 'watch' | 'trade';
 
-export type WalletSource = 'env-key' | 'env-address' | 'file' | 'none';
+export type WalletSource = 'env-address' | 'file' | 'none';
 
 export interface WalletIdentity {
   tier: WalletTier;
@@ -36,54 +44,22 @@ export interface WalletIdentity {
   /** What kind of contract the funder is. Only known for a saved wallet. */
   walletType?: WalletType;
   source: WalletSource;
-  /** Set when the env and the wallet file disagree about which account to use. */
-  conflict?: string;
 }
 
 export interface IdentityEnv {
-  POLYMARKET_PRIVATE_KEY?: string;
   POLYMARKET_WALLET_ADDRESS?: string;
 }
 
 /**
  * Resolve a tier from inputs. Pure: no disk, no network, no cache.
  *
- * Precedence is env over file, and the env key wins *wholesale* rather than
- * merging with the file — a half-merged identity (this file's address, that
- * env's key) would sign with one account and read another.
- *
- * An environment key carries no funding address. Which contract holds the money
- * for a given signer is not computable offline, so there is nothing honest to
- * put there: `POLYMARKET_WALLET_ADDRESS` supplies it, or `wallet import` does
- * the resolution once and saves it. Signing still works without it — the CLOB
- * client resolves its own wallet — but reads have no account to query.
+ * A saved key outranks `POLYMARKET_WALLET_ADDRESS`: the address is a read-only
+ * override for inspecting some other account, and letting it silently redirect
+ * a wallet that can sign would read one account while trading another.
  */
 export function resolveIdentity(env: IdentityEnv, file: StoredWallet | null): WalletIdentity {
-  const envKey = env.POLYMARKET_PRIVATE_KEY?.trim();
   const envAddress = env.POLYMARKET_WALLET_ADDRESS?.trim();
   const envFunder = envAddress && isAddress(envAddress) ? getAddress(envAddress) : undefined;
-
-  if (envKey) {
-    if (!isPrivateKey(envKey)) {
-      // Never echo the value.
-      logger.warn('POLYMARKET_PRIVATE_KEY is not a 32-byte hex key; ignoring it');
-    } else {
-      const signer = privateKeyToAccount(normalizePrivateKey(envKey)).address;
-      const conflict = envFunder
-        ? file && file.address.toLowerCase() !== envFunder.toLowerCase()
-          ? `POLYMARKET_WALLET_ADDRESS is ${envFunder}, but the saved wallet is ${file.address}. Using the environment.`
-          : undefined
-        : 'POLYMARKET_PRIVATE_KEY is set without POLYMARKET_WALLET_ADDRESS, so balances and positions ' +
-          'have no account to read. Set it, or run `polymarket wallet import <private-key>`.';
-      return {
-        tier: 'trade',
-        ...(envFunder ? { address: envFunder } : {}),
-        signer,
-        source: 'env-key',
-        ...(conflict ? { conflict } : {}),
-      };
-    }
-  }
 
   if (file?.privateKey && isPrivateKey(file.privateKey)) {
     const signer = file.signer ?? privateKeyToAccount(normalizePrivateKey(file.privateKey)).address;
@@ -125,7 +101,6 @@ export function loadWalletIdentity(): WalletIdentity {
     logger.warn(`Ignoring unreadable wallet file: ${err instanceof Error ? err.message : String(err)}`);
   }
   cached = resolveIdentity(process.env as IdentityEnv, file);
-  if (cached.conflict) logger.warn(cached.conflict);
   return cached;
 }
 
@@ -142,8 +117,6 @@ export function resetWalletIdentityCache(): void {
  * one to audit.
  */
 export function loadPrivateKey(): `0x${string}` | undefined {
-  const envKey = process.env.POLYMARKET_PRIVATE_KEY?.trim();
-  if (envKey && isPrivateKey(envKey)) return normalizePrivateKey(envKey);
   try {
     const file = readWalletFile();
     if (file?.privateKey && isPrivateKey(file.privateKey)) return normalizePrivateKey(file.privateKey);
