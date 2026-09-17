@@ -22,13 +22,14 @@ import {
 const ADDRESS = '0x22cCF5a60aa6Ae13fe00554eCa041B3DC0BF6CD5';
 const SIGNER = '0xF2B909e5E2cBc2CFF2d07E02c9b1bAFd0B3A86a2';
 const KEY = `0x${'a'.repeat(64)}`;
+const CREDS = { key: 'k', secret: 's', passphrase: 'p' };
 
 const posix = process.platform !== 'win32';
 let dir: string;
 let path: string;
 
 function wallet(overrides: Partial<StoredWallet> = {}): StoredWallet {
-  return { version: 1, type: 'proxy', address: ADDRESS, createdAt: 1_750_000_000, ...overrides };
+  return { version: 1, type: 'deposit', address: ADDRESS, createdAt: 1_750_000_000, ...overrides };
 }
 
 beforeEach(() => {
@@ -84,6 +85,29 @@ describe('round trip', () => {
     mkdirSync(join(dir, 'nested'), { recursive: true });
     writeFileSync(path, 'not json at all');
     expect(() => readWalletFile(path)).toThrow(/Could not read wallet file/);
+  });
+});
+
+describe('rewrites preserve the resolved wallet type', () => {
+  test('dropping cached creds does not drop the wallet type with them', () => {
+    // `parseStoredWallet` is a whitelist, so any field it does not name is
+    // silently lost the next time the file is written — and the file is
+    // rewritten whenever CLOB credentials are cached or cleared. The wallet
+    // type is resolved once, over the network, at import; losing it here would
+    // be invisible until something needed to know what kind of account this is.
+    writeWalletFile(wallet({ type: 'deposit', signer: SIGNER, privateKey: KEY, apiCreds: CREDS }), path);
+
+    const read = readWalletFile(path)!;
+    expect(read.type).toBe('deposit');
+
+    const { apiCreds: _drop, ...rest } = read;
+    writeWalletFile(rest, path);
+
+    const after = readWalletFile(path)!;
+    expect(after.type).toBe('deposit');
+    expect(after.apiCreds).toBeUndefined();
+    expect(after.signer).toBe(SIGNER);
+    expect(after.privateKey).toBe(KEY);
   });
 });
 
