@@ -20,7 +20,7 @@
  * env override to `paths.ts` purely for tests — the same injection shape as
  * `new AuditTrail(filePath?)` and `createDb(':memory:')`.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, renameSync, unlinkSync } from 'fs';
 import { dirname } from 'path';
 import { appPath } from '../utils/paths.js';
 
@@ -138,15 +138,46 @@ export function readWalletFile(path: string = walletPath()): StoredWallet | null
  * ignored when the file already exists — without it, a wallet first written by
  * an older build would keep its original permissions forever.
  */
+/**
+ * Replace the wallet file atomically.
+ *
+ * Writing in place would truncate first, and this file holds the only copy of
+ * the private key — a crash mid-write leaves it empty. The window is not
+ * theoretical: the file is rewritten every time CLOB credentials are cached.
+ *
+ * Writing a temp file in the same directory and renaming over the target means
+ * a reader sees the old file or the new one, never a half-written one. Same
+ * directory matters — rename is only atomic within a filesystem.
+ */
 export function writeWalletFile(wallet: StoredWallet, path: string = walletPath()): void {
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true, mode: WALLET_DIR_MODE });
-  writeFileSync(path, `${JSON.stringify(wallet, null, 2)}\n`, { mode: WALLET_FILE_MODE });
+
+  const tmp = `${path}.${process.pid}.tmp`;
   try {
-    chmodSync(path, WALLET_FILE_MODE);
+    writeFileSync(tmp, `${JSON.stringify(wallet, null, 2)}\n`, { mode: WALLET_FILE_MODE });
+    // The mode argument is ignored when a file already exists, so set it
+    // explicitly before the rename rather than after — the target must never be
+    // briefly world-readable.
+    try {
+      chmodSync(tmp, WALLET_FILE_MODE);
+    } catch {
+      // Windows and some network filesystems have no POSIX modes. The write
+      // succeeded; refusing here would be worse than the weaker permissions.
+    }
+    renameSync(tmp, path);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // Nothing to clean up if it was never created.
+    }
+    throw err;
+  }
+
+  try {
     chmodSync(dir, WALLET_DIR_MODE);
   } catch {
-    // Windows and some network filesystems have no POSIX modes. The write
-    // succeeded; refusing here would be worse than the weaker permissions.
+    // As above.
   }
 }

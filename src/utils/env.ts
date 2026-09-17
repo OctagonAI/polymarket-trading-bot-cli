@@ -1,8 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'fs';
 import { resolve } from 'path';
 import { config } from 'dotenv';
 import { getProviderById } from '../providers.js';
 import { appPath, getAppDir } from './paths.js';
+
+/** Owner-only: this file stores API keys. Matches the wallet file's mode. */
+export const ENV_FILE_MODE = 0o600;
 
 // Resolve .env from a CWD override (dev workflow) or the home config dir
 // (default for `bunx` / global installs). The home path is also where
@@ -93,7 +96,17 @@ export function saveApiKeyToEnv(apiKeyName: string, apiKeyValue: string): boolea
     }
 
     mkdirSync(getAppDir(), { recursive: true });
-    writeFileSync(ENV_PATH, lines.join('\n'));
+    // This file holds OCTAGON_API_KEY and the LLM keys, and the README points
+    // users at it. Without a mode it lands at the umask default — typically
+    // 0644 — readable by every other account on the machine. The mode argument
+    // is ignored when the file already exists, so chmod unconditionally after.
+    writeFileSync(ENV_PATH, lines.join('\n'), { mode: ENV_FILE_MODE });
+    try {
+      chmodSync(ENV_PATH, ENV_FILE_MODE);
+    } catch {
+      // Windows and some network filesystems have no POSIX modes. The write
+      // succeeded; refusing here would be worse than the weaker permissions.
+    }
 
     // Reload environment variables
     config({ path: ENV_PATH, override: true, quiet: true });

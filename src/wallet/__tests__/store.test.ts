@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, statSync, writeFileSync, mkdirSync, chmodSync } from 'fs';
+import { mkdtempSync, rmSync, statSync, writeFileSync, mkdirSync, chmodSync, readdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -85,6 +85,40 @@ describe('round trip', () => {
     mkdirSync(join(dir, 'nested'), { recursive: true });
     writeFileSync(path, 'not json at all');
     expect(() => readWalletFile(path)).toThrow(/Could not read wallet file/);
+  });
+});
+
+describe('the wallet file is replaced, never truncated', () => {
+  /*
+   * The guarantee itself — that a crash mid-write cannot leave a truncated file
+   * — is structural, not observable from a test: it comes from writing a temp
+   * file and renaming over the target, and there is no way to kill the process
+   * mid-write from in here. What is checked below is everything around it that
+   * a rename-based write could plausibly get wrong.
+   */
+  test('the replacement is complete and readable', () => {
+    writeWalletFile(wallet({ signer: SIGNER, privateKey: KEY }), path);
+    writeWalletFile(wallet({ signer: SIGNER, privateKey: KEY, apiCreds: CREDS }), path);
+
+    const after = readWalletFile(path)!;
+    expect(after.privateKey).toBe(KEY);
+    expect(after.apiCreds).toEqual(CREDS);
+  });
+
+  test('no temp file is left beside it', () => {
+    writeWalletFile(wallet({ privateKey: KEY }), path);
+    writeWalletFile(wallet({ privateKey: KEY, apiCreds: CREDS }), path);
+    expect(readdirSync(dir).filter((f) => f.includes('.tmp'))).toEqual([]);
+  });
+
+  test('the replacement is owner-only, not just the first write', () => {
+    // The mode argument is ignored for a file that already exists, so a rename
+    // that carried the temp file's mode across would be the only thing keeping
+    // this true — and it is the second write, not the first, that would slip.
+    if (!posix) return;
+    writeWalletFile(wallet({ privateKey: KEY }), path);
+    writeWalletFile(wallet({ privateKey: KEY, apiCreds: CREDS }), path);
+    expect(statSync(path).mode & 0o777).toBe(WALLET_FILE_MODE);
   });
 });
 
