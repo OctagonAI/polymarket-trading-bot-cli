@@ -26,8 +26,8 @@ function stubClient(impl: Record<string, unknown>) {
 }
 
 /** `listOpenOrders` is paginated; the command reads the first page. */
-function pageOf(items: unknown[]) {
-  return () => ({ firstPage: async () => ({ items, hasMore: false }) });
+function pageOf(items: unknown[], hasMore = false) {
+  return () => ({ firstPage: async () => ({ items, hasMore }) });
 }
 
 function stubAuthFailure(message: string) {
@@ -203,6 +203,26 @@ describe('orders — naming and detail', () => {
     stubClient({ listOpenOrders: pageOf([openOrder({ id: ID_A, status: 'LIVE' })]) });
     const resp = await handleOrders(parseArgs(['orders']));
     expect(formatOrdersHuman(resp.data)).not.toContain('not working');
+  });
+
+  test('a second page of orders is reported, not silently dropped', async () => {
+    // Only the first page is read. Orders past it vanish along with their ids,
+    // which would otherwise be indistinguishable from not having them.
+    stubMarkets([]);
+    stubClient({ listOpenOrders: pageOf([openOrder({ id: ID_A })], true) });
+    const resp = await handleOrders(parseArgs(['orders']));
+
+    expect(resp.data.truncated).toBe(true);
+    expect(formatOrdersHuman(resp.data)).toContain('More orders are resting');
+  });
+
+  test('a single page says nothing about truncation', async () => {
+    stubMarkets([]);
+    stubClient({ listOpenOrders: pageOf([openOrder({ id: ID_A })]) });
+    const resp = await handleOrders(parseArgs(['orders']));
+
+    expect(resp.data.truncated).toBeUndefined();
+    expect(formatOrdersHuman(resp.data)).not.toContain('More orders');
   });
 
   test('orders <prefix> shows one order, with the full id to cancel by', async () => {

@@ -46,6 +46,14 @@ export class SetupWizardController {
   private walletError: string | null = null;
   /** True while the SDK is being asked which wallet a pasted key controls. */
   private resolvingWallet = false;
+  /**
+   * Bumped whenever a run starts or is cancelled, so a wallet resolution that
+   * is still in flight can tell whether it still belongs to the live run.
+   *
+   * The request itself cannot be cancelled — the SDK's client takes no
+   * AbortSignal — so the only option is to ignore a result that arrives late.
+   */
+  private walletGeneration = 0;
   private readonly onComplete: () => void;
   private readonly onChange: () => void;
   private active = false;
@@ -68,6 +76,7 @@ export class SetupWizardController {
   }
 
   start() {
+    this.walletGeneration += 1;
     this.active = true;
     this.wizardState = 'welcome';
     this.collectedKeys = {};
@@ -86,8 +95,10 @@ export class SetupWizardController {
   }
 
   cancel() {
+    this.walletGeneration += 1;
     this.restoreStagedEnv();
     this.active = false;
+    this.resolvingWallet = false;
     this.wizardState = 'welcome';
     this.currentInput = null;
     this.currentSelector = null;
@@ -550,8 +561,18 @@ export class SetupWizardController {
       this.walletError = null;
       this.resolvingWallet = true;
       this.onChange();
+
+      // Cancelling or restarting mid-flight must not let this result land on
+      // whatever run is active when it finally arrives: it would jump that run
+      // to `bankroll` carrying a wallet from the one the user abandoned, and
+      // finishing the wizard would then persist it.
+      const generation = this.walletGeneration;
+      const stale = () => this.walletGeneration !== generation || this.wizardState !== 'wallet_input';
+
       try {
         const account = await resolveAccount(privateKey);
+        if (stale()) return;
+        this.resolvingWallet = false;
         this.pendingWallet = {
           version: 1,
           type: account.walletType,
@@ -563,14 +584,17 @@ export class SetupWizardController {
         };
         this.transition('bankroll');
       } catch (err) {
+        if (stale()) return;
+        // Cleared before the render, not after: `getBodyLines` checks this flag
+        // ahead of `walletError`, so leaving it set shows "Asking Polymarket…"
+        // where the failure should be — and nothing re-renders afterwards.
+        this.resolvingWallet = false;
         this.walletError =
           err instanceof AccountResolutionError
             ? `${err.message} Press Enter on an empty field to skip.`
             : `Could not resolve this key's wallet: ${err instanceof Error ? err.message : String(err)}`;
         this.currentInput = null;
         this.onChange();
-      } finally {
-        this.resolvingWallet = false;
       }
       return;
     }

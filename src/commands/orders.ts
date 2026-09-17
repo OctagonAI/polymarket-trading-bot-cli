@@ -35,6 +35,8 @@ export interface OrdersData {
   address: string;
   /** Set when a single order was asked for by id or id prefix. */
   detail?: boolean;
+  /** The venue had more orders than this page. See `handleOrders`. */
+  truncated?: boolean;
 }
 
 /**
@@ -97,6 +99,10 @@ export async function handleOrders(args: ParsedArgs): Promise<CLIResponse<Orders
     // Resting orders are few enough that the first page is all of them; taking
     // one page keeps an unbounded wallet from paging forever.
     const page = await client.listOpenOrders().firstPage();
+    // One page, deliberately: an unbounded wallet should not page forever. But
+    // orders past it are dropped along with their ids, so the omission is
+    // reported rather than left to look like an empty book.
+    const truncated = page.hasMore === true;
     const named = await nameMarkets(page.items.map((o) => String(o.conditionId)));
 
     const all: OrderView[] = page.items.map((o) => {
@@ -143,7 +149,11 @@ export async function handleOrders(args: ParsedArgs): Promise<CLIResponse<Orders
       return wrapSuccess('orders', { orders: matches, address: client.account.wallet, detail: true });
     }
 
-    return wrapSuccess('orders', { orders: all, address: client.account.wallet });
+    return wrapSuccess('orders', {
+      orders: all,
+      address: client.account.wallet,
+      ...(truncated ? { truncated: true } : {}),
+    });
   } catch (err) {
     return wrapError('orders', 'CLOB_ERROR', err instanceof Error ? err.message : String(err));
   }
@@ -291,6 +301,12 @@ export function formatOrdersHuman(data: OrdersData): string {
     formatTable(['Order', 'Market', 'Side', 'Outcome', 'Price', 'Remaining'], rows),
     '',
   ];
+
+  if (data.truncated) {
+    lines.push(theme.error(`  ! More orders are resting than the ${data.orders.length} shown.`));
+    lines.push(theme.muted('    Cancel some, or use the Polymarket UI to see the rest.'));
+    lines.push('');
+  }
 
   const flagged = [...new Set(data.orders.filter((o) => !isLive(o)).map((o) => o.status.toUpperCase()))];
   for (const status of flagged) {
