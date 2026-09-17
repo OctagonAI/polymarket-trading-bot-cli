@@ -37,13 +37,26 @@ function market(over: Partial<PolymarketMarket> = {}): PolymarketMarket {
 
 let captured: { marketOrder?: Record<string, unknown>; limitOrder?: Record<string, unknown> } = {};
 
-function stubClob(post?: Record<string, unknown>) {
+const UNITS = 1_000_000;
+
+/**
+ * A market order is priced by the venue, so the stub has to answer like one:
+ * `buildOrder` reads the signed legs back to learn the real price and size.
+ * `bookPrice` is what the pretend book clears at.
+ */
+function stubClob(post?: Record<string, unknown>, bookPrice?: number) {
   captured = {};
   spies.push(
     spyOn(client, 'getClobClient').mockImplementation(async () => ({
       createMarketOrder: async (o: Record<string, unknown>) => {
         captured.marketOrder = o;
-        return { signed: true } as never;
+        const price = bookPrice ?? 0.42;
+        const usd = o.side === 'BUY' ? Number(o.amount) : Number(o.shares) * price;
+        const sh = o.side === 'BUY' ? usd / price : Number(o.shares);
+        return {
+          makerAmount: String(Math.round((o.side === 'BUY' ? usd : sh) * UNITS)),
+          takerAmount: String(Math.round((o.side === 'BUY' ? sh : usd) * UNITS)),
+        } as never;
       },
       createLimitOrder: async (o: Record<string, unknown>) => {
         captured.limitOrder = o;
@@ -106,7 +119,10 @@ describe('buildOrder — market orders', () => {
     stubClob();
     const built = await buildOrder({ market: market(), action: 'buy', outcome: 'yes', shares: 50 });
 
-    expect(captured.marketOrder).toMatchObject({ assetId: 'tok-yes', side: OrderSide.BUY, maxPrice: 0.42 });
+    // No maxPrice: supplying one signs the order AT the bound instead of at
+    // the book, and pins it to a Gamma snapshot. The venue walks its own book.
+    expect(captured.marketOrder).toMatchObject({ assetId: 'tok-yes', side: OrderSide.BUY });
+    expect(captured.marketOrder!.maxPrice).toBeUndefined();
     expect(captured.marketOrder!.amount).toBeCloseTo(21, 6); // 50 × 0.42
     expect(built.orderType).toBe(OrderType.FOK);
     expect(built.notionalUsd).toBeCloseTo(21, 6);
@@ -115,7 +131,8 @@ describe('buildOrder — market orders', () => {
   test('a market SELL passes shares through unconverted', async () => {
     stubClob();
     await buildOrder({ market: market(), action: 'sell', outcome: 'yes', shares: 50 });
-    expect(captured.marketOrder).toMatchObject({ shares: 50, side: OrderSide.SELL, minPrice: 0.4 });
+    expect(captured.marketOrder).toMatchObject({ shares: 50, side: OrderSide.SELL });
+    expect(captured.marketOrder!.minPrice).toBeUndefined();
   });
 
   test('no quote on the side means no market order', async () => {
@@ -123,6 +140,56 @@ describe('buildOrder — market orders', () => {
     await expect(
       buildOrder({ market: market({ yes_ask: 0 }), action: 'buy', outcome: 'yes', shares: 50 }),
     ).rejects.toThrow(/market order has no price/);
+  });
+});
+
+describe('buildOrder — the venue prices a market order', () => {
+  test('price and size come back from what was signed, not from our quote', async () => {
+    // The book clears deeper than the top-of-book quote, which is exactly the
+    // case our own pricing got wrong: it would have promised 0.42 and signed an
+    // order that could not fill.
+    stubClob(undefined, 0.45);
+    const built = await buildOrder({ market: market(), action: 'buy', outcome: 'yes', shares: 50 });
+
+    // Quote said 0.42, so we asked the venue for $21 of it.
+    expect(captured.marketOrder!.amount).toBeCloseTo(21, 6);
+    // The venue filled at 0.45, so that is the price and size reported.
+    expect(built.price).toBeCloseTo(0.45, 6);
+    expect(built.shares).toBeCloseTo(21 / 0.45, 4);
+    expect(built.notionalUsd).toBeCloseTo(21, 6);
+  });
+
+  test('a sell reports the proceeds the venue priced', async () => {
+    stubClob(undefined, 0.38);
+    const built = await buildOrder({ market: market(), action: 'sell', outcome: 'yes', shares: 50 });
+
+    expect(built.shares).toBeCloseTo(50, 6);
+    expect(built.price).toBeCloseTo(0.38, 6);
+    expect(built.notionalUsd).toBeCloseTo(19, 6);
+  });
+
+  test('a float artefact in the quote is snapped to the tick before it is used', async () => {
+    // Gamma derives one side from the other, so a price arrives as
+    // 0.04700000000000004 and that noise would ride into the dollar amount.
+    stubClob(undefined, 0.047);
+    const built = await buildOrder({
+      market: market({ no_ask: 0.04700000000000004, tick_size: 0.001, min_order_size: 1 }),
+      action: 'buy',
+      outcome: 'no',
+      shares: 25,
+    });
+    expect(captured.marketOrder!.amount).toBeCloseTo(25 * 0.047, 9);
+    expect(built.price).toBeCloseTo(0.047, 6);
+  });
+
+  test('a limit order is still exactly what was asked for', async () => {
+    stubClob();
+    const built = await buildOrder({
+      market: market(), action: 'buy', outcome: 'yes', shares: 50, limitPrice: 0.42,
+    });
+    expect(built.shares).toBe(50);
+    expect(built.price).toBe(0.42);
+    expect(built.notionalUsd).toBeCloseTo(21, 6);
   });
 });
 
@@ -162,6 +229,55 @@ describe('buildOrder — venue minimum', () => {
     await expect(
       buildOrder({ market: market({ min_order_size: 5 }), action: 'buy', outcome: 'yes', shares: 2 }),
     ).rejects.toThrow(/below the 5-share minimum/);
+  });
+
+  test('a market buy worth under a dollar is refused, and says what would work', async () => {
+    // The two minimums disagree on a cheap outcome: five shares clears a
+    // five-share minimum and is still $0.24. The venue calls this "min size: 1",
+    // which reads like one share when it means one dollar.
+    stubClob();
+    const cheap = market({ min_order_size: 5, no_ask: 0.047, tick_size: 0.001 });
+    await expect(
+      buildOrder({ market: cheap, action: 'buy', outcome: 'no', shares: 5 }),
+    ).rejects.toThrow(/must be worth at least \$1.*Buy 22 or more shares/s);
+  });
+
+  test('a market buy over a dollar is built', async () => {
+    stubClob();
+    const built = await buildOrder({
+      market: market({ min_order_size: 5, no_ask: 0.047, tick_size: 0.001 }),
+      action: 'buy',
+      outcome: 'no',
+      shares: 22,
+    });
+    expect(built.notionalUsd).toBeGreaterThanOrEqual(1);
+  });
+
+  test('the dollar minimum does not apply to a limit order', async () => {
+    // It binds on marketable buys. A resting limit is not one, and blocking it
+    // here would refuse an order the venue would have accepted.
+    stubClob();
+    const built = await buildOrder({
+      market: market({ min_order_size: 5, no_ask: 0.047, tick_size: 0.001 }),
+      action: 'buy',
+      outcome: 'no',
+      shares: 5,
+      limitPrice: 0.02,
+    });
+    expect(built.notionalUsd).toBeLessThan(1);
+  });
+
+  test('a small market sell is left to the venue to judge', async () => {
+    // A sell is denominated in shares, and nothing observed says the dollar
+    // minimum applies to it. Guessing would refuse valid orders.
+    stubClob(undefined, 0.046);
+    const built = await buildOrder({
+      market: market({ min_order_size: 5, no_bid: 0.046 }),
+      action: 'sell',
+      outcome: 'no',
+      shares: 5,
+    });
+    expect(built.notionalUsd).toBeLessThan(1);
   });
 });
 

@@ -24,6 +24,36 @@ import type { PolymarketMarket } from '../tools/polymarket/types.js';
 
 export type TradeAction = 'buy' | 'sell';
 
+/**
+ * Smallest notional the venue accepts on a marketable buy, in dollars.
+ *
+ * A market buy is denominated in dollars, so this binds on the *value* of the
+ * order, not the share count — and a market's own share minimum is no guarantee
+ * of clearing it. On a cheap outcome the two disagree badly: five shares at
+ * $0.047 satisfies a five-share minimum and is still only $0.23.
+ *
+ * The venue remains the authority. This exists so the refusal arrives before
+ * signing, naming the size that would work, rather than as "min size: 1" —
+ * which reads like one share when it means one dollar.
+ */
+export const MIN_MARKET_BUY_USD = 1;
+
+/** Base units per dollar / per share in a signed order. */
+const UNITS = 1_000_000;
+
+/**
+ * What a signed order actually gives up and receives.
+ *
+ * Which leg is shares flips with the side: a buy offers dollars and receives
+ * shares, a sell the reverse. Reading the same leg for both reports a dollar
+ * amount as a share count.
+ */
+function legs(signed: SignedOrder, side: OrderSide): { shares: number; usd: number } {
+  const maker = Number(signed.makerAmount) / UNITS;
+  const taker = Number(signed.takerAmount) / UNITS;
+  return side === OrderSide.BUY ? { shares: taker, usd: maker } : { shares: maker, usd: taker };
+}
+
 export interface OrderRequest {
   market: PolymarketMarket;
   action: TradeAction;
@@ -114,7 +144,7 @@ export interface BuiltOrder {
   shares: number;
   /** Price the order was built at — the limit, or the executable quote. */
   price: number;
-  /** shares × price. What this costs (buy) or realises (sell), before fees. */
+  /** What this costs (buy) or realises (sell), before fees. */
   notionalUsd: number;
   isMarketOrder: boolean;
 }
@@ -145,11 +175,23 @@ export async function buildOrder(req: OrderRequest): Promise<BuiltOrder> {
   }
 
   const tick = Number.isFinite(market.tick_size) && market.tick_size > 0 ? market.tick_size : 0.01;
-  const price = isMarketOrder ? quote! : roundToTick(req.limitPrice!, tick);
+  // Snap the quote too: Gamma derives one side from the other, so a price
+  // arrives as 0.04700000000000004 and carries that noise into the signature.
+  const price = roundToTick(isMarketOrder ? quote! : req.limitPrice!, tick);
 
   if (price <= 0 || price >= 1) {
     throw new OrderError(
       `Price ${price} is outside the tradeable range. Prices are decimal USD in (0, 1).`,
+    );
+  }
+
+  const estimatedUsd = shares * price;
+  if (isMarketOrder && action === 'buy' && estimatedUsd < MIN_MARKET_BUY_USD) {
+    const needed = Math.ceil(MIN_MARKET_BUY_USD / price);
+    throw new OrderError(
+      `${shares} shares of ${resolved.label} at $${price.toFixed(3)} is $${estimatedUsd.toFixed(2)}, ` +
+        `and a market buy must be worth at least $${MIN_MARKET_BUY_USD}. ` +
+        `Buy ${needed} or more shares, or set a limit price instead.`,
     );
   }
 
@@ -160,23 +202,28 @@ export async function buildOrder(req: OrderRequest): Promise<BuiltOrder> {
   let orderType: OrderType;
 
   if (isMarketOrder) {
-    // A buy is denominated in dollars, a sell in shares. See the file header.
-    // `maxPrice`/`minPrice` carry the quote through as the worst acceptable
-    // fill, so a thin book cannot fill the whole notional at any price.
+    // No price bound is passed. Supplying one opts into the SDK's "protected"
+    // path, which signs the order AT the bound rather than at the book — and
+    // pins it to our quote, which comes from a Gamma snapshot. Left alone, the
+    // SDK fetches the live order book and walks it for the requested size,
+    // which is both the right price and the real protection: a $50 order walks
+    // to the depth that can fill it instead of failing against a single level.
+    //
+    // A buy is denominated in dollars, so the quote is still needed to turn the
+    // user's share count into one. What gets signed is then read back below, so
+    // the confirmation shows the venue's price rather than our estimate of it.
     signed =
       side === OrderSide.BUY
         ? await client.createMarketOrder({
             assetId: resolved.tokenId,
             side: OrderSide.BUY,
-            amount: shares * price,
-            maxPrice: price,
+            amount: estimatedUsd,
             orderType: OrderType.FOK,
           })
         : await client.createMarketOrder({
             assetId: resolved.tokenId,
             side: OrderSide.SELL,
             shares,
-            minPrice: price,
             orderType: OrderType.FOK,
           });
     orderType = OrderType.FOK;
@@ -185,15 +232,21 @@ export async function buildOrder(req: OrderRequest): Promise<BuiltOrder> {
     orderType = OrderType.GTC;
   }
 
+  // A limit order is exactly what was asked for. A market order is whatever the
+  // book priced, which is rarely the share count the user typed: a dollar
+  // amount does not divide evenly into shares.
+  const filled = isMarketOrder ? legs(signed, side) : { shares, usd: shares * price };
+  const signedPrice = filled.shares > 0 ? filled.usd / filled.shares : price;
+
   return {
     signed,
     orderType,
     tokenId: resolved.tokenId,
     outcomeLabel: resolved.label,
     side,
-    shares,
-    price,
-    notionalUsd: shares * price,
+    shares: filled.shares,
+    price: signedPrice,
+    notionalUsd: filled.usd,
     isMarketOrder,
   };
 }

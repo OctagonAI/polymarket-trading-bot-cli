@@ -85,7 +85,6 @@ export interface PreparedTrade {
   action: TradeAction;
   market: PolymarketMarket;
   built: Awaited<ReturnType<typeof buildOrder>>;
-  requestedShares: number;
   warnings: string[];
   /** Rendered order summary, shown before the confirmation either way. */
   preview: string;
@@ -195,6 +194,7 @@ export async function prepareTrade(
   const kind = built.isMarketOrder
     ? 'market order — fills now or not at all'
     : 'limit order — rests on the book';
+
   const lines = [
     '',
     `  ${verb} ${built.shares} share(s) of ${theme.bold(built.outcomeLabel)}`,
@@ -214,7 +214,6 @@ export async function prepareTrade(
       action,
       market,
       built,
-      requestedShares: parsed.count,
       warnings,
       preview: lines.join('\n'),
     },
@@ -228,7 +227,7 @@ export async function prepareTrade(
  * the user, get an answer its own way, and call this only if the answer is yes.
  */
 export async function submitTrade(prepared: PreparedTrade): Promise<CLIResponse<TradeData>> {
-  const { action, market, built, requestedShares, warnings } = prepared;
+  const { action, market, built, warnings } = prepared;
 
   let posted;
   try {
@@ -238,7 +237,7 @@ export async function submitTrade(prepared: PreparedTrade): Promise<CLIResponse<
     return wrapError(action, 'CLOB_ERROR', err instanceof Error ? err.message : String(err));
   }
 
-  recordFill(action, market, built, posted, requestedShares);
+  recordFill(action, market, built, posted);
 
   auditTrail.log({
     type: 'TRADE_EXECUTED',
@@ -302,9 +301,11 @@ function recordFill(
   market: PolymarketMarket,
   built: Awaited<ReturnType<typeof buildOrder>>,
   posted: Awaited<ReturnType<typeof postOrder>>,
-  requestedShares: number,
 ): void {
-  const filled = posted.filledShares > 0 ? posted.filledShares : built.isMarketOrder ? requestedShares : 0;
+  // No fallback to the requested size: an accepted order always reports what
+  // matched, so a zero here means nothing matched. Assuming a market order
+  // filled would write a position the user does not own.
+  const filled = posted.filledShares;
   if (filled <= 0) return;
 
   const db = getDb();
