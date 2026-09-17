@@ -376,7 +376,7 @@ export function formatTradeHuman(data: TradeData): string {
 
   if (data.filledShares === 0 && data.orderId) {
     lines.push('');
-    lines.push(theme.muted(`    Cancel it with: polymarket cancel ${data.orderId}`));
+    lines.push(theme.muted(`    Cancel it with: polymarket orders cancel ${data.orderId.slice(0, 12)}`));
   }
   return lines.join('\n');
 }

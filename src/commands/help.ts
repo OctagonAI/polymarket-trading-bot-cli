@@ -154,7 +154,7 @@ Examples:
   ${p}buy epl-ars-che-2026 25 Arsenal           Non-binary market, by outcome name
 
 A market order fills now or not at all. A limit order rests until it fills,
-expires, or you cancel it — see ${p}orders and ${p}cancel.
+expires, or you cancel it — see ${p}orders.
 
 Every order shows the price and total cost and asks before it is sent. --yes
 skips that prompt for scripting, and is the only way to skip it.
@@ -175,17 +175,26 @@ Examples:
 Selling more than this CLI has recorded warns rather than blocks — positions
 opened elsewhere are not in its local book, and the venue is the authority.`,
 
-    cancel: `**${p}cancel** — Cancel resting orders
+    orders: `**${p}orders** — Resting orders on the CLOB
 
-${p}cancel <order_id>            Cancel one order
-${p}cancel <id> <id> <id>        Cancel several at once
-${p}cancel --all                 Cancel every resting order
+${p}orders                       Everything still working on the book
+${p}orders <order>               One order in full, including its complete id
+${p}orders cancel <order>        Cancel one
+${p}orders cancel <o> <o> <o>    Cancel several at once
+${p}orders cancel --all          Cancel every resting order
+
+An order id is 66 characters, which no table can show, so the list prints a
+short prefix. That prefix is what you pass back — to ${p}orders for the detail
+view, or to ${p}orders cancel. A prefix that matches more than one order is
+refused rather than guessed at, and ${p}orders <order> prints the full id when
+you want to copy it.
+
+A resting order is one the venue accepted but has not matched. It is not a
+position until it fills, so it will not appear in ${p}portfolio.
 
 Cancelling cannot lose money — it only removes orders from the book — so none of
 these ask for confirmation. Ids that had already filled or expired are reported
-rather than counted as cancelled.
-
-Get ids from ${p}orders.`,
+rather than counted as cancelled.`,
 
     backtest: `**${p}backtest** — Model accuracy scorecard & edge scanner
 
@@ -499,7 +508,7 @@ Analysis & Trading:
   analyze <market-slug> --refresh  Force fresh Octagon report
   buy <market-slug> <shares> [price] [yes|no]   Buy shares (price 0-1)
   sell <market-slug> <shares> [price] [yes|no]  Sell shares
-  cancel <order_id>                   Cancel a resting order
+  orders cancel <order>               Cancel a resting order
 
 Analysis:
   backtest                      Model accuracy scorecard + live edge scanner
@@ -511,7 +520,8 @@ Account:
   buy <slug> <shares> [price]   Buy shares (omit price for a market order)
   sell <slug> <shares> [price]  Sell shares you hold
   orders                        Your resting orders on the CLOB
-  cancel <order_id>             Cancel a resting order (--all for every one)
+  orders <order>                One order in full
+  orders cancel <order>         Cancel a resting order (--all for every one)
   portfolio                     Overview: positions, P&L, risk snapshot
   portfolio positions           Open positions
   portfolio balance             Account balance
@@ -586,14 +596,15 @@ Analysis:
   /buy <ticker> <n> [price] [yes|no]   Buy contracts (price 0-1)
   /sell <ticker> <n> [price] [yes|no]  Sell contracts
   /review                              Review positions for close signals
-  /cancel <order_id>                   Cancel a resting order
+  /orders cancel <order>               Cancel a resting order
 
 Account:
   /wallet                        Create, import, or inspect your wallet
   /buy <slug> <shares> [price]   Buy shares (omit price for a market order)
   /sell <slug> <shares> [price]  Sell shares you hold
   /orders                        Your resting orders on the CLOB
-  /cancel <order_id>             Cancel a resting order (--all for every one)
+  /orders <order>                One order in full
+  /orders cancel <order>         Cancel a resting order (--all for every one)
   /portfolio                     Overview: positions, P&L, risk snapshot
   /portfolio positions           Open positions
   /portfolio balance             Account balance

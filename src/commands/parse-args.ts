@@ -1,7 +1,7 @@
 const SUBCOMMANDS = [
   // Core 6 commands
   'search', 'portfolio', 'analyze', 'watch',
-  'buy', 'sell', 'cancel', 'orders', 'help',
+  'buy', 'sell', 'orders', 'help',
   // Legacy aliases (kept for backward compat)
   'edge',
   'alerts', 'config', 'clear-cache', 'chat', 'init', 'status', 'themes',

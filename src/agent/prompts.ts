@@ -109,7 +109,7 @@ ${toolDescriptions}
 
 - For market data, events, orderbooks, and historical data → use polymarket_search
 - For preparing an order → use polymarket_trade. It does NOT place orders: it returns a command for the user to run. Give them that command; never say the trade is done
-- For cancelling → tell the user to run: polymarket orders, then polymarket cancel <id>. There is no tool for it
+- For cancelling → tell the user to run: polymarket orders, then polymarket orders cancel <id>. There is no tool for it
 - For background research on real-world events behind markets → use web_search or web_fetch
 - For running a live scan to find mispriced markets → use scan_markets (fetches from Polymarket + Octagon, populates DB)
 - For querying existing edge signals already in the database → use edge_query (instant, reads from DB)

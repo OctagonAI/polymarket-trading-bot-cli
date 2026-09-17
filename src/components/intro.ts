@@ -82,7 +82,7 @@ export class IntroComponent extends Container {
       ['/watch', '<ticker>  Live price/orderbook feed'],
       ['/backtest', 'Model accuracy scorecard + live edge scanner'],
       ['/orders', 'Your resting orders on the CLOB'],
-      ['/cancel', '<order_id> | --all   Cancel resting orders'],
+      ['/orders', 'cancel <order>       Cancel a resting order'],
       ['/buy /sell', '<slug> <shares> [price] [outcome]'],
       ['/help', '[command]  Show help (/help <command> for details)'],
       ['/quit', 'Quit CLI session'],

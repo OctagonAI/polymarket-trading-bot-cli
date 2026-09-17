@@ -156,8 +156,8 @@ Type help for commands, or just ask a question.
 | `watch --theme <theme>` | Continuous theme scan |
 | `buy <slug> <shares> [price] [outcome]` | Buy shares — omit price for a market order |
 | `sell <slug> <shares> [price] [outcome]` | Sell shares you hold |
-| `orders` | Your resting orders on the CLOB — needs a wallet with a key |
-| `cancel <order_id>` | Cancel a resting order, or `--all` for every one |
+| `orders [<order>]` | Your resting orders on the CLOB — needs a wallet with a key. With an id, or a short prefix of one, the full detail for a single order |
+| `orders cancel <order>` | Cancel a resting order, or `--all` for every one |
 | `backtest` | Model accuracy scorecard + live edge scanner |
 | `portfolio` | Cash, positions, P&L, risk snapshot — needs a wallet |
 | `setup` | Re-run setup wizard (inside TUI) |

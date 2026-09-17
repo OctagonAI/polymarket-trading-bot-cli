@@ -94,7 +94,7 @@ tool that would place it — there isn't one.
 
 - Market research, prices, or order books (use polymarket_search instead)
 - Portfolio positions or value (use portfolio_overview instead)
-- Cancelling: tell the user to run \`polymarket orders\` then \`polymarket cancel <id>\`
+- Cancelling: tell the user to run \`polymarket orders\` then \`polymarket orders cancel <id>\`
 `.trim();
 
 /**

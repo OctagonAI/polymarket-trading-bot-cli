@@ -123,8 +123,6 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
       return handlePortfolioSlash('balance');
     case 'positions':
       return handlePortfolioSlash('positions');
-    case 'orders':
-      return handlePortfolioSlash('orders');
 
     // ─── Trading ─────────────────────────────────────────────────────
     case 'buy':
@@ -241,22 +239,23 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
       };
     }
     case 'orders': {
+      // `cancel` is a verb on the orders resource, not a command of its own.
+      if (args[0]?.toLowerCase() === 'cancel') {
+        const parsed = parseArgs(['orders', ...args.slice(1)]);
+        return {
+          output: 'Cancelling...',
+          asyncFollowUp: async () => {
+            const resp = await handleCancelOrders(parsed);
+            return resp.ok ? formatCancelHuman(resp.data) : (resp.error?.message ?? 'cancel failed');
+          },
+        };
+      }
       const parsed = parseArgs(['orders', ...args]);
       return {
         output: 'Loading orders...',
         asyncFollowUp: async () => {
           const resp = await handleOrders(parsed);
           return resp.ok ? formatOrdersHuman(resp.data) : (resp.error?.message ?? 'orders failed');
-        },
-      };
-    }
-    case 'cancel': {
-      const parsed = parseArgs(['cancel', ...args]);
-      return {
-        output: 'Cancelling...',
-        asyncFollowUp: async () => {
-          const resp = await handleCancelOrders(parsed);
-          return resp.ok ? formatCancelHuman(resp.data) : (resp.error?.message ?? 'cancel failed');
         },
       };
     }

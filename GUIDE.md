@@ -3,7 +3,7 @@
 AI-powered prediction market terminal for [Polymarket](https://polymarket.com). Ask natural language questions and research markets from your terminal.
 
 > **⏳ Read-only for now.** Order placement is not implemented: `/buy`, `/sell` and
-> `/cancel` return an explanation rather than trading, and `/portfolio` is gated with
+> `/orders cancel` return an explanation rather than trading, and `/portfolio` is gated with
 > them because every view it offers needs a wallet that arrives with trading support.
 > Market data and research need no credentials. Commands marked ⏳ below are unavailable.
 
@@ -113,7 +113,8 @@ autocomplete, and running it explains why.
 | `/balance` | Free pUSD in your funding wallet | `/balance` |
 | `/positions` | Open positions with P&L | `/positions` |
 | `/orders` | Resting (open) orders | `/orders` |
-| `/cancel <id>` | Cancel a resting order (`--all` for every one) | `/cancel 0x…` |
+| `/orders <id>` | One resting order in full, by id or short prefix | `/orders 0xb726a9d0` |
+| `/orders cancel <id>` | Cancel a resting order (`--all` for every one) | `/orders cancel 0xb726a9d0` |
 | `/markets [series]` | Browse markets, optionally filter by series slug | `/markets bitcoin` |
 | `/market <market-slug>` | Market detail + top-of-book orderbook | `/market bitcoin-above-95k-by-april-30` |
 | `/search <query>` | Full-text market search (Octagon when key set) | `/search "bitcoin price" --min-volume 10000` |
@@ -127,7 +128,6 @@ autocomplete, and running it explains why.
 | `/themes overlap` | Cross-theme dedupe report | `/themes overlap` |
 | `/buy <market-slug> <shares> [price]` ⏳ | Buy YES shares (price 0-1) — **not implemented** | `/buy bitcoin-above-95k-by-april-30 5 0.56` |
 | `/sell <market-slug> <shares> [price]` ⏳ | Sell YES shares — **not implemented** | `/sell bitcoin-above-95k-by-april-30 5 0.60` |
-| `/cancel <order_id>` ⏳ | Cancel a resting order — **not implemented** | `/cancel abc-123-def` |
 
 **Trading is not available yet.** These commands return an explanation instead of
 placing an order; Polymarket orders need EIP-712 wallet signing and on-chain

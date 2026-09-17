@@ -71,6 +71,14 @@ function resolveAlias(subcommand: Subcommand, positionalArgs: string[]): Resolve
       return { canonical: 'wallet' };
     }
 
+    // orders sub-routing. `cancel` is a verb on the orders resource rather than
+    // a top-level command; anything else is an order id or id prefix.
+    case 'orders': {
+      const sub = positionalArgs[0]?.toLowerCase();
+      if (sub === 'cancel') return { canonical: 'orders', subview: 'cancel' };
+      return { canonical: 'orders', ...(sub ? { subview: 'detail' } : {}) };
+    }
+
     // basket sub-routing (build/backtest/size/candles) — exposed for telemetry granularity
     case 'basket': {
       const sub = positionalArgs[0]?.toLowerCase();
@@ -445,6 +453,17 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
     }
 
     if (resolved.canonical === 'orders') {
+      // `orders cancel <id>` — the verb consumes its own name so the ids that
+      // follow are the only positionals the handler sees.
+      if (resolved.subview === 'cancel') {
+        const rest = { ...args, positionalArgs: args.positionalArgs.slice(1) };
+        const resp = await handleCancelOrders(rest);
+        if (json) console.log(JSON.stringify(resp));
+        else if (resp.ok) console.log(formatCancelHuman(resp.data));
+        else console.error(resp.error?.message ?? 'cancel failed');
+        process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
+        return;
+      }
       const resp = await handleOrders(args);
       if (json) console.log(JSON.stringify(resp));
       else if (resp.ok) console.log(formatOrdersHuman(resp.data));
@@ -453,14 +472,6 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       return;
     }
 
-    if (resolved.canonical === 'cancel') {
-      const resp = await handleCancelOrders(args);
-      if (json) console.log(JSON.stringify(resp));
-      else if (resp.ok) console.log(formatCancelHuman(resp.data));
-      else console.error(resp.error?.message ?? 'cancel failed');
-      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
-      return;
-    }
 
     // Full account view. Only `status` had a block before, so this path was
     // unreachable from the CLI even once a wallet existed.
