@@ -17,7 +17,16 @@ afterEach(() => {
 });
 
 function stubClient(impl: Record<string, unknown>) {
-  spies.push(spyOn(clob, 'getClobClient').mockImplementation(async () => impl as never));
+  spies.push(
+    spyOn(clob, 'getClobClient').mockImplementation(
+      async () => ({ account: { wallet: WALLET }, ...impl }) as never,
+    ),
+  );
+}
+
+/** `listOpenOrders` is paginated; the command reads the first page. */
+function pageOf(items: unknown[]) {
+  return () => ({ firstPage: async () => ({ items, hasMore: false }) });
 }
 
 function stubAuthFailure(message: string) {
@@ -28,21 +37,24 @@ function stubAuthFailure(message: string) {
   );
 }
 
+const WALLET = '0x18eD5C15CeD1bFdf88e701601C4a0BbD4F5142dE';
+
 const openOrder = (over: Record<string, unknown> = {}) => ({
   id: '0xorder1',
   status: 'LIVE',
   owner: 'o',
-  maker_address: 'm',
-  market: 'will-btc-hit-100k',
-  asset_id: '123',
+  makerAddress: 'm',
+  conditionId: 'will-btc-hit-100k',
+  assetId: '123',
+  tokenId: '123',
   side: 'BUY',
-  original_size: '100',
-  size_matched: '0',
+  originalSize: '100',
+  sizeMatched: '0',
   price: '0.42',
-  associate_trades: [],
+  associateTrades: [],
   outcome: 'Yes',
-  created_at: 1_750_000_000,
-  expiration: '0',
+  createdAt: '2025-06-15T12:26:40.000Z',
+  orderType: 'GTC',
   ...over,
 });
 
@@ -58,7 +70,7 @@ describe('orders', () => {
 
   test('remaining size is size minus fills, which is what decides a cancel', async () => {
     stubClient({
-      getOpenOrders: async () => [openOrder({ original_size: '100', size_matched: '30' })],
+      listOpenOrders: pageOf([openOrder({ originalSize: '100', sizeMatched: '30' })]),
     });
     const resp = await handleOrders(parseArgs(['orders']));
 
@@ -71,14 +83,14 @@ describe('orders', () => {
 
   test('an over-filled order never reports negative remaining', async () => {
     stubClient({
-      getOpenOrders: async () => [openOrder({ original_size: '100', size_matched: '120' })],
+      listOpenOrders: pageOf([openOrder({ originalSize: '100', sizeMatched: '120' })]),
     });
     const resp = await handleOrders(parseArgs(['orders']));
     expect(resp.data.orders[0]!.remaining).toBe(0);
   });
 
   test('an empty book is a normal result, not an error', async () => {
-    stubClient({ getOpenOrders: async () => [] });
+    stubClient({ listOpenOrders: pageOf([]) });
     const resp = await handleOrders(parseArgs(['orders']));
 
     expect(resp.ok).toBe(true);
@@ -88,9 +100,11 @@ describe('orders', () => {
 
   test('a CLOB failure is distinguishable from an auth failure', async () => {
     stubClient({
-      getOpenOrders: async () => {
-        throw new Error('503 Service Unavailable');
-      },
+      listOpenOrders: () => ({
+        firstPage: async () => {
+          throw new Error('503 Service Unavailable');
+        },
+      }),
     });
     const resp = await handleOrders(parseArgs(['orders']));
 
@@ -99,7 +113,7 @@ describe('orders', () => {
   });
 
   test('the table names the id needed to cancel', async () => {
-    stubClient({ getOpenOrders: async () => [openOrder()] });
+    stubClient({ listOpenOrders: pageOf([openOrder()]) });
     const resp = await handleOrders(parseArgs(['orders']));
     const text = formatOrdersHuman(resp.data);
 
@@ -122,7 +136,7 @@ describe('cancel', () => {
     stubClient({
       cancelOrders: async () => ({
         canceled: ['0xa'],
-        not_canceled: { '0xb': 'order already filled' },
+        notCanceled: { '0xb': 'order already filled' },
       }),
     });
     const resp = await handleCancelOrders(parseArgs(['cancel', '0xa', '0xb']));

@@ -36,7 +36,7 @@ export class RpcError extends Error {
   }
 }
 
-export function rpcUrl(): string {
+function rpcUrl(): string {
   return process.env.POLYMARKET_RPC_URL?.trim() || DEFAULT_RPC_URL;
 }
 

@@ -1,5 +1,5 @@
 import { describe, test, expect, afterEach, spyOn } from 'bun:test';
-import { Side, OrderType } from '@polymarket/clob-client';
+import { OrderSide, OrderType } from '@polymarket/client';
 import { resolveOutcome, executablePrice, buildOrder, postOrder, OrderError } from '../orders.js';
 import * as client from '../client.js';
 import type { PolymarketMarket } from '../../tools/polymarket/types.js';
@@ -45,11 +45,11 @@ function stubClob(post?: Record<string, unknown>) {
         captured.marketOrder = o;
         return { signed: true } as never;
       },
-      createOrder: async (o: Record<string, unknown>) => {
+      createLimitOrder: async (o: Record<string, unknown>) => {
         captured.limitOrder = o;
         return { signed: true } as never;
       },
-      postOrder: async () => post ?? { success: true, orderID: '0xorder', status: 'matched' },
+      postOrder: async () => post ?? { ok: true, orderId: '0xorder', status: 'matched' },
     }) as never),
   );
 }
@@ -106,7 +106,7 @@ describe('buildOrder — market orders', () => {
     stubClob();
     const built = await buildOrder({ market: market(), action: 'buy', outcome: 'yes', shares: 50 });
 
-    expect(captured.marketOrder).toMatchObject({ tokenID: 'tok-yes', side: Side.BUY, price: 0.42 });
+    expect(captured.marketOrder).toMatchObject({ assetId: 'tok-yes', side: OrderSide.BUY, maxPrice: 0.42 });
     expect(captured.marketOrder!.amount).toBeCloseTo(21, 6); // 50 × 0.42
     expect(built.orderType).toBe(OrderType.FOK);
     expect(built.notionalUsd).toBeCloseTo(21, 6);
@@ -115,7 +115,7 @@ describe('buildOrder — market orders', () => {
   test('a market SELL passes shares through unconverted', async () => {
     stubClob();
     await buildOrder({ market: market(), action: 'sell', outcome: 'yes', shares: 50 });
-    expect(captured.marketOrder).toMatchObject({ amount: 50, side: Side.SELL, price: 0.4 });
+    expect(captured.marketOrder).toMatchObject({ shares: 50, side: OrderSide.SELL, minPrice: 0.4 });
   });
 
   test('no quote on the side means no market order', async () => {
@@ -138,14 +138,14 @@ describe('buildOrder — limit orders', () => {
       shares: 50,
       limitPrice: 0.4267,
     });
-    expect(captured.limitOrder).toMatchObject({ price: 0.43, size: 50, side: Side.BUY });
+    expect(captured.limitOrder).toMatchObject({ price: 0.43, size: 50, side: OrderSide.BUY });
     expect(built.orderType).toBe(OrderType.GTC);
   });
 
   test('size is shares for a limit order on both sides', async () => {
     stubClob();
     await buildOrder({ market: market(), action: 'sell', outcome: 'no', shares: 12.5, limitPrice: 0.6 });
-    expect(captured.limitOrder).toMatchObject({ tokenID: 'tok-no', size: 12.5, side: Side.SELL });
+    expect(captured.limitOrder).toMatchObject({ assetId: 'tok-no', size: 12.5, side: OrderSide.SELL });
   });
 
   test('a price outside (0,1) is refused', async () => {
@@ -167,15 +167,15 @@ describe('buildOrder — venue minimum', () => {
 
 describe('postOrder', () => {
   test('an in-band rejection is an error, not a placed order', async () => {
-    // The CLOB answers 200 with success:false. Treating that as placed would
+    // The CLOB answers 200 with ok:false. Treating that as placed would
     // report a trade that never happened.
-    stubClob({ success: false, errorMsg: 'not enough balance' });
+    stubClob({ ok: false, code: 'insufficient_balance_or_allowance', message: 'not enough balance' });
     const built = await buildOrder({ market: market(), action: 'buy', outcome: 'yes', shares: 50 });
     await expect(postOrder(built)).rejects.toThrow(/not enough balance/);
   });
 
   test('a successful post reports the order id and what matched', async () => {
-    stubClob({ success: true, orderID: '0xabc', status: 'matched', takingAmount: '50' });
+    stubClob({ ok: true, orderId: '0xabc', status: 'matched', takingAmount: '50', makingAmount: '21' });
     const built = await buildOrder({ market: market(), action: 'buy', outcome: 'yes', shares: 50 });
     const posted = await postOrder(built);
 
@@ -183,8 +183,16 @@ describe('postOrder', () => {
     expect(posted.filledShares).toBe(50);
   });
 
+  test('a sell reads its share count from the maker leg', async () => {
+    // A sell gives up shares and receives dollars, so takingAmount is USD here.
+    // Reading it as the fill would record 21 shares sold instead of 50.
+    stubClob({ ok: true, orderId: '0xsell', status: 'matched', makingAmount: '50', takingAmount: '21' });
+    const built = await buildOrder({ market: market(), action: 'sell', outcome: 'yes', shares: 50 });
+    expect((await postOrder(built)).filledShares).toBe(50);
+  });
+
   test('a resting order reports zero filled', async () => {
-    stubClob({ success: true, orderID: '0xrest', status: 'live' });
+    stubClob({ ok: true, orderId: '0xrest', status: 'live' });
     const built = await buildOrder({
       market: market(), action: 'buy', outcome: 'yes', shares: 50, limitPrice: 0.2,
     });

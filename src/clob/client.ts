@@ -12,19 +12,17 @@
  *  anyone holding the key can re-derive it at will. It is cached in the same
  *  0600 wallet file all the same, since it is still a credential.
  *
- * Orders are signed for `SignatureType.POLY_PROXY` with the proxy passed as the
- * funder. That combination is what makes an order settle against the contract
- * that actually holds the pUSD — signing as an EOA would produce a valid
- * signature for an account with no money in it.
+ * The account wallet is left to the SDK. `createSecureClient` resolves the
+ * funder for a signer and reports it back as `client.account`, which is what
+ * makes deposit wallets work: the signer is an EOA with no money, the funder is
+ * the contract that holds the pUSD, and the order signature type has to match
+ * whichever kind of wallet that turns out to be. Hard-coding it — as this file
+ * did for the proxy — silently signs for an account that does not hold funds.
  */
-import { ClobClient, SignatureType, type ApiKeyCreds } from '@polymarket/clob-client';
-import { createWalletClient, http } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
-import { polygon } from 'viem/chains';
+import { createSecureClient, type SecureClient, type ApiKeyCreds } from '@polymarket/client';
+import { privateKey as privateKeySigner } from '@polymarket/client/viem';
 import { loadWalletIdentity, loadPrivateKey } from '../wallet/identity.js';
 import { readWalletFile, writeWalletFile } from '../wallet/store.js';
-import { getBaseUrl } from '../tools/polymarket/api.js';
-import { rpcUrl, POLYGON_CHAIN_ID } from '../chain/rpc.js';
 import { logger } from '../utils/logger.js';
 
 export class ClobAuthError extends Error {
@@ -34,24 +32,13 @@ export class ClobAuthError extends Error {
   }
 }
 
-function walletClientFor(privateKey: `0x${string}`) {
-  // A WalletClient is required because clob-client reads `signer.account` and
-  // calls `signTypedData` on it; a bare LocalAccount has the latter but not the
-  // former. The transport is never exercised for anything we do — signing is
-  // local and every CLOB request goes over HTTP inside the client — so this
-  // does not route chain reads around `fetchWithDeadline`.
-  return createWalletClient({
-    account: privateKeyToAccount(privateKey),
-    chain: polygon,
-    transport: http(rpcUrl()),
-  });
-}
-
 function cachedCreds(): ApiKeyCreds | undefined {
   try {
     const file = readWalletFile();
     const c = file?.apiCreds;
-    return c?.key && c.secret && c.passphrase ? c : undefined;
+    // The wallet file stores plain strings; the SDK brands its key type. The
+    // cast is the boundary — invalid creds fall back to a fresh handshake.
+    return c?.key && c.secret && c.passphrase ? (c as unknown as ApiKeyCreds) : undefined;
   } catch {
     return undefined;
   }
@@ -61,6 +48,13 @@ function cacheCreds(creds: ApiKeyCreds): void {
   try {
     const file = readWalletFile();
     if (!file) return;
+    if (
+      file.apiCreds?.key === creds.key &&
+      file.apiCreds.secret === creds.secret &&
+      file.apiCreds.passphrase === creds.passphrase
+    ) {
+      return;
+    }
     writeWalletFile({ ...file, apiCreds: creds });
   } catch (err) {
     // Caching is an optimisation; failing to do it must not fail the command.
@@ -68,48 +62,52 @@ function cacheCreds(creds: ApiKeyCreds): void {
   }
 }
 
+// Authenticating costs a round trip and, without cached creds, a signature.
+// `buildOrder` and `postOrder` each ask for a client, so one per process.
+let clientPromise: Promise<SecureClient> | null = null;
+
 /**
  * An authenticated client, deriving and caching L2 credentials on first use.
  *
  * Throws `ClobAuthError` rather than a bare library error, so callers can tell
  * "this wallet cannot authenticate" apart from "the CLOB is down".
  */
-export async function getClobClient(): Promise<ClobClient> {
+export async function getClobClient(): Promise<SecureClient> {
   const id = loadWalletIdentity();
-  if (id.tier !== 'trade' || !id.address) {
+  if (id.tier !== 'trade') {
     throw new ClobAuthError(
       id.tier === 'watch'
         ? `This wallet is watch-only (${id.address}). Orders need a private key: polymarket wallet import <private-key> --force`
-        : 'No wallet configured. Run `polymarket wallet create` or `polymarket wallet import <private-key>`.',
+        : 'No wallet configured. Run `polymarket wallet import <private-key>`.',
     );
   }
 
   const key = loadPrivateKey();
   if (!key) throw new ClobAuthError('No private key available to authenticate with.');
 
-  const host = getBaseUrl('clob');
-  const signer = walletClientFor(key);
+  clientPromise ??= (async () => {
+    const creds = cachedCreds();
+    const client = await createSecureClient({
+      signer: privateKeySigner(key),
+      ...(creds ? { credentials: creds } : {}),
+    });
+    cacheCreds(client.credentials);
+    return client;
+  })().catch((err) => {
+    // A failed handshake must not poison every later call in the process.
+    clientPromise = null;
+    throw new ClobAuthError(
+      `Could not authenticate with the CLOB as ${id.signer ?? 'the configured signer'}: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
 
-  let creds = cachedCreds();
-  if (!creds) {
-    // Unauthenticated client purely to run the L1 handshake.
-    const bootstrap = new ClobClient(host, POLYGON_CHAIN_ID, signer);
-    try {
-      creds = await bootstrap.createOrDeriveApiKey();
-    } catch (err) {
-      throw new ClobAuthError(
-        `Could not derive CLOB API credentials for ${id.signer}: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    cacheCreds(creds);
-  }
-
-  return new ClobClient(host, POLYGON_CHAIN_ID, signer, creds, SignatureType.POLY_PROXY, id.address);
+  return clientPromise;
 }
 
 /** Drop cached L2 creds so the next call re-derives them. */
 export function clearCachedCreds(): void {
+  clientPromise = null;
   try {
     const file = readWalletFile();
     if (!file?.apiCreds) return;

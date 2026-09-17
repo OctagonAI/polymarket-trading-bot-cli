@@ -56,13 +56,16 @@ export async function handleOrders(_args: ParsedArgs): Promise<CLIResponse<Order
   }
 
   try {
-    const raw = await client.getOpenOrders();
-    const orders: OrderView[] = (raw ?? []).map((o) => {
-      const size = num(o.original_size);
-      const filled = num(o.size_matched);
+    // Resting orders are few enough that the first page is all of them; taking
+    // one page keeps an unbounded wallet from paging forever.
+    const page = await client.listOpenOrders().firstPage();
+    const orders: OrderView[] = page.items.map((o) => {
+      const size = num(o.originalSize);
+      const filled = num(o.sizeMatched);
+      const createdAt = Date.parse(o.createdAt ?? '');
       return {
         id: o.id,
-        market: o.market,
+        market: o.conditionId,
         side: String(o.side ?? '').toUpperCase(),
         outcome: o.outcome ?? '-',
         price: num(o.price),
@@ -72,10 +75,10 @@ export async function handleOrders(_args: ParsedArgs): Promise<CLIResponse<Order
         // deciding whether to cancel.
         remaining: Math.max(0, size - filled),
         status: o.status ?? '-',
-        createdAt: typeof o.created_at === 'number' ? o.created_at : null,
+        createdAt: Number.isFinite(createdAt) ? Math.floor(createdAt / 1000) : null,
       };
     });
-    return wrapSuccess('orders', { orders, address: '' });
+    return wrapSuccess('orders', { orders, address: client.account.wallet });
   } catch (err) {
     return wrapError('orders', 'CLOB_ERROR', err instanceof Error ? err.message : String(err));
   }
@@ -106,12 +109,14 @@ export async function handleCancelOrders(args: ParsedArgs): Promise<CLIResponse<
   }
 
   try {
-    const response = args.all ? await client.cancelAll() : await client.cancelOrders(ids);
+    const response = args.all ? await client.cancelAll() : await client.cancelOrders({ orderIds: ids });
     // The CLOB reports per-order outcomes; an id that was already filled or
     // gone is reported rather than silently counted as cancelled.
-    const r = (response ?? {}) as { canceled?: string[]; not_canceled?: Record<string, string> };
-    const cancelled = r.canceled ?? [];
-    const failed = Object.entries(r.not_canceled ?? {}).map(([id, reason]) => ({ id, reason }));
+    const cancelled: string[] = response?.canceled ?? [];
+    const failed = Object.entries(response?.notCanceled ?? {}).map(([id, reason]) => ({
+      id,
+      reason: String(reason),
+    }));
     return wrapSuccess('cancel', { requested: args.all ? cancelled : ids, cancelled, failed });
   } catch (err) {
     return wrapError('cancel', 'CLOB_ERROR', err instanceof Error ? err.message : String(err));

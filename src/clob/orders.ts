@@ -1,20 +1,23 @@
 /**
  * Turning "buy 50 shares of this market's Yes at 0.42" into a signed CLOB order.
  *
- * Three things here are easy to get wrong and expensive when you do:
+ * Four things here are easy to get wrong and expensive when you do:
  *
  *  1. **Which token.** `token_ids` is parallel to `outcomes`, so the side is
  *     resolved by matching the outcome LABEL. Indexing positionally — assuming
  *     0 is Yes — silently buys the opposite side of the trade, and the order
  *     succeeds, so nothing surfaces the mistake until the market resolves.
- *  2. **What `amount` means.** `UserMarketOrder.amount` is dollars for a BUY and
- *     shares for a SELL. This CLI takes shares in both cases, so a market buy
- *     converts shares → dollars at the executable price. Passing shares straight
- *     through would spend $50 where the user asked for 50 shares.
+ *  2. **What the size means.** A market BUY is denominated in dollars
+ *     (`amount`), a market SELL in shares (`shares`). This CLI takes shares in
+ *     both cases, so a market buy converts shares → dollars at the executable
+ *     price. Passing shares straight through would spend $50 where the user
+ *     asked for 50 shares.
  *  3. **Tick size.** A price off-tick is rejected by the venue, so limit prices
  *     are rounded to the market's tick before signing.
+ *  4. **Which half of the fill is shares.** The response reports the maker and
+ *     taker legs, and which one is shares flips with the side — see `postOrder`.
  */
-import { Side, OrderType, type SignedOrder } from '@polymarket/clob-client';
+import { OrderSide, OrderType, type SignedOrder, type OrderResponse } from '@polymarket/client';
 import { getClobClient } from './client.js';
 import { roundToTick } from '../tools/polymarket/api.js';
 import type { PolymarketMarket } from '../tools/polymarket/types.js';
@@ -107,7 +110,7 @@ export interface BuiltOrder {
   orderType: OrderType;
   tokenId: string;
   outcomeLabel: string;
-  side: Side;
+  side: OrderSide;
   shares: number;
   /** Price the order was built at — the limit, or the executable quote. */
   price: number;
@@ -151,18 +154,34 @@ export async function buildOrder(req: OrderRequest): Promise<BuiltOrder> {
   }
 
   const client = await getClobClient();
-  const side = action === 'buy' ? Side.BUY : Side.SELL;
+  const side = action === 'buy' ? OrderSide.BUY : OrderSide.SELL;
 
   let signed: SignedOrder;
   let orderType: OrderType;
 
   if (isMarketOrder) {
-    // amount is DOLLARS for a buy and SHARES for a sell. See the file header.
-    const amount = action === 'buy' ? shares * price : shares;
-    signed = await client.createMarketOrder({ tokenID: resolved.tokenId, amount, side, price });
+    // A buy is denominated in dollars, a sell in shares. See the file header.
+    // `maxPrice`/`minPrice` carry the quote through as the worst acceptable
+    // fill, so a thin book cannot fill the whole notional at any price.
+    signed =
+      side === OrderSide.BUY
+        ? await client.createMarketOrder({
+            assetId: resolved.tokenId,
+            side: OrderSide.BUY,
+            amount: shares * price,
+            maxPrice: price,
+            orderType: OrderType.FOK,
+          })
+        : await client.createMarketOrder({
+            assetId: resolved.tokenId,
+            side: OrderSide.SELL,
+            shares,
+            minPrice: price,
+            orderType: OrderType.FOK,
+          });
     orderType = OrderType.FOK;
   } else {
-    signed = await client.createOrder({ tokenID: resolved.tokenId, price, size: shares, side });
+    signed = await client.createLimitOrder({ assetId: resolved.tokenId, price, size: shares, side });
     orderType = OrderType.GTC;
   }
 
@@ -192,22 +211,27 @@ function num(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Submit a signed order. */
+/**
+ * Submit a signed order.
+ *
+ * `makingAmount` is what the order gave up and `takingAmount` what it received,
+ * so which one is denominated in shares flips with the side: a buy receives
+ * shares, a sell gives them up. Reading the same field for both reports a
+ * dollar amount as a share count on every sell.
+ */
 export async function postOrder(built: BuiltOrder): Promise<PostedOrder> {
   const client = await getClobClient();
-  const raw = (await client.postOrder(built.signed, built.orderType)) as Record<string, unknown>;
+  const raw: OrderResponse = await client.postOrder(built.signed);
 
-  // The CLOB reports success in-band; a 200 with success:false is a rejection.
-  if (raw && raw.success === false) {
-    throw new OrderError(
-      `Order rejected: ${String(raw.errorMsg ?? raw.error ?? 'no reason given')}`,
-    );
+  // The CLOB reports refusal in-band; a 200 that is not `ok` is a rejection.
+  if (!raw.ok) {
+    throw new OrderError(`Order rejected: ${raw.message || raw.code || 'no reason given'}`);
   }
 
   return {
-    orderId: typeof raw?.orderID === 'string' ? raw.orderID : null,
-    status: String(raw?.status ?? 'unknown'),
-    filledShares: num(raw?.takingAmount ?? raw?.size_matched),
+    orderId: raw.orderId ?? null,
+    status: String(raw.status ?? 'unknown'),
+    filledShares: num(built.side === OrderSide.BUY ? raw.takingAmount : raw.makingAmount),
     raw,
   };
 }
