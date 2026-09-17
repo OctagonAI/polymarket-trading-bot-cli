@@ -10,7 +10,7 @@ import { handleStatus } from './status.js';
 import { handleThemes, formatThemesHuman } from './themes.js';
 import { handleWatch } from './watch.js';
 import { handleBacktest, formatBacktestHuman } from './backtest.js';
-import { TRADING_UNAVAILABLE_MESSAGE, isTradingCommand } from '../tools/polymarket/polymarket-trade.js';
+import { commandUnavailableReason } from '../tools/polymarket/polymarket-trade.js';
 import { buildHelp } from './help.js';
 import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 import { ensureIndex, forceRefreshIndex } from '../tools/polymarket/search-index.js';
@@ -24,9 +24,14 @@ import { handleClusters, formatClustersHuman } from './clusters.js';
 import { handlePeers, formatPeersHuman } from './peers.js';
 import { handleCorrelate, formatCorrelationHuman } from './correlate.js';
 import { handleBasket, formatBasketHuman } from './basket.js';
+import { handleWallet, formatWalletHuman } from './wallet.js';
+import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
+import { handleOrders, handleCancelOrders, formatOrdersHuman, formatCancelHuman } from './orders.js';
+import { handleTrade, formatTradeHuman } from './trade.js';
 import { searchOctagonMarkets, searchOctagonEvents, EVENT_SEARCH_TEXT_TIMEOUT_MS, getEventsWithEdge } from '../scan/octagon-api.js';
 import { formatMarketSearchHuman, formatEventSearchHuman, formatMarketsWithEdgeHuman } from './search-remote.js';
-import { findTheme } from '../scan/theme-registry.js';
+import { findTheme, parseThemeQuery } from '../scan/theme-registry.js';
+import { looksLikeSlug } from './similar.js';
 import { handleEvents, formatEventsHuman } from './events.js';
 import { handleTrust, formatTrustHuman } from './trust.js';
 import { handleReport, formatReportHuman } from './report.js';
@@ -55,6 +60,24 @@ function resolveAlias(subcommand: Subcommand, positionalArgs: string[]): Resolve
     // `themes` is now the editorial-themes registry (curated narrative buckets).
     // Legacy "polymarket search themes" (Kalshi category labels) is still reachable
     // via `search themes`.
+
+    // wallet sub-routing (import/address/show/approve) — telemetry granularity.
+    // The sub-verb is recorded; no address or key ever reaches telemetry.
+    case 'wallet': {
+      const sub = positionalArgs[0]?.toLowerCase();
+      if (sub === 'create' || sub === 'import' || sub === 'address' || sub === 'show' || sub === 'approve') {
+        return { canonical: 'wallet', subview: sub };
+      }
+      return { canonical: 'wallet' };
+    }
+
+    // orders sub-routing. `cancel` is a verb on the orders resource rather than
+    // a top-level command; anything else is an order id or id prefix.
+    case 'orders': {
+      const sub = positionalArgs[0]?.toLowerCase();
+      if (sub === 'cancel') return { canonical: 'orders', subview: 'cancel' };
+      return { canonical: 'orders', ...(sub ? { subview: 'detail' } : {}) };
+    }
 
     // basket sub-routing (build/backtest/size/candles) — exposed for telemetry granularity
     case 'basket': {
@@ -157,16 +180,19 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       return;
     }
 
-    // ─── Commands that need wallet/trading support ────────────────────
-    // Order placement and every account read depend on a configured wallet,
-    // which is part of trading setup that does not exist yet. `status` is the
-    // exception: it resolves to a portfolio subview for historical reasons but
-    // only checks setup and CLOB reachability, neither of which needs a wallet.
-    if (isTradingCommand(resolved.canonical) && resolved.subview !== 'status') {
+    // ─── Commands whose availability depends on wallet state ──────────
+    // `portfolio` needs an address; orders additionally need a key. The reason
+    // is command- and tier-specific, so it says what is actually missing rather
+    // than one blanket "not available". `status` is the exception: it resolves
+    // to a portfolio subview for historical reasons but only checks setup and
+    // CLOB reachability, neither of which needs a wallet.
+    const unavailable =
+      resolved.subview === 'status' ? null : commandUnavailableReason(resolved.canonical);
+    if (unavailable) {
       if (json) {
-        console.log(JSON.stringify(wrapError(resolved.canonical, 'NOT_AVAILABLE', TRADING_UNAVAILABLE_MESSAGE)));
+        console.log(JSON.stringify(wrapError(resolved.canonical, 'NOT_AVAILABLE', unavailable)));
       } else {
-        console.error(TRADING_UNAVAILABLE_MESSAGE);
+        console.error(unavailable);
       }
       process.exit(ExitCode.USER_ERROR);
       return;
@@ -278,18 +304,47 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
           args.seriesTicker !== undefined ||
           args.seriesPrefix !== undefined;
 
-        const theme = findTheme(query);
+        // A slug names one event: list its markets rather than searching for
+        // the literal string. Event and market slugs share one namespace shape
+        // (fed-decision-in-september-762 vs will-the-fed-...-863), so nothing
+        // lexical can tell them apart — resolution decides. handleEvents calls
+        // resolveOctagonEvent, which tries the slug route then the ticker route,
+        // and we fall through to search when neither resolves.
+        if (!usesMarketFilters && query && looksLikeSlug(query)) {
+          const resp = await handleEvents({ ...args, positionalArgs: [query] });
+          if (resp.ok) {
+            if (json) {
+              console.log(JSON.stringify(resp));
+            } else {
+              console.log(formatEventsHuman(resp.data));
+            }
+            return;
+          }
+        }
+
+        // `theme:subtheme` (crypto:btc) splits here. findTheme alone is a flat
+        // lookup, so the composite string missed and fell through to a literal
+        // free-text search for "crypto:btc" — which matches nothing, even
+        // though `search themes` advertises the syntax and both `scan` and the
+        // TUI honour it.
+        const { theme, subtheme } = parseThemeQuery(query);
         if (theme && !usesMarketFilters) {
           // meta_category is case-sensitive and a closed set — it comes from
-          // the registry, never from the raw query string.
+          // the registry, never from the raw query string. `q` is raw user
+          // text and is safe to pass through: it is a search term, not a
+          // closed-vocabulary filter. The two AND together.
           const page = await searchOctagonEvents({
             meta_category: theme.metaCategory,
+            // Autocomplete offers kebab-cased tags (oil-and-energy); q is full
+            // text, so hyphens have to become spaces or it matches nothing.
+            ...(subtheme ? { q: subtheme.replace(/-/g, ' ') } : {}),
             limit: args.limit ?? 30,
           });
+          const describe = subtheme ? `theme ${theme.id}:${subtheme}` : `theme ${theme.id}`;
           if (json) {
             console.log(JSON.stringify(wrapSuccess('search', page)));
           } else {
-            console.log(formatEventSearchHuman(`theme ${theme.id}`, page));
+            console.log(formatEventSearchHuman(describe, page));
           }
           return;
         }
@@ -385,6 +440,51 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       } else {
         console.log(output);
       }
+      return;
+    }
+
+    if (resolved.canonical === 'buy' || resolved.canonical === 'sell') {
+      const resp = await handleTrade(resolved.canonical, args);
+      if (json) console.log(JSON.stringify(resp));
+      else if (resp.ok) console.log(formatTradeHuman(resp.data));
+      else console.error(resp.error?.message ?? `${resolved.canonical} failed`);
+      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
+      return;
+    }
+
+    if (resolved.canonical === 'orders') {
+      // `orders cancel <id>` — the verb consumes its own name so the ids that
+      // follow are the only positionals the handler sees.
+      if (resolved.subview === 'cancel') {
+        const rest = { ...args, positionalArgs: args.positionalArgs.slice(1) };
+        const resp = await handleCancelOrders(rest);
+        if (json) console.log(JSON.stringify(resp));
+        else if (resp.ok) console.log(formatCancelHuman(resp.data));
+        else console.error(resp.error?.message ?? 'cancel failed');
+        process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
+        return;
+      }
+      const resp = await handleOrders(args);
+      if (json) console.log(JSON.stringify(resp));
+      else if (resp.ok) console.log(formatOrdersHuman(resp.data));
+      else console.error(resp.error?.message ?? 'orders failed');
+      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
+      return;
+    }
+
+
+    // Full account view. Only `status` had a block before, so this path was
+    // unreachable from the CLI even once a wallet existed.
+    if (resolved.canonical === 'portfolio') {
+      const resp = await handlePortfolio(args);
+      if (json) {
+        console.log(JSON.stringify(resp));
+      } else if (resp.ok) {
+        console.log(formatPortfolioHuman(resp.data, resp.meta?.warnings ?? []));
+      } else {
+        console.error(resp.error?.message ?? 'portfolio failed');
+      }
+      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
       return;
     }
 
@@ -578,6 +678,19 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
     }
 
     // ─── basket (build, backtest, size, candles) ───────────────────────
+    if (resolved.canonical === 'wallet') {
+      const resp = await handleWallet(args);
+      if (json) {
+        console.log(JSON.stringify(resp));
+      } else if (resp.ok) {
+        console.log(formatWalletHuman(resp.data));
+      } else {
+        console.error(resp.error?.message ?? 'wallet failed');
+      }
+      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
+      return;
+    }
+
     if (resolved.canonical === 'basket') {
       const resp = await handleBasket(args);
       if (json) {

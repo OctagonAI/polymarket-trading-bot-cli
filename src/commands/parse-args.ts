@@ -1,7 +1,7 @@
 const SUBCOMMANDS = [
   // Core 6 commands
   'search', 'portfolio', 'analyze', 'watch',
-  'buy', 'sell', 'cancel', 'help',
+  'buy', 'sell', 'orders', 'help',
   // Legacy aliases (kept for backward compat)
   'edge',
   'alerts', 'config', 'clear-cache', 'chat', 'init', 'status', 'themes',
@@ -15,6 +15,8 @@ const SUBCOMMANDS = [
   'trust',
   // Full markdown report viewer
   'report',
+  // Wallet management
+  'wallet',
 ] as const;
 
 export type Subcommand = (typeof SUBCOMMANDS)[number];
@@ -82,6 +84,12 @@ export interface ParsedArgs {
   daysToClose?: number;    // ergonomic shortcut: close_before = now + N days
   /** --market <ticker>: drill into a specific market within an event (trust). */
   market?: string;
+  /** --force: overwrite an existing wallet instead of refusing. */
+  force: boolean;
+  /** --yes: skip an interactive confirmation. Scripting only. */
+  yes: boolean;
+  /** --all: include grants that trading does not require. */
+  all: boolean;
   parseErrors: string[];
 }
 
@@ -95,6 +103,9 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
   let minConfidence: string | undefined;
   let minEdge: number | undefined;
   let live = false;
+  let force = false;
+  let yes = false;
+  let all = false;
   let refresh = false;
   let report = false;
   let side: 'yes' | 'no' | undefined;
@@ -214,6 +225,12 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
           parseErrors.push(`Invalid --side value: "${val}" (expected "yes" or "no")`);
         }
       }
+    } else if (arg === '--force') {
+      force = true;
+    } else if (arg === '--all') {
+      all = true;
+    } else if (arg === '--yes' || arg === '-y') {
+      yes = true;
     } else if (arg === '--live') {
       live = true;
     } else if (arg === '--refresh') {
@@ -471,6 +488,7 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
     weights, bankroll, kellyMultiplier, n, maxPerCluster, maxCorrelation, minReturn, seriesTicker,
     sortBy, probabilities, tickers, query, showCluster, aggregateBy, activeOnly,
     seriesPrefix, sides, cells, autoProbs, daysToClose, market,
+    force, yes, all,
     parseErrors,
   };
 }

@@ -1,4 +1,4 @@
-import { Container, ProcessTerminal, Spacer, Text, TUI, CombinedAutocompleteProvider } from '@mariozechner/pi-tui';
+import { Container, ProcessTerminal, Spacer, Text, TUI, CombinedAutocompleteProvider, isKeyRelease, parseKey } from '@mariozechner/pi-tui';
 import type { SlashCommand, AutocompleteItem } from '@mariozechner/pi-tui';
 import type {
   ApprovalDecision,
@@ -25,20 +25,20 @@ import {
   WorkingIndicatorComponent,
   createApiKeyConfirmSelector,
   createBrowseActionSelector,
+  createBrowseEventSelector,
   createBrowseMarketSelector,
-  updateBrowseMarketSelector,
   createModelSelector,
   createProviderSelector,
 } from './components/index.js';
 import { editorTheme, theme } from './theme.js';
+import { confirmKeyAction } from './components/confirm-key.js';
 import { handleSlashCommand, executePendingTrade } from './commands/index.js';
 import type { CommandResult } from './commands/index.js';
 import { formatResponse } from './utils/markdown-table.js';
 import { ensureIndex, onIndexProgress, getRefreshPromise } from './tools/polymarket/search-index.js';
-import { TRADING_UNAVAILABLE_MESSAGE } from './tools/polymarket/polymarket-trade.js';
 import { isDeferredCommand } from './scan/octagon-capabilities.js';
 import { allThemeIds } from './scan/theme-registry.js';
-import { isTradingCommand } from './tools/polymarket/polymarket-trade.js';
+import { isCommandAvailable } from './tools/polymarket/polymarket-trade.js';
 import { SetupWizardController } from './setup/wizard.js';
 import { trackEvent } from './utils/telemetry.js';
 
@@ -186,6 +186,62 @@ export async function runCli(options?: { forceSetup?: boolean }) {
   const inputHistory = new InputHistoryController(() => tui.requestRender());
   let lastError: string | null = null;
   let pendingTrade: CommandResult['pendingTrade'] | null = null;
+
+  /**
+   * A prepared order answers to a single keypress.
+   *
+   * The prompt is modal while it is up: every key except Ctrl+C is swallowed,
+   * so a half-typed "yes" cannot leave "es" in the editor to be sent to the
+   * agent as a query, and no stray text reaches the input line at all. Ctrl+C
+   * is deliberately passed through — the editor owns quitting, and a
+   * confirmation prompt must never be a trap.
+   *
+   * Key *release* events are ignored rather than consumed. With the kitty
+   * protocol active a single "y" arrives as a press and a release; treating the
+   * release as a second answer would act twice on one keystroke.
+   */
+  const resolvePendingTrade = async (confirmed: boolean) => {
+    const trade = pendingTrade;
+    if (!trade) return;
+    pendingTrade = null;
+    chatLog.resetToolGrouping();
+
+    if (!confirmed) {
+      trackEvent('trade_rejected', { action: trade.action, side: trade.outcome });
+      chatLog.finalizeAnswer('Order canceled.');
+      tui.requestRender();
+      return;
+    }
+
+    // One keypress and no echoed line, so the indicator is the only sign the
+    // answer registered while the order is in flight.
+    workingIndicator.setState({ status: 'thinking' });
+    tui.requestRender();
+    try {
+      chatLog.finalizeAnswer(await executePendingTrade(trade));
+    } catch (err) {
+      chatLog.finalizeAnswer(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      workingIndicator.setState({ status: 'idle' });
+    }
+    tui.requestRender();
+  };
+
+  tui.addInputListener((data: string) => {
+    if (!pendingTrade) return;
+    switch (confirmKeyAction(parseKey(data), isKeyRelease(data))) {
+      case 'passthrough':
+        return;
+      case 'submit':
+        void resolvePendingTrade(true);
+        return { consume: true };
+      case 'cancel':
+        void resolvePendingTrade(false);
+        return { consume: true };
+      default:
+        return { consume: true };
+    }
+  });
 
   const onError = (message: string) => {
     lastError = message;
@@ -368,17 +424,18 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       { value: 'correlate', label: 'correlate', description: 'Pairwise correlation matrix' },
       { value: 'basket', label: 'basket', description: 'Build / backtest / size baskets' },
       { value: 'events', label: 'events', description: 'Octagon events (event ↔ outcome ladder)' },
-      { value: 'trust', label: 'trust', description: 'Trader Trust scorecard (per-market integrity scores)' },
+      { value: 'trust', label: 'trust', description: 'Octagon Trust Index for an event' },
       { value: 'report', label: 'report', description: 'Full Octagon markdown report for an event' },
       { value: 'series', label: 'series', description: 'Series rollup / NAV' },
       { value: 'catalysts', label: 'catalysts', description: 'Upcoming market closes by week' },
       { value: 'themes', label: 'themes', description: 'Editorial narrative registry + dashboard' },
+      { value: 'wallet', label: 'wallet', description: 'Wallet setup: create, import, inspect' },
       { value: 'portfolio', label: 'portfolio', description: 'Account state' },
       { value: 'analyze', label: 'analyze', description: 'Market analysis' },
       { value: 'watch', label: 'watch', description: 'Live monitoring' },
       { value: 'buy', label: 'buy', description: 'Buy contracts' },
       { value: 'sell', label: 'sell', description: 'Sell contracts' },
-      { value: 'cancel', label: 'cancel', description: 'Cancel an order' },
+      { value: 'orders', label: 'orders', description: 'List, inspect or cancel resting orders' },
       { value: 'backtest', label: 'backtest', description: 'Model accuracy & edge scanner' },
       { value: 'help', label: 'help', description: 'Show help' },
       { value: 'scripting', label: 'scripting', description: 'Tips for agents, pipelines, parallel use' },
@@ -396,8 +453,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     { name: 'analyze', description: 'Full market analysis: edge, research, Kelly sizing', getArgumentCompletions: usageHint('<market-slug>', 'e.g. bitcoin-above-88k-on-september-11-2026') },
     { name: 'watch', description: 'Live monitoring: ticker feed or continuous theme scan', getArgumentCompletions: watchSubcommands },
     { name: 'buy', description: 'Buy contracts (defaults to YES side)', getArgumentCompletions: usageHint('<market-slug> <shares> [price] [yes|no]', 'e.g. bitcoin-above-88k-on-september-11-2026 10 0.56') },
-    { name: 'sell', description: 'Sell contracts (defaults to YES side)', getArgumentCompletions: usageHint('<market-slug> <shares> [price] [yes|no]', 'e.g. bitcoin-above-88k-on-september-11-2026 10 0.56') },
-    { name: 'cancel', description: 'Cancel a resting order', getArgumentCompletions: usageHint('<order_id>', 'the order UUID') },
+    { name: 'sell', description: 'Sell contracts (defaults to YES side)', getArgumentCompletions: usageHint('<market-slug> <shares|max> [price] [yes|no]', 'e.g. bitcoin-above-88k-on-september-11-2026 10 0.56') },
     // Analysis
     { name: 'backtest', description: 'Model accuracy scorecard + live edge scanner', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
       const opts = [
@@ -440,7 +496,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     { name: 'peers', description: 'Find markets in the same cluster as a ticker', getArgumentCompletions: usageHint('<market-slug> [--behavioral] [--limit N] [--show-cluster]', 'e.g. will-btc-hit-100k --limit 20') },
     { name: 'correlate', description: 'Pairwise correlation matrix (2-100 tickers)', getArgumentCompletions: usageHint('<slug1> <slug2> [...] [--window-days N]', 'e.g. slug-a slug-b slug-c --window-days 90') },
     { name: 'events', description: 'Octagon events — outcome ladder per event', getArgumentCompletions: usageHint('<event-slug> | --category Politics | --min-volume 10000', 'e.g. fed-decision-in-september-762 to drill in') },
-    { name: 'trust', description: 'Trader Trust scorecard (per-market integrity scores)', getArgumentCompletions: usageHint('<event-slug> [--market <market-slug>] [--verbose]', 'e.g. epl-2027-champion --market will-arsenal-win-the-2026-27-english-premier-league-championship') },
+    { name: 'trust', description: 'Octagon Trust Index for an event', getArgumentCompletions: usageHint('<event-slug> [--market <market-slug>] [--verbose]', 'e.g. epl-2027-champion --market will-arsenal-win-the-2026-27-english-premier-league-championship') },
     { name: 'report', description: 'Print the full Octagon markdown report for an event', getArgumentCompletions: usageHint('<event-slug | market-slug | polymarket url> [--refresh]', 'e.g. fed-decision-in-september-762 --refresh') },
     { name: 'series', description: 'Series rollup (24h vol, market count)', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
       const opts = [
@@ -478,6 +534,22 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       if (!typed) return opts;
       return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
     }},
+    { name: 'orders', description: 'List, inspect or cancel resting orders', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
+      const opts = [
+        { value: 'cancel', label: 'cancel', description: '<order> | --all   Cancel resting orders' },
+      ];
+      if (!typed) return opts;
+      return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
+    }},
+    { name: 'wallet', description: 'Create, import, or inspect your Polymarket wallet', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
+      const opts = [
+        { value: 'show', label: 'show', description: 'Funding + signing address, wallet type, mode, key source' },
+        { value: 'import', label: 'import', description: '<private-key|address>  Bring an existing wallet' },
+        { value: 'address', label: 'address', description: 'Print the funding address only' },
+      ];
+      if (!typed) return opts;
+      return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
+    }},
     { name: 'basket', description: 'Build, backtest, or size diversified baskets', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
       const opts = [
         { value: 'build', label: 'build', description: 'Diversified basket builder (cluster + correlation caps)' },
@@ -502,7 +574,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     { name: 'quit', description: 'Quit CLI session' },
     // Commands gated by octagon-capabilities are hidden from autocomplete but
     // still reachable by typing, where they explain why they are unavailable.
-  ].filter((c) => !isDeferredCommand(c.name) && !isTradingCommand(c.name));
+  ].filter((c) => !isDeferredCommand(c.name) && isCommandAvailable(c.name));
   editor.setAutocompleteProvider(new CombinedAutocompleteProvider(slashCommands));
 
   tui.addChild(root);
@@ -597,32 +669,6 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       return;
     }
 
-    // Handle pending trade confirmation (yes/no)
-    if (pendingTrade) {
-      const answer = query.trim().toLowerCase();
-      if (answer === 'y' || answer === 'yes') {
-        chatLog.addQuery(query);
-        chatLog.resetToolGrouping();
-        try {
-          const result = await executePendingTrade(pendingTrade);
-          chatLog.finalizeAnswer(result);
-        } catch (err) {
-          chatLog.finalizeAnswer(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        }
-        pendingTrade = null;
-        tui.requestRender();
-        return;
-      } else {
-        trackEvent('trade_rejected', { action: pendingTrade.action, side: pendingTrade.side });
-        chatLog.addQuery(query);
-        chatLog.resetToolGrouping();
-        chatLog.finalizeAnswer('Order canceled.');
-        pendingTrade = null;
-        tui.requestRender();
-        return;
-      }
-    }
-
     // Handle slash commands
     if (query.startsWith('/')) {
       chatLog.addQuery(query);
@@ -654,9 +700,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
           if (cmdResult.pendingTrade) {
             pendingTrade = cmdResult.pendingTrade;
             chatLog.finalizeAnswer(
-              formatResponse(
-                `\n**Confirm order?** Type **yes** to submit or **no** to cancel.`
-              )
+              formatResponse(`\n**Place this order?**  y to submit · n or esc to cancel`)
             );
           }
           tui.requestRender();
@@ -825,8 +869,15 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       if (ticker) {
         refreshError();
         renderMainView();
-        // Trading is deferred until wallet signing lands.
-        chatLog.finalizeAnswer(`Trade **${ticker}**\n\n${TRADING_UNAVAILABLE_MESSAGE}`);
+        // Browse has a market but no size or side, so it hands over the exact
+        // command rather than inventing them.
+        chatLog.finalizeAnswer(
+          `Trade **${ticker}**\n\n` +
+            'Place an order with:\n' +
+            `  /buy ${ticker} <shares> [price] [yes|no]\n` +
+            `  /sell ${ticker} <shares> [price] [yes|no]\n\n` +
+            'Omit the price for a market order. `/analyze ' + ticker + '` sizes it for you first.',
+        );
         tui.requestRender();
         return;
       }
@@ -845,16 +896,16 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     }
 
     if (browseState.appState === 'event_list') {
-      // If the cached selector still matches, update labels in-place (no flicker)
+      // Event rows carry no hydrated model probabilities, so the cached
+      // selector's labels cannot go stale — reuse it as-is to avoid flicker.
       if (cachedBrowseSelector && cachedBrowseTheme === browseState.theme
           && cachedBrowseEventCount === browseState.events.length) {
-        updateBrowseMarketSelector(cachedBrowseSelector, browseState.events);
         tui.requestRender();
         return;
       }
-      const selector = createBrowseMarketSelector(
+      const selector = createBrowseEventSelector(
         browseState.events,
-        (eventTicker, marketTicker) => browseController.selectMarket(eventTicker, marketTicker),
+        (eventTicker) => browseController.selectEvent(eventTicker),
         () => browseController.cancelBrowse(),
         browseState.lastError,
         browseState.progressMessage,
@@ -867,7 +918,27 @@ export async function runCli(options?: { forceSetup?: boolean }) {
         `Browse: ${browseState.theme}`,
         `${browseState.events.length} events, ${browseState.events.reduce((n, e) => n + e.markets.length, 0)} markets`,
         selector,
-        'Enter to select · esc to exit',
+        'Enter to open an event · esc to exit',
+        focusTarget,
+      );
+      return;
+    }
+
+    if (browseState.appState === 'market_list' && browseState.selectedEvent) {
+      const event = browseState.selectedEvent;
+      const selector = createBrowseMarketSelector(
+        [event],
+        (eventTicker, marketTicker) => browseController.selectMarket(eventTicker, marketTicker),
+        () => browseController.cancelBrowse(),
+        browseState.lastError,
+        browseState.progressMessage,
+      );
+      const focusTarget = (selector as any)._browseList;
+      renderScreenView(
+        event.eventTicker,
+        `${event.title} — ${event.markets.length} market${event.markets.length !== 1 ? 's' : ''}`,
+        selector,
+        'Enter to select · esc to go back',
         focusTarget,
       );
       return;

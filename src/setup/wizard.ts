@@ -7,6 +7,11 @@ import { checkApiKeyExists, saveApiKeyToEnv, ENV_PATH } from '../utils/env.js';
 import { fetchExchangeStatus } from '../tools/polymarket/exchange.js';
 import { loadBotConfig, saveBotConfig, setBotSetting } from '../utils/bot-config.js';
 import { appPath } from '../utils/paths.js';
+import { writeWalletFile, walletExists, walletPath, type StoredWallet } from '../wallet/store.js';
+import { resetWalletIdentityCache } from '../wallet/identity.js';
+import { isAddress, isPrivateKey, normalizePrivateKey } from '../wallet/keys.js';
+import { resolveAccount, AccountResolutionError } from '../wallet/account.js';
+import { getAddress } from 'viem';
 import type { SelectItem } from '@mariozechner/pi-tui';
 
 export type WizardState =
@@ -14,6 +19,8 @@ export type WizardState =
   | 'octagon_api_key'
   | 'llm_provider_select'
   | 'llm_api_key'
+  | 'wallet_choice'
+  | 'wallet_input'
   | 'bankroll'
   | 'testing'
   | 'complete';
@@ -34,6 +41,19 @@ export class SetupWizardController {
   /** Staged like the env keys — written only when the user confirms the wizard. */
   private pendingBankroll: string | null = null;
   private bankrollError: string | null = null;
+  /** Staged like the env keys — written to disk only when the wizard completes. */
+  private pendingWallet: StoredWallet | null = null;
+  private walletError: string | null = null;
+  /** True while the SDK is being asked which wallet a pasted key controls. */
+  private resolvingWallet = false;
+  /**
+   * Bumped whenever a run starts or is cancelled, so a wallet resolution that
+   * is still in flight can tell whether it still belongs to the live run.
+   *
+   * The request itself cannot be cancelled — the SDK's client takes no
+   * AbortSignal — so the only option is to ignore a result that arrives late.
+   */
+  private walletGeneration = 0;
   private readonly onComplete: () => void;
   private readonly onChange: () => void;
   private active = false;
@@ -56,6 +76,7 @@ export class SetupWizardController {
   }
 
   start() {
+    this.walletGeneration += 1;
     this.active = true;
     this.wizardState = 'welcome';
     this.collectedKeys = {};
@@ -65,14 +86,19 @@ export class SetupWizardController {
     this.selectedProvider = null;
     this.pendingBankroll = null;
     this.bankrollError = null;
+    this.pendingWallet = null;
+    this.walletError = null;
+    this.resolvingWallet = false;
     this.currentInput = null;
     this.currentSelector = null;
     this.onChange();
   }
 
   cancel() {
+    this.walletGeneration += 1;
     this.restoreStagedEnv();
     this.active = false;
+    this.resolvingWallet = false;
     this.wizardState = 'welcome';
     this.currentInput = null;
     this.currentSelector = null;
@@ -109,13 +135,17 @@ export class SetupWizardController {
       case 'welcome':
         return 'Welcome to Polymarket Trading Bot CLI';
       case 'octagon_api_key':
-        return 'Step 1/4: Octagon API Key';
+        return 'Step 1/5: Octagon API Key';
       case 'llm_provider_select':
-        return 'Step 2/4: LLM Provider';
+        return 'Step 2/5: LLM Provider';
       case 'llm_api_key':
-        return `Step 3/4: ${this.selectedProvider ?? 'LLM'} API Key`;
+        return `Step 3/5: ${this.selectedProvider ?? 'LLM'} API Key`;
+      case 'wallet_choice':
+        return 'Step 4/5: Wallet';
+      case 'wallet_input':
+        return 'Step 4/5: Wallet — import yours';
       case 'bankroll':
-        return 'Step 4/4: Bankroll';
+        return 'Step 5/5: Bankroll';
       case 'testing':
         return 'Testing connections...';
       case 'complete':
@@ -133,15 +163,35 @@ export class SetupWizardController {
         return 'Select your LLM provider. You can change this later with /model.';
       case 'llm_api_key':
         return `Paste your ${this.selectedProvider ?? 'LLM'} API key below.`;
+      case 'wallet_choice':
+        return 'A wallet lets the CLI read your balance and positions, and place trades.\n'
+          + 'Research and market data work without one.\n'
+          + 'Use the account you already have on polymarket.com — that is where\n'
+          + 'your funds are. Its key is stored on this machine, and whatever that\n'
+          + 'key controls, this CLI controls.';
+      case 'wallet_input':
+        return 'Paste the private key of your polymarket.com account (64 hex characters)\n'
+          + 'to enable trading, or a wallet address (0x + 40 hex) for read-only access.\n'
+          + 'The address is the one polymarket.com shows on your profile.';
       case 'bankroll':
-        // Polymarket has no cash-balance endpoint — free USDC is an on-chain
-        // ERC-20 balance, not something the read APIs report — so this number
-        // cannot be discovered and has to be told to us.
-        return 'How much USDC should position sizing assume you have?\n'
-          + 'Used by Kelly sizing and the risk gate; without it, analyze reports\n'
-          + 'edge but skips sizing. Not a deposit — just a number, change it any\n'
-          + 'time with: polymarket config risk.bankroll_usdc <amount>\n'
-          + 'Leave empty and press Enter to skip.';
+        // Framed as a LIMIT, not as "what you have". Polymarket's collateral is
+        // pUSD held on-chain, which this build cannot read yet — so the figure
+        // has to be told to us. When balance reads land this becomes a cap on
+        // the wallet balance, which keeps the framing true rather than making
+        // this text a lie later.
+        return this.pendingWallet
+          ? 'Leave this empty to size against your wallet balance — that is the\n'
+            + 'usual choice now that a wallet is set.\n'
+            + 'Set a figure only to cap risk BELOW the balance, which is useful\n'
+            + 'if the wallet holds more than you want this bot to trade.\n'
+            + 'Change it later with: polymarket config risk.bankroll_usdc <amount>'
+          : 'How much should position sizing be allowed to risk?\n'
+            + 'With no wallet the balance cannot be read, so this figure is all\n'
+            + 'Kelly sizing and the risk gate have. Without it, analyze still\n'
+            + 'reports edge and catalysts but skips sizing.\n'
+            + 'It is a limit you set, not a deposit. Change it with:\n'
+            + 'polymarket config risk.bankroll_usdc <amount>\n'
+            + 'Leave empty and press Enter to skip.';
       case 'testing':
         return '';
       case 'complete':
@@ -157,7 +207,10 @@ export class SetupWizardController {
         return 'Enter to continue';
       case 'octagon_api_key':
       case 'llm_api_key':
+      case 'wallet_input':
       case 'bankroll':
+        return 'Enter to confirm · Esc to cancel setup';
+      case 'wallet_choice':
         return 'Enter to confirm · Esc to cancel setup';
       case 'llm_provider_select':
         return 'Enter to confirm · Esc to cancel setup';
@@ -173,7 +226,10 @@ export class SetupWizardController {
 
   /** Returns the component that should receive focus, or null for text-only states */
   getFocusTarget(): ApiKeyInputComponent | VimSelectList | null {
-    if (this.wizardState === 'llm_provider_select' && this.currentSelector) {
+    if (
+      (this.wizardState === 'llm_provider_select' || this.wizardState === 'wallet_choice') &&
+      this.currentSelector
+    ) {
       return this.currentSelector;
     }
     if (this.currentInput) {
@@ -184,6 +240,10 @@ export class SetupWizardController {
 
   /** Returns extra body lines for states without an interactive component */
   getBodyLines(): string[] {
+    if (this.wizardState === 'wallet_choice' || this.wizardState === 'wallet_input') {
+      if (this.resolvingWallet) return ['', theme.muted('  Asking Polymarket which wallet this key controls…')];
+      return this.walletError ? ['', theme.error(`  ${this.walletError}`)] : [];
+    }
     if (this.wizardState === 'bankroll') {
       return this.bankrollError ? ['', theme.error(`  ${this.bankrollError}`)] : [];
     }
@@ -205,12 +265,22 @@ export class SetupWizardController {
         return `${icon}  ${r.name}${msg}`;
       });
       lines.push('');
+      if (this.pendingWallet) {
+        const mode = this.pendingWallet.privateKey ? 'trading' : 'read-only';
+        lines.push(theme.success('  OK') + `  Wallet ${this.pendingWallet.address} (${mode})`);
+      } else {
+        lines.push(theme.muted('  --') + '  No wallet — research and market data only.');
+        lines.push(theme.muted('      Set one up later: polymarket wallet import <private-key>'));
+      }
       if (this.pendingBankroll !== null) {
-        lines.push(theme.success(`  OK`) + `  Bankroll set to $${this.pendingBankroll} USDC`);
+        lines.push(theme.success(`  OK`) + `  Position sizing limit: $${this.pendingBankroll}`);
+      } else if (this.pendingWallet) {
+        lines.push(theme.success('  OK') + '  Position sizing will use your wallet balance.');
+        lines.push(theme.muted('      Cap it lower: polymarket config risk.bankroll_usdc 1000'));
       } else {
         lines.push(
           theme.muted('  --') +
-            '  Bankroll not set — analyze will report edge but skip position sizing.',
+            '  No bankroll — analyze will report edge but skip position sizing.',
         );
         lines.push(theme.muted('      Set it later: polymarket config risk.bankroll_usdc 1000'));
       }
@@ -265,6 +335,30 @@ export class SetupWizardController {
         if (!this.currentInput) {
           const input = new ApiKeyInputComponent(true);
           input.onSubmit = (value) => this.handleLlmApiKeySubmit(value);
+          input.onCancel = () => this.cancel();
+          this.currentInput = input;
+        }
+        return this.currentInput;
+      }
+      case 'wallet_choice': {
+        if (!this.currentSelector) {
+          const items: SelectItem[] = [
+            { value: 'import', label: '1. Import my polymarket.com wallet' },
+            { value: 'skip', label: '2. Skip — research only, set up later' },
+          ];
+          const list = new VimSelectList(items, 5, selectListTheme);
+          list.onSelect = (item) => this.handleWalletChoice(item.value);
+          list.onCancel = () => this.cancel();
+          this.currentSelector = list;
+        }
+        return this.currentSelector;
+      }
+      case 'wallet_input': {
+        if (!this.currentInput) {
+          // Masked: this field may receive a private key. An address being
+          // masked too is a small cost against echoing a key to the screen.
+          const input = new ApiKeyInputComponent(true);
+          input.onSubmit = (value) => this.handleWalletInput(value);
           input.onCancel = () => this.cancel();
           this.currentInput = input;
         }
@@ -341,7 +435,17 @@ export class SetupWizardController {
         failed.push(key);
       }
     }
-    // Bankroll lives in settings.json rather than .env, but it is staged the
+    // The wallet goes to its own 0600 file, never through saveApiKeyToEnv:
+    // that helper sets no mode, so a signing key would land in a 0644 .env.
+    if (this.pendingWallet !== null) {
+      try {
+        writeWalletFile(this.pendingWallet);
+        resetWalletIdentityCache();
+      } catch {
+        failed.push('wallet.json');
+      }
+    }
+    // Bankroll lives in config.json rather than .env, but it is staged the
     // same way: nothing is written unless the user confirms the wizard.
     if (this.pendingBankroll !== null) {
       try {
@@ -382,13 +486,13 @@ export class SetupWizardController {
   private handleProviderSelect(providerId: string) {
     if (providerId === 'skip') {
       this.selectedProvider = null;
-      this.transition('bankroll');
+      this.transition('wallet_choice');
       return;
     }
     if (providerId === 'ollama') {
       // Ollama runs locally — no API key needed, but track the selection
       this.selectedProvider = 'ollama';
-      this.transition('bankroll');
+      this.transition('wallet_choice');
       return;
     }
     this.selectedProvider = providerId;
@@ -399,7 +503,7 @@ export class SetupWizardController {
     if (!value || !value.trim()) {
       // Empty submission — treat as skip
       this.selectedProvider = null;
-      this.transition('bankroll');
+      this.transition('wallet_choice');
       return;
     }
     if (this.selectedProvider) {
@@ -408,7 +512,111 @@ export class SetupWizardController {
         this.stageEnv(envName, value);
       }
     }
-    this.transition('bankroll');
+    this.transition('wallet_choice');
+  }
+
+  /**
+   * The wizard never overwrites an existing wallet. Someone re-running setup to
+   * change an LLM key must not lose a funded key as a side effect, and the
+   * wizard has nowhere safe to show a backup prompt mid-flow.
+   */
+  private handleWalletChoice(choice: string) {
+    if (choice === 'skip') {
+      this.pendingWallet = null;
+      this.transition('bankroll');
+      return;
+    }
+
+    if (walletExists()) {
+      this.walletError =
+        `A wallet already exists at ${walletPath()} and setup will not replace it. `
+        + 'Use `polymarket wallet import <key> --force` if you mean to change it.';
+      this.pendingWallet = null;
+      this.transition('bankroll');
+      return;
+    }
+
+    this.transition('wallet_input');
+  }
+
+  /**
+   * Accepts either form. A bad value keeps the user on this step rather than
+   * silently skipping — a mistyped key that quietly becomes "no wallet" is
+   * indistinguishable from having declined one.
+   */
+  private async handleWalletInput(value: string | null) {
+    const raw = value?.trim() ?? '';
+    if (raw === '') {
+      this.pendingWallet = null;
+      this.walletError = null;
+      this.transition('bankroll');
+      return;
+    }
+
+    if (isPrivateKey(raw)) {
+      // Which contract holds the funds is not derivable offline, so this is a
+      // network call. Staying on the step while it runs means a wrong key or an
+      // unreachable API is reported here rather than becoming a silent skip.
+      const privateKey = normalizePrivateKey(raw);
+      this.walletError = null;
+      this.resolvingWallet = true;
+      this.onChange();
+
+      // Cancelling or restarting mid-flight must not let this result land on
+      // whatever run is active when it finally arrives: it would jump that run
+      // to `bankroll` carrying a wallet from the one the user abandoned, and
+      // finishing the wizard would then persist it.
+      const generation = this.walletGeneration;
+      const stale = () => this.walletGeneration !== generation || this.wizardState !== 'wallet_input';
+
+      try {
+        const account = await resolveAccount(privateKey);
+        if (stale()) return;
+        this.resolvingWallet = false;
+        this.pendingWallet = {
+          version: 1,
+          type: account.walletType,
+          address: account.address,
+          signer: account.signer,
+          privateKey,
+          createdAt: Math.floor(Date.now() / 1000),
+          apiCreds: account.apiCreds,
+        };
+        this.transition('bankroll');
+      } catch (err) {
+        if (stale()) return;
+        // Cleared before the render, not after: `getBodyLines` checks this flag
+        // ahead of `walletError`, so leaving it set shows "Asking Polymarket…"
+        // where the failure should be — and nothing re-renders afterwards.
+        this.resolvingWallet = false;
+        this.walletError =
+          err instanceof AccountResolutionError
+            ? `${err.message} Press Enter on an empty field to skip.`
+            : `Could not resolve this key's wallet: ${err instanceof Error ? err.message : String(err)}`;
+        this.currentInput = null;
+        this.onChange();
+      }
+      return;
+    }
+
+    if (isAddress(raw)) {
+      // Treated as the funding address — that is what a user copies from their
+      // polymarket.com profile. Nothing is resolved, so no type is claimed.
+      this.pendingWallet = {
+        version: 1,
+        address: getAddress(raw),
+        createdAt: Math.floor(Date.now() / 1000),
+      };
+      this.walletError = null;
+      this.transition('bankroll');
+      return;
+    }
+
+    this.walletError =
+      'Not a private key or an address. Expected 64 hex characters, or 0x plus 40 hex characters. '
+      + 'Leave empty and press Enter to skip.';
+    this.currentInput = null;
+    this.onChange();
   }
 
   /**

@@ -12,7 +12,7 @@ import { logger } from '../../utils/logger.js';
 import { getMarkets, getMarket, getMarketOrderbook, getMarketPriceHistory } from './markets.js';
 import { getEvents, getEvent, searchEventsTool } from './events.js';
 import { getSeries } from './series.js';
-import { getBalance, getPositions } from './portfolio.js';
+import { getPortfolioValue, getCashBalance, getPositions, getWalletAddress } from './portfolio.js';
 import { getExchangeStatus } from './exchange.js';
 
 export const POLYMARKET_SEARCH_DESCRIPTION = `
@@ -23,7 +23,7 @@ Intelligent meta-tool for Polymarket prediction market research. Takes a natural
 - Finding markets by topic, category, or keyword
 - Getting market prices (bid/ask per outcome), volume, liquidity, and close dates
 - Fetching event details and every market inside them
-- Checking wallet positions and portfolio value
+- Checking wallet positions and portfolio value (only when a wallet is configured)
 - Getting live CLOB order book depth for a market
 - Viewing historical price series
 
@@ -48,7 +48,7 @@ function formatSubToolName(name: string): string {
     .join(' ');
 }
 
-const POLYMARKET_READ_TOOLS: StructuredToolInterface[] = [
+const MARKET_DATA_TOOLS: StructuredToolInterface[] = [
   searchEventsTool,
   getMarkets,
   getMarket,
@@ -57,12 +57,36 @@ const POLYMARKET_READ_TOOLS: StructuredToolInterface[] = [
   getEvents,
   getEvent,
   getSeries,
-  getBalance,
-  getPositions,
   getExchangeStatus,
 ];
 
-const POLYMARKET_TOOL_MAP = new Map(POLYMARKET_READ_TOOLS.map((t) => [t.name, t]));
+/** Tools that need a configured wallet; every one throws without an address. */
+const WALLET_TOOLS: StructuredToolInterface[] = [getPortfolioValue, getCashBalance, getPositions];
+
+/**
+ * The routable tool set, resolved per call rather than once at module load.
+ *
+ * The wallet tools are offered only when an address is configured. Handing them
+ * to the router unconditionally is a hole in the gating: the top-level registry
+ * withholds the portfolio tools, but this meta-tool would route to them one
+ * layer down and they would throw. Advertising a capability and then failing on
+ * it is worse than not advertising it — the agent has no way to tell that
+ * failure apart from a genuine outage.
+ */
+function polymarketReadTools(): StructuredToolInterface[] {
+  return getWalletAddress()
+    ? [...MARKET_DATA_TOOLS, ...WALLET_TOOLS]
+    : MARKET_DATA_TOOLS;
+}
+
+function polymarketToolMap(): Map<string, StructuredToolInterface> {
+  return new Map(polymarketReadTools().map((t) => [t.name, t]));
+}
+
+/** Names the router may currently route to. Exported so the gating is testable. */
+export function polymarketReadToolNames(): string[] {
+  return polymarketReadTools().map((t) => t.name);
+}
 
 function buildRouterPrompt(): string {
   return `You are a Polymarket prediction market data routing assistant.
@@ -98,9 +122,10 @@ search_events usually returns prices directly, so step 3 is often unnecessary.
 - **Known market slug / condition id / URL** -> get_market(ticker="xi-jinping-out-before-2027")
 - **Order book depth** -> get_market_orderbook(ticker=...)
 - **Price history** -> get_market_price_history(ticker=..., interval="1d")
-- **Portfolio value** -> get_balance
+${getWalletAddress() ? `- **Position value (mark-to-market)** -> get_portfolio_value
+- **Free cash / collateral** -> get_cash_balance
 - **Open positions** -> get_positions
-- **CLOB reachable?** -> get_exchange_status
+` : ''}- **CLOB reachable?** -> get_exchange_status
 
 ## Identifier Formats
 Polymarket uses URL slugs, not tickers:
@@ -128,7 +153,7 @@ async function executeToolCalls(toolCalls: ToolCall[]): Promise<SubToolResult[]>
   return Promise.all(
     toolCalls.map(async (tc) => {
       try {
-        const tool = POLYMARKET_TOOL_MAP.get(tc.name);
+        const tool = polymarketToolMap().get(tc.name);
         if (!tool) throw new Error(`Tool '${tc.name}' not found`);
         const rawResult = await tool.invoke(tc.args);
         const result = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
@@ -326,7 +351,7 @@ export function createPolymarketSearch(model: string): DynamicStructuredTool {
         const { response } = await callLlm(prompt, {
           model,
           systemPrompt,
-          tools: POLYMARKET_READ_TOOLS,
+          tools: polymarketReadTools(),
           toolChoice: isFirst ? 'required' : 'auto',
         });
         const aiMessage = response as AIMessage;

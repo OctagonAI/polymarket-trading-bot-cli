@@ -46,27 +46,21 @@ export function parseMarketProb(m: MarketRow): number | null {
   return null;
 }
 
-/** Check if a market is actively tradeable: open/active, not resolved, and has at least one trade */
+/**
+ * Check if a market is tradeable: open/active and not resolved.
+ *
+ * Deliberately does NOT filter on volume. The same predicate in the Kalshi CLI
+ * required volume_24h > 0, which hid 96.9% of the indexed universe (1,176 of
+ * 38,708 markets survived) — including tens of thousands with real lifetime
+ * volume but a quiet last 24h, which is normal for long-dated contracts.
+ * Volume filtering is opt-in through `--min-volume`; nothing is filtered
+ * silently here.
+ */
 export function isMarketActive(m: MarketRow): boolean {
   // Must be in a tradeable state
   if (m.status !== 'active' && m.status !== 'open') return false;
   // Must not be resolved
   if (m.result && m.result !== '') return false;
-  // Must have recent trading activity (volume_24h > 0)
-  // Markets with zero 24h volume have stale last_price from old trades
-  const vol24h = typeof m.volume_24h === 'string'
-    ? parseFloat(m.volume_24h)
-    : (m.volume_24h ?? 0);
-  if (m.volume_24h != null && vol24h <= 0) return false;
-  // Must have at least one actual trade (last_price > 0)
-  // If last_price is absent (old index row), fall through and allow it
-  const lastPrice = m.last_price ?? 0;
-  if (lastPrice === 0) {
-    // If last_price is missing entirely (not zero), allow the market through so
-    // older index rows still appear.
-    if (m.last_price == null) return true;
-    return false;
-  }
   return true;
 }
 
@@ -87,12 +81,17 @@ export interface BrowseEventRow {
   pending?: boolean;
 }
 
-export type BrowseAppState = 'idle' | 'loading' | 'event_list' | 'action_menu' | 'view_report';
+export type BrowseAppState = 'idle' | 'loading' | 'event_list' | 'market_list' | 'action_menu' | 'view_report';
+
+/** Rows shown in the browse list, applied after filtering and sorting. */
+const BROWSE_EVENT_CAP = 30;
 
 export interface BrowseState {
   appState: BrowseAppState;
   theme: string;
   events: BrowseEventRow[];
+  /** The event opened in `market_list`, whose markets are on screen. */
+  selectedEvent: BrowseEventRow | null;
   selectedMarket: BrowseMarketRow | null;
   selectedEventTicker: string | null;
   pendingRecommendTicker: string | null;
@@ -187,6 +186,7 @@ export class BrowseController {
   private themeValue = '';
   private eventsValue: BrowseEventRow[] = [];
   private selectedMarketValue: BrowseMarketRow | null = null;
+  private selectedEventValue: BrowseEventRow | null = null;
   private selectedEventTickerValue: string | null = null;
   private pendingRecommendTickerValue: string | null = null;
   private pendingTradeTickerValue: string | null = null;
@@ -210,6 +210,7 @@ export class BrowseController {
       appState: this.appStateValue,
       theme: this.themeValue,
       events: this.eventsValue,
+      selectedEvent: this.selectedEventValue,
       selectedMarket: this.selectedMarketValue,
       selectedEventTicker: this.selectedEventTickerValue,
       pendingRecommendTicker: this.pendingRecommendTickerValue,
@@ -247,6 +248,7 @@ export class BrowseController {
     this.directReportMode = false;
     this.themeValue = theme;
     this.eventsValue = [];
+    this.selectedEventValue = null;
     this.selectedMarketValue = null;
     this.selectedEventTickerValue = null;
     this.pendingRecommendTickerValue = null;
@@ -268,6 +270,7 @@ export class BrowseController {
     this.loadToken++;
     this.directReportMode = true;
     this.eventsValue = [];
+    this.selectedEventValue = null;
     this.selectedMarketValue = null;
     this.selectedEventTickerValue = null;
     this.pendingRecommendTickerValue = null;
@@ -308,6 +311,17 @@ export class BrowseController {
       this.onError(`Report failed: ${err instanceof Error ? err.message : String(err)}`);
       this.resetToIdle();
     }
+  }
+
+  /** Open one event and show its markets. */
+  selectEvent(eventTicker: string): void {
+    trackEvent('browse_action', { action: 'select_event' });
+    const event = this.eventsValue.find((ev) => ev.eventTicker === eventTicker);
+    if (!event) return;
+    this.selectedEventValue = event;
+    this.selectedEventTickerValue = eventTicker;
+    this.appStateValue = 'market_list';
+    this.emitChange();
   }
 
   selectMarket(eventTicker: string, marketTicker: string): void {
@@ -401,7 +415,14 @@ export class BrowseController {
         this.resetToIdle();
         return;
       }
+      // Step back to the event's market list when we drilled in through one,
+      // rather than jumping all the way out to the event list.
       this.selectedMarketValue = null;
+      if (this.selectedEventValue) {
+        this.appStateValue = 'market_list';
+        this.emitChange();
+        return;
+      }
       this.selectedEventTickerValue = null;
       this.appStateValue = 'event_list';
       this.emitChange();
@@ -413,6 +434,14 @@ export class BrowseController {
     if (this.appStateValue === 'view_report') {
       this.reportTextValue = null;
       this.appStateValue = 'action_menu';
+      this.emitChange();
+      return;
+    }
+    // esc from an event's market list returns to the event list, not out.
+    if (this.appStateValue === 'market_list') {
+      this.selectedEventValue = null;
+      this.selectedEventTickerValue = null;
+      this.appStateValue = 'event_list';
       this.emitChange();
       return;
     }
@@ -505,7 +534,9 @@ export class BrowseController {
       if (token !== undefined && token !== this.loadToken) return;
 
       this.progressMessageValue = null;
-      this.eventsValue = this.kalshiEventsToRows(kalshiEvents, db);
+      // Cap AFTER filtering and sorting, so the rows shown are the top N
+      // tradeable events rather than an arbitrary slice of the index.
+      this.eventsValue = this.kalshiEventsToRows(kalshiEvents, db).slice(0, BROWSE_EVENT_CAP);
       this.appStateValue = 'event_list';
       this.emitChange();
 
@@ -972,6 +1003,7 @@ export class BrowseController {
     this.themeValue = '';
     this.directReportMode = false;
     this.eventsValue = [];
+    this.selectedEventValue = null;
     this.selectedMarketValue = null;
     this.selectedEventTickerValue = null;
     this.lastErrorValue = null;

@@ -17,8 +17,13 @@ import { getToolRegistry } from '../tools/registry.js';
 import { buildSystemPrompt } from '../agent/prompts.js';
 import type { OctagonVariant } from '../scan/types.js';
 import type { ParsedArgs } from '../commands/parse-args.js';
+import * as walletStore from '../wallet/store.js';
+import { resetWalletIdentityCache } from '../wallet/identity.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/** A watch-tier funding address. Checksummed, because `isAddress` checks. */
+const WATCH_ADDRESS = '0x18eD5C15CeD1bFdf88e701601C4a0BbD4F5142dE';
 
 function makeAudit(): { audit: AuditTrail; path: string } {
   const path = join(tmpdir(), `e2e-audit-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
@@ -63,6 +68,9 @@ function makeParsedArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
     activeOnly: false,
     cells: false,
     autoProbs: false,
+    force: false,
+    yes: false,
+    all: false,
     parseErrors: [],
     ...overrides,
   };
@@ -151,12 +159,25 @@ function setupFetchMock(originalFetch: typeof globalThis.fetch) {
       });
     }
 
+    // Polygon RPC — the pUSD balance. Without it equity is unknown and a risk
+    // snapshot is refused outright, which aborts the whole scan pass.
+    if (urlStr.includes('drpc.org') || urlStr.includes('polygon')) {
+      return json({ jsonrpc: '2.0', id: 1, result: `0x${(1_000_000_000).toString(16).padStart(64, '0')}` });
+    }
+
     // Data API portfolio (USDC)
     if (urlStr.includes('data-api.polymarket.com/value')) {
       return json([{ user: '0x1', value: 1000 }]);
     }
     if (urlStr.includes('data-api.polymarket.com/positions')) {
-      return json([{ slug: 'MKT-OTHER', conditionId: '0xb', size: 100, curPrice: 0.5, currentValue: 200 }]);
+      // The wallet is the source of truth for what is held. MKT-YES is also
+      // tracked locally in the portfolio test, so it exercises the enrichment
+      // join; MKT-OTHER is held but untracked, which is the normal case for an
+      // imported wallet.
+      return json([
+        { slug: 'MKT-YES', conditionId: '0xa', outcome: 'Yes', size: 5, avgPrice: 0.58, curPrice: 0.6, currentValue: 3, cashPnl: 0.1 },
+        { slug: 'MKT-OTHER', conditionId: '0xb', outcome: 'No', size: 100, avgPrice: 0.5, curPrice: 0.5, currentValue: 200 },
+      ]);
     }
 
     return json({});
@@ -170,6 +191,7 @@ describe('E2E Integration Tests', () => {
   let audit: AuditTrail;
   let auditPath: string;
   let originalFetch: typeof globalThis.fetch;
+  const spies: Array<{ mockRestore: () => void }> = [];
 
   beforeEach(() => {
     db = createDb(':memory:');
@@ -177,8 +199,17 @@ describe('E2E Integration Tests', () => {
     audit = a.audit;
     auditPath = a.path;
 
-    // Reads need no credentials; portfolio reads need a wallet address.
-    process.env.POLYMARKET_WALLET_ADDRESS = '0x' + '1'.repeat(40);
+    // Reads need no credentials; portfolio reads need a wallet address. A saved
+    // wallet is the only source of one — stubbing the store also keeps these
+    // assertions off whatever wallet the machine running them happens to have.
+    spies.push(
+      spyOn(walletStore, 'readWalletFile').mockImplementation(() => ({
+        version: 1 as const,
+        address: WATCH_ADDRESS,
+        createdAt: 0,
+      })),
+    );
+    resetWalletIdentityCache();
 
     originalFetch = globalThis.fetch;
     setupFetchMock(originalFetch);
@@ -186,7 +217,8 @@ describe('E2E Integration Tests', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    delete process.env.POLYMARKET_WALLET_ADDRESS;
+    for (const sp of spies.splice(0)) sp.mockRestore();
+    resetWalletIdentityCache();
   });
 
   // Test 1: scan --theme runs full cycle
@@ -300,7 +332,7 @@ describe('E2E Integration Tests', () => {
       event_ticker: 'MKT',
       direction: 'yes',
       size: 5,
-      entry_price: 58,
+      entry_price: 0.58,
       entry_edge: 0.14,
       entry_kelly: 0.05,
       current_pnl: 100,
@@ -326,9 +358,21 @@ describe('E2E Integration Tests', () => {
     const resp = await handlePortfolio(makeParsedArgs({ subcommand: 'portfolio' }));
 
     expect(resp.ok).toBe(true);
-    expect(resp.data.positions.length).toBeGreaterThan(0);
-    expect(resp.data.positions[0].entryEdge).toBe(0.14);
-    expect(resp.data.positions[0].currentEdge).toBe(0.10);
+    // Both wallet holdings are listed, not just the one this CLI opened: the
+    // local table is partial by construction for an imported wallet.
+    expect(resp.data.positions.map((p) => p.ticker).sort()).toEqual(['MKT-OTHER', 'MKT-YES']);
+
+    // The tracked one is enriched with local edge history...
+    const tracked = resp.data.positions.find((p) => p.ticker === 'MKT-YES')!;
+    expect(tracked.tracked).toBe(true);
+    expect(tracked.entryEdge).toBe(0.14);
+    expect(tracked.currentEdge).toBe(0.10);
+
+    // ...and the untracked one is still reported, with no invented edge.
+    const untracked = resp.data.positions.find((p) => p.ticker === 'MKT-OTHER')!;
+    expect(untracked.tracked).toBe(false);
+    expect(untracked.entryEdge).toBeNull();
+    expect(untracked.watchdogStatus).toBe('untracked');
 
     dbSpy.mockRestore();
   });
@@ -405,7 +449,7 @@ describe('E2E Integration Tests', () => {
       event_ticker: 'EV-ECON',
       direction: 'yes',
       size: 5,
-      entry_price: 58,
+      entry_price: 0.58,
       entry_edge: 0.14,
       current_pnl: 500,
       status: 'closed',
@@ -475,11 +519,13 @@ describe('E2E Integration Tests', () => {
 
     expect(names).toContain('polymarket_search');
     expect(names).toContain('polymarket_trade');
-    // portfolio_overview and portfolio_review are deliberately unregistered:
-    // both read positions through requireWalletAddress, which throws until the
-    // wallet phase, so the agent would get a raw exception rather than a tool.
-    expect(names).not.toContain('portfolio_overview');
-    expect(names).not.toContain('portfolio_review');
+    // This suite stubs in a watch-tier wallet, so portfolio_overview IS
+    // registered: it needs an address, which is present. Registration is a
+    // function of wallet state rather than a fixed list.
+    expect(names).toContain('portfolio_overview');
+    // portfolio_review is registered on the same condition now that fills are
+    // written to the positions table.
+    expect(names).toContain('portfolio_review');
     expect(names).toContain('exchange_status');
     expect(names).toContain('web_fetch');
   });
@@ -491,13 +537,12 @@ describe('E2E Integration Tests', () => {
     const registered = new Set(getToolRegistry('gpt-4o').map((t) => t.name));
     const prompt = buildSystemPrompt('gpt-4o');
 
-    for (const name of ['portfolio_overview', 'portfolio_review']) {
-      expect(registered.has(name)).toBe(false);
-      expect(prompt).not.toContain(name);
+    // Guard against drift in both directions: the prompt must not name a tool
+    // the registry does not build (the agent reports `Tool '...' not found`,
+    // which reads as a crash), and must name the ones it does.
+    for (const name of ['portfolio_query', 'portfolio_overview', 'portfolio_review']) {
+      expect(registered.has(name)).toBe(true);
+      expect(prompt).toContain(name);
     }
-
-    // Guard against the inverse drift: a tool that exists but goes unmentioned.
-    expect(prompt).toContain('portfolio_query');
-    expect(registered.has('portfolio_query')).toBe(true);
   });
 });

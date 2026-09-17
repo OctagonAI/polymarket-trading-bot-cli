@@ -3,7 +3,7 @@ import packageJson from '../../package.json';
 import { theme } from '../theme.js';
 import { getModelDisplayName } from '../utils/model.js';
 import { isDeferredCommand } from '../scan/octagon-capabilities.js';
-import { isTradingCommand } from '../tools/polymarket/polymarket-trade.js';
+import { isCommandAvailable } from '../tools/polymarket/polymarket-trade.js';
 
 const INTRO_WIDTH = 60;
 
@@ -13,12 +13,10 @@ export class IntroComponent extends Container {
   constructor(model: string) {
     super();
 
-    // POLYMARKET_USE_STAGING is the flag the API client actually honors. The
-    // Kalshi original keyed this banner off POLYMARKET_USE_DEMO, which nothing
-    // in the Polymarket client reads — so it would promise "no real money"
-    // while every request still went to production.
-    const isStaging = process.env.POLYMARKET_USE_STAGING === 'true';
-    const welcomeText = isStaging ? 'Polymarket Trading Bot CLI  [STAGING]' : 'Polymarket Trading Bot CLI';
+    // No demo banner is possible here: Polymarket has one environment and no
+    // testnet, so every session is real money. The Kalshi original keyed a
+    // banner off POLYMARKET_USE_DEMO, which nothing reads.
+    const welcomeText = 'Polymarket Trading Bot CLI';
     const versionText = ` v${packageJson.version}`;
     const fullText = welcomeText + versionText;
     const padding = Math.max(0, Math.floor((INTRO_WIDTH - fullText.length - 2) / 2));
@@ -58,16 +56,6 @@ export class IntroComponent extends Container {
       ),
     );
 
-    if (isStaging) {
-      this.addChild(new Spacer(1));
-      this.addChild(
-        new Text(
-          theme.warning('  ⚠  STAGING — reads are pointed at Polymarket staging hosts  ⚠'),
-          0,
-          0,
-        ),
-      );
-    }
 
     this.addChild(new Spacer(1));
     this.addChild(new Text('AI-powered prediction market terminal.', 0, 0));
@@ -81,26 +69,29 @@ export class IntroComponent extends Container {
       ['/clusters', '[--ranked|--behavioral]  Browse thematic & behavioral clusters'],
       ['/peers', '<ticker>  Markets in the same cluster'],
       ['/events', '[ticker]  Octagon events + outcome ladder'],
-      ['/trust', '<event_ticker>  Trader Trust scorecard (per-market integrity)'],
+      ['/trust', '<event_ticker>  Octagon Trust Index (--verbose for per-contract)'],
       ['/report', '<event_ticker>  Full Octagon markdown report (--refresh for fresh)'],
       ['/series', '[ticker]  Series rollup; /series candles <SERIES> for NAV'],
       ['/themes', 'list|show|report|audit|overlap  Editorial narrative registry'],
       ['/catalysts', 'upcoming --days N  Markets closing soon, grouped by week'],
       ['/correlate', '<t1> <t2> [...]  Pairwise correlation matrix'],
       ['/basket', 'build|backtest|size|candles|validate  Diversified basket tools'],
+      ['/wallet', 'show|import              Manage your wallet'],
       ['/portfolio', 'Overview, positions, value, status'],
       ['/analyze', '<ticker>  Full analysis: edge, research, Kelly sizing'],
       ['/watch', '<ticker>  Live price/orderbook feed'],
       ['/backtest', 'Model accuracy scorecard + live edge scanner'],
-      ['/buy /sell', '<ticker> <n> [price]   /cancel <order_id>'],
+      ['/orders', 'Your resting orders on the CLOB'],
+      ['/orders', 'cancel <order>       Cancel a resting order'],
+      ['/buy /sell', '<slug> <shares> [price] [outcome]'],
       ['/help', '[command]  Show help (/help <command> for details)'],
       ['/quit', 'Quit CLI session'],
     ];
     for (const [name, desc] of commandRows) {
       const bare = name.split(' ')[0]!.replace(/^\//, '');
       if (isDeferredCommand(bare)) continue;
-      // Order placement is not implemented yet — don't advertise it.
-      if (isTradingCommand(bare)) continue;
+      // Gated on the configured wallet: no key, no order commands.
+      if (!isCommandAvailable(bare)) continue;
       this.addChild(new Text(cmd(name) + desc, 0, 0));
     }
     this.addChild(new Spacer(1));

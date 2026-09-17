@@ -1,7 +1,7 @@
 // ─── Shared help content for both TUI slash commands and CLI batch mode ─────
 import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 import { THEMES } from '../scan/theme-registry.js';
-import { isTradingCommand, TRADING_UNAVAILABLE_MESSAGE } from '../tools/polymarket/polymarket-trade.js';
+import { isCommandAvailable, commandUnavailableReason } from '../tools/polymarket/polymarket-trade.js';
 
 /** Context determines prefix style: slash commands use "/", CLI uses "polymarket" */
 type HelpContext = 'slash' | 'cli';
@@ -15,7 +15,9 @@ function buildTopics(ctx: HelpContext): Record<string, string> {
   return {
     search: `**${p}search** — Discovery (Octagon-powered when OCTAGON_API_KEY is set)
 
-${p}search [theme|ticker|query]  Full-text market search (server-side when key is set, else local index)
+${p}search [theme|query]         Find EVENTS matching a theme or free text
+${p}search <event-slug>          Drill into one event: list its markets
+${p}search <theme>:<subtheme>    Narrow a theme, e.g. crypto:btc, sports:baseball
 ${p}search themes                List all available themes and subcategories
 
 Themes (a bare theme name returns that whole category):
@@ -37,18 +39,61 @@ Search flags (server-side path):
   --aggregate-by series Roll up results by series (calls series rollup)
   --active-only         Drop non-active markets (defensive; the live universe is active by default)
 
+Results are events by default — markets live inside an event, so pass an event
+slug to see them. Any market-level filter (--min-volume, --close-before,
+--sort-by, --category, --series) searches markets instead, since the event
+route does not support them.
+
 Examples:
-  ${p}search crypto
+  ${p}search crypto                  events in the Crypto category
+  ${p}search crypto:btc              narrowed to BTC
+  ${p}search fed-decision-in-september-762
   ${p}search "bitcoin price" --min-volume 10000
   ${p}search edge --min-edge 30 --category crypto
 
 Tip: ${p}similar <market-slug> walks the event → series → category tree to find related markets.`,
 
+    wallet: `**${p}wallet** — Your Polymarket wallet
+
+${p}wallet                       Show the current wallet (same as \`show\`)
+${p}wallet import <private-key>  Import your polymarket.com wallet (enables trading)
+${p}wallet import <address>      Read-only: balances and positions, no trading
+${p}wallet address               Print the funding address only
+${p}wallet show                  Addresses, wallet type, mode, key source
+
+Flags:
+  --force                           Replace an existing wallet
+
+There is no ${p}wallet create. A wallet made here would be a fresh account with
+no Polymarket history, and polymarket.com deposits only into the account it made
+for you — so the way in is to import the key for the account you already have.
+
+A Polymarket account has two addresses:
+  Signing wallet   the keypair that signs orders. Holds nothing.
+  Funding wallet   a contract it controls. Holds your pUSD. Deposit here.
+
+Orders are signed messages, not transactions — Polymarket settles them — so
+this CLI never sends anything on-chain and you never need POL for gas.
+
+Reading a balance at the signing wallet always shows zero, so ${p}wallet show
+prints both. Which contract is the funding wallet is not computable from the
+key — Polymarket is asked once, at import, and the answer is saved. An address
+you paste is taken as the FUNDING wallet, which is what your polymarket.com
+profile shows.
+
+Whatever the key controls, this CLI controls — so keep in that account only
+what you intend to trade.
+
+The key is written to ~/.polymarket-bot/wallet.json with owner-only (0600)
+permissions, never to .env. No environment variable can supply a key or an
+address — the saved wallet is the only one. To switch, import again with --force
+or re-run the setup wizard; either resolves the account and saves it as a unit.
+`,
+
     portfolio: `**${p}portfolio** — Account state
 
 ${p}portfolio                    Full overview: positions, P&L, risk snapshot
 ${p}portfolio positions          Open positions with P&L
-${p}portfolio orders             Resting orders
 ${p}portfolio balance            Account balance
 ${p}portfolio status             Exchange status${ctx === 'cli' ? ' and setup verification' : ''}
 ${ctx === 'cli' ? `
@@ -71,9 +116,9 @@ model_probability, market_probability, edge_pp, expected_return per ticker.
 Use single-ticker mode when you need the full deep-analysis pipeline
 (drivers, catalysts, Kelly sizing, risk gate).
 
-Position sizing needs a bankroll. Polymarket exposes no cash balance, so set it:
-  ${p}config risk.bankroll_usdc 1000
-Until then, analyze reports edge and catalysts but skips sizing.${ctx === 'cli' ? `
+Position sizing needs a bankroll. With a wallet configured it uses your on-chain
+pUSD balance; ${p}config risk.bankroll_usdc <amount> caps it lower. With neither,
+analyze reports edge and catalysts but skips sizing.${ctx === 'cli' ? `
 
 Legacy aliases (still work):
   ${p}edge [--ticker X]                    Edge history / snapshots (default: last 24h)
@@ -97,27 +142,67 @@ Theme mode runs recurring Octagon scans and displays an edge table.`}`,
 
     buy: `**${p}buy** — Buy shares
 
-${p}buy <market-slug> <shares> [price] [yes|no]${ctx === 'slash' ? '   Buy shares (price 0-1)' : ''}
+${p}buy <market-slug> <shares> [price] [outcome]
 
-Example${ctx === 'cli' ? 's' : ''}:
-  ${p}buy bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '          Buy at best ask (10 YES shares)' : '0.56'}
-  ${p}buy bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '0.56      Limit order at $0.56/share' : '0.56 no  Buy NO shares'}
-${ctx === 'cli' ? `  ${p}buy bitcoin-above-100k-2026 10 0.56 no  Limit order for NO shares at $0.56` : ''}
-Side defaults to YES if omitted.`,
+  shares    Number of shares. Fractional is fine.
+  price     Decimal USD in (0,1), e.g. 0.56. OMIT for a market order.
+  outcome   yes | no, or an outcome name. Defaults to Yes.
 
-    sell: `**${p}sell** — Sell shares
+Examples:
+  ${p}buy bitcoin-above-100k-2026 10            Market order, 10 Yes shares
+  ${p}buy bitcoin-above-100k-2026 10 0.56       Limit at $0.56, rests on the book
+  ${p}buy bitcoin-above-100k-2026 10 0.56 no    Limit on the No side
+  ${p}buy epl-ars-che-2026 25 Arsenal           Non-binary market, by outcome name
 
-${p}sell <market-slug> <shares> [price] [yes|no]${ctx === 'slash' ? '  Sell shares (price 0-1)' : ''}
+A market order fills now or not at all. A limit order rests until it fills,
+expires, or you cancel it — see ${p}orders.
 
-Example${ctx === 'cli' ? 's' : ''}:
-  ${p}sell bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '         Sell at best ask (10 YES shares)' : '0.72'}
-  ${p}sell bitcoin-above-100k-2026 10 ${ctx === 'cli' ? '0.72      Limit order at $0.72/share' : '0.72 no  Sell NO shares'}
-${ctx === 'cli' ? `  ${p}sell bitcoin-above-100k-2026 10 0.72 no  Limit order for NO shares at $0.72` : ''}
-Side defaults to YES if omitted.`,
+Every order shows the price and total cost and asks before it is sent. --yes
+skips that prompt for scripting, and is the only way to skip it.
 
-    cancel: `**${p}cancel** — Cancel a resting order
+The circuit breaker (daily loss limit, max drawdown) blocks orders outright;
+--force overrides it deliberately.`,
 
-${p}cancel <order_id>`,
+    sell: `**${p}sell** — Sell shares you hold
+
+${p}sell <market-slug> <shares|max> [price] [outcome]
+
+Same shape as ${p}buy. Omit the price to sell at the best bid.
+
+Examples:
+  ${p}sell bitcoin-above-100k-2026 10           Market sell, 10 Yes shares
+  ${p}sell bitcoin-above-100k-2026 max          The whole position
+  ${p}sell bitcoin-above-100k-2026 10 0.72      Limit at $0.72
+
+Use \`max\` more often than you would expect. A market buy spends a dollar
+amount rather than buying a share count, so it leaves an unround holding behind
+— $1.03 of a $0.047 outcome is 21.914894 shares, and asking to sell 22 is
+refused for a balance you do not have.
+
+The size is checked against what the venue says you hold, not against this
+CLI's own records, so positions opened elsewhere count too. If that balance
+cannot be read the order still goes through, with a warning.`,
+
+    orders: `**${p}orders** — Resting orders on the CLOB
+
+${p}orders                       Everything still working on the book
+${p}orders <order>               One order in full, including its complete id
+${p}orders cancel <order>        Cancel one
+${p}orders cancel <o> <o> <o>    Cancel several at once
+${p}orders cancel --all          Cancel every resting order
+
+An order id is 66 characters, which no table can show, so the list prints a
+short prefix. That prefix is what you pass back — to ${p}orders for the detail
+view, or to ${p}orders cancel. A prefix that matches more than one order is
+refused rather than guessed at, and ${p}orders <order> prints the full id when
+you want to copy it.
+
+A resting order is one the venue accepted but has not matched. It is not a
+position until it fills, so it will not appear in ${p}portfolio.
+
+Cancelling cannot lose money — it only removes orders from the book — so none of
+these ask for confirmation. Ids that had already filled or expired are reported
+rather than counted as cancelled.`,
 
     backtest: `**${p}backtest** — Model accuracy scorecard & edge scanner
 
@@ -244,35 +329,40 @@ analysis_last_updated when available — so you can decide whether to --refresh.
 Error paths (missing ticker, event not found, no report body yet) print just
 the error message instead.`,
 
-    trust: `**${p}trust** — Trader Trust scorecard (market-integrity metrics)
+    trust: `**${p}trust** — Octagon Trust Index for an event
 
-${p}trust <event-slug>                       Table across all markets in the event
+${p}trust <event-slug>                       Trust Index (overall score + profile)
+${p}trust <event-slug> --verbose             …plus per-contract market quality
 ${p}trust <event-slug> --market <market-slug>     Single-market detail card
 ${p}trust <event-slug> --market <market-slug> --verbose
-                                            Include raw evidence + confidence/freshness
+                                            Include raw evidence + confidence
 
-Six per-market scores (each 0-100), produced by Octagon's deterministic
-Trader Trust calculation:
+The Trust Index (0-100, higher = better) combines two axes:
 
-  trader_trust       Overall composite                      (higher = better)
-  liquidity_quality  Depth/spread/fill behavior             (higher = better)
-  move_quality       Price-move plausibility                (higher = better)
-  resolution_risk    Resolution clarity (higher = clearer)  (higher = better)
-  market_avoid       Avoidance signal                       (higher = WORSE)
-  quote_risk         Quote-side risk                        (higher = WORSE)
+  Integrity      Market integrity, info fairness, resolution quality
+  Trade quality  Cost to trade, including whether a $1,000 order can fill
+
+It is a weighted blend with hard caps: a critically weak safety pillar, or a
+severe trading anomaly, caps the total regardless of the rest. The trust
+profile breaks out the three integrity pillars and the event's liquidity,
+move quality and rule clarity.
+
+The --market detail card shows four per-market scores (each 0-100, higher =
+better): market_quality (composite), liquidity, move_quality and
+resolution_clarity.
 
 Flags:
   --market <slug>     Drill into one market in the event
-  --verbose           Show evidence (raw metrics), confidence, data freshness
+  --verbose           Add per-contract market quality to the Trust Index; with
+                      --market, show evidence (raw metrics) and confidence
   --json              JSON envelope output
 
 Notes:
   - When trader_trust_json is null (older reports), prints "no trust scorecard for
     this event yet" — not an error.
-  - Higher-is-better vs. higher-is-worse semantics differ per score; tables and
-    detail views color and annotate accordingly.
-  - "(as of report time)" is shown for scores whose data_freshness is
-    point_in_time (e.g. quote_risk, liquidity_quality on snapshot reports).`,
+  - A score can be unscored (not applicable, or insufficient data); it renders
+    as "—", never as 0.
+  - Detail cards show fair value and bid/ask in cents.`,
 
     events: `**${p}events** — Octagon event rollups (event ↔ outcome ladder)
 
@@ -348,7 +438,7 @@ Legacy: ${p}search themes still lists category labels (the pre-registry view).`,
  * to hand-maintain a second copy of the command list.
  */
 function stripGatedLines(text: string): string {
-  const gated = (name: string) => isDeferredCommand(name) || isTradingCommand(name);
+  const gated = (name: string) => isDeferredCommand(name) || !isCommandAvailable(name);
 
   const kept = text.split('\n').filter((line) => {
     const m = line.match(/^\s{2}\/?([a-z-]+)/);
@@ -426,7 +516,7 @@ Analysis & Trading:
   analyze <market-slug> --refresh  Force fresh Octagon report
   buy <market-slug> <shares> [price] [yes|no]   Buy shares (price 0-1)
   sell <market-slug> <shares> [price] [yes|no]  Sell shares
-  cancel <order_id>                   Cancel a resting order
+  orders cancel <order>               Cancel a resting order
 
 Analysis:
   backtest                      Model accuracy scorecard + live edge scanner
@@ -434,9 +524,14 @@ Analysis:
   backtest --unresolved         Live edge scanner only
 
 Account:
+  wallet                        Create, import, or inspect your wallet
+  buy <slug> <shares> [price]   Buy shares (omit price for a market order)
+  sell <slug> <shares> [price]  Sell shares you hold
+  orders                        Your resting orders on the CLOB
+  orders <order>                One order in full
+  orders cancel <order>         Cancel a resting order (--all for every one)
   portfolio                     Overview: positions, P&L, risk snapshot
   portfolio positions           Open positions
-  portfolio orders              Resting orders
   portfolio balance             Account balance
 
 System:
@@ -509,12 +604,17 @@ Analysis:
   /buy <ticker> <n> [price] [yes|no]   Buy contracts (price 0-1)
   /sell <ticker> <n> [price] [yes|no]  Sell contracts
   /review                              Review positions for close signals
-  /cancel <order_id>                   Cancel a resting order
+  /orders cancel <order>               Cancel a resting order
 
 Account:
+  /wallet                        Create, import, or inspect your wallet
+  /buy <slug> <shares> [price]   Buy shares (omit price for a market order)
+  /sell <slug> <shares> [price]  Sell shares you hold
+  /orders                        Your resting orders on the CLOB
+  /orders <order>                One order in full
+  /orders cancel <order>         Cancel a resting order (--all for every one)
   /portfolio                     Overview: positions, P&L, risk snapshot
   /portfolio positions           Open positions
-  /portfolio orders              Resting orders
   /portfolio balance             Account balance
 
 System:
@@ -542,9 +642,10 @@ export function buildHelp(ctx: HelpContext, topic?: string): { text: string } | 
   if (topic && isDeferredCommand(topic) && !octagonSupports(COMMAND_FEATURE[topic]!)) {
     return { text: octagonUnavailableMessage(COMMAND_FEATURE[topic]!, topic) };
   }
-  if (topic && isTradingCommand(topic)) {
+  const unavailable = topic ? commandUnavailableReason(topic) : null;
+  if (topic && unavailable) {
     const body = topics[topic];
-    return { text: body ? `${TRADING_UNAVAILABLE_MESSAGE}\n\nReference (for when it lands):\n\n${body}` : TRADING_UNAVAILABLE_MESSAGE };
+    return { text: body ? `${unavailable}\n\nReference:\n\n${body}` : unavailable };
   }
 
   if (topic && topics[topic]) {
@@ -558,28 +659,53 @@ export function buildHelp(ctx: HelpContext, topic?: string): { text: string } | 
   return { text: stripGatedLines(buildOverview(ctx)) };
 }
 
-/** Shared trade argument validation for both dispatch and slash handlers. */
+/**
+ * Shared trade argument validation for both dispatch and slash handlers.
+ *
+ * Both arguments are Polymarket-shaped, which differs from Kalshi on each:
+ *
+ *  - **Size is fractional.** Outcome tokens divide, and Kelly sizing already
+ *    rounds to 2dp (`src/risk/kelly.ts`), so an integer-only check would reject
+ *    the size the CLI itself just recommended.
+ *  - **Price is a decimal in (0, 1)**, not integer cents — 0.56 means $0.56 per
+ *    share, or a 56% implied probability. The bounds are exclusive because 0 and
+ *    1 are the resolved outcomes, not tradeable prices.
+ *
+ * Tick-size and venue-minimum checks are deliberately not here: both are
+ * per-market (`PolymarketMarket.tick_size` / `min_order_size`) and belong to the
+ * order path, which can name the actual limit.
+ */
+/** The price half of `validateTradeArgs`, for sizes that are not a number. */
+export function validatePriceOnly(
+  priceStr?: string,
+): { price: number | undefined } | { error: string } {
+  if (priceStr === undefined) return { price: undefined };
+  const parsed = Number(priceStr);
+  if (!/^\d*\.?\d+$/.test(priceStr) || !Number.isFinite(parsed) || parsed <= 0 || parsed >= 1) {
+    return { error: `Invalid price: ${priceStr}. Price is decimal USDC between 0 and 1, e.g. 0.56 for 56c.` };
+  }
+  return { price: parsed };
+}
+
 export function validateTradeArgs(
   countStr: string,
   priceStr?: string,
 ): { count: number; price: number | undefined } | { error: string } {
-  if (!/^\d+$/.test(countStr)) {
-    return { error: `Invalid count: ${countStr}` };
-  }
   const count = Number(countStr);
-  if (count <= 0) {
-    return { error: `Invalid count: ${countStr}` };
+  // Reject '', whitespace, '1e3' and 'Infinity' — Number() accepts all of them.
+  if (!/^\d*\.?\d+$/.test(countStr) || !Number.isFinite(count) || count <= 0) {
+    return { error: `Invalid size: ${countStr}. Size must be a positive number of shares, e.g. 25 or 12.5.` };
   }
 
   let price: number | undefined;
   if (priceStr !== undefined) {
-    if (!/^\d+$/.test(priceStr)) {
-      return { error: `Invalid price: ${priceStr}. Price must be 1-99 (cents).` };
+    const parsed = Number(priceStr);
+    if (!/^\d*\.?\d+$/.test(priceStr) || !Number.isFinite(parsed) || parsed <= 0 || parsed >= 1) {
+      return {
+        error: `Invalid price: ${priceStr}. Price is decimal USDC between 0 and 1, e.g. 0.56 for 56c.`,
+      };
     }
-    price = Number(priceStr);
-    if (price < 1 || price > 99) {
-      return { error: `Invalid price: ${priceStr}. Price must be 1-99 (cents).` };
-    }
+    price = parsed;
   }
 
   return { count, price };

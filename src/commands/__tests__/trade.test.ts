@@ -1,0 +1,348 @@
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import type { Database } from 'bun:sqlite';
+import { createDb } from '../../db/index.js';
+import { getOpenPositions, openPosition, reducePosition } from '../../db/positions.js';
+import { getRecentTrades } from '../../db/trades.js';
+import { insertRiskSnapshot } from '../../db/risk.js';
+import { parseArgs } from '../parse-args.js';
+import * as identity from '../../wallet/identity.js';
+import * as orders from '../../clob/orders.js';
+import * as analyze from '../analyze.js';
+import * as dbModule from '../../db/index.js';
+import type { PolymarketMarket } from '../../tools/polymarket/types.js';
+
+/**
+ * The guards in front of an order, and what gets written after one fills.
+ */
+
+const PROXY = '0x2c335066FE58fe9237c3d3Dc7b275C2a034a0563';
+const SIGNER = '0xF2B909e5E2cBc2CFF2d07E02c9b1bAFd0B3A86a2';
+const spies: Array<{ mockRestore: () => void }> = [];
+let db: Database;
+
+beforeEach(() => {
+  db = createDb(':memory:');
+  spies.push(spyOn(dbModule, 'getDb').mockImplementation(() => db));
+});
+
+afterEach(() => {
+  for (const s of spies.splice(0)) s.mockRestore();
+});
+
+function market(over: Partial<PolymarketMarket> = {}): PolymarketMarket {
+  return {
+    ticker: 'will-btc-hit-100k',
+    condition_id: `0x${'a'.repeat(64)}`,
+    event_ticker: 'btc-2026',
+    token_ids: ['tok-yes', 'tok-no'],
+    outcomes: ['Yes', 'No'],
+    title: 'BTC',
+    status: 'active',
+    yes_bid: 0.4, yes_ask: 0.42, no_bid: 0.58, no_ask: 0.6,
+    volume_24h: 10_000, tick_size: 0.01, min_order_size: 1, neg_risk: false,
+    ...over,
+  } as PolymarketMarket;
+}
+
+function setup(opts: {
+  tier?: identity.WalletTier;
+  filled?: number;
+  orderId?: string;
+  /** Shares the venue says the wallet holds. null = balance unreadable. */
+  held?: number | null;
+} = {}) {
+  const tier = opts.tier ?? 'trade';
+  const built = {
+    signed: {} as never,
+    orderType: 'GTC' as never,
+    tokenId: 'tok-yes',
+    outcomeLabel: 'Yes',
+    side: 'BUY' as never,
+    shares: 50,
+    price: 0.42,
+    notionalUsd: 21,
+    isMarketOrder: false,
+  };
+  const postSpy = spyOn(orders, 'postOrder').mockImplementation(async () => ({
+    orderId: opts.orderId ?? '0xorder',
+    status: 'matched',
+    filledShares: opts.filled ?? 50,
+    raw: {},
+  }));
+  spies.push(
+    spyOn(identity, 'loadWalletIdentity').mockImplementation(() => ({
+      tier, address: PROXY, ...(tier === 'trade' ? { signer: SIGNER } : {}), source: 'file' as const,
+    })),
+    spyOn(analyze, 'resolveMarket').mockImplementation(async () => market()),
+    spyOn(orders, 'buildOrder').mockImplementation(async () => built as never),
+    spyOn(orders, 'readSellableShares').mockImplementation(
+      async () => (opts.held === undefined ? 1000 : opts.held),
+    ),
+    postSpy,
+  );
+  return postSpy;
+}
+
+async function run(argv: string[]) {
+  const { handleTrade } = await import('../trade.js');
+  return handleTrade(argv[0] as 'buy' | 'sell', parseArgs(argv));
+}
+
+describe('trade — guards before an order', () => {
+  test('a watch-only wallet cannot place', async () => {
+    const post = setup({ tier: 'watch' });
+    const resp = await run(['buy', 'slug', '50', '0.42', '--yes']);
+
+    expect(resp.ok).toBe(false);
+    expect(resp.error?.code).toBe('NO_KEY');
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  test('an active circuit breaker is a hard stop', async () => {
+    // This is the limit the user set to stop themselves after a bad run;
+    // walking past it by default would defeat the only mechanism here designed
+    // to override its operator.
+    const post = setup();
+    insertRiskSnapshot(db, { timestamp: Math.floor(Date.now() / 1000), daily_pnl: -5000, equity: 100 });
+    const resp = await run(['buy', 'slug', '50', '0.42', '--yes']);
+
+    expect(resp.ok).toBe(false);
+    expect(resp.error?.code).toBe('CIRCUIT_BREAKER');
+    expect(resp.error?.message).toContain('--force');
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  test('--force overrides the breaker but records that it was overridden', async () => {
+    const post = setup();
+    insertRiskSnapshot(db, { timestamp: Math.floor(Date.now() / 1000), daily_pnl: -5000, equity: 100 });
+    const resp = await run(['buy', 'slug', '50', '0.42', '--yes', '--force']);
+
+    expect(resp.ok).toBe(true);
+    expect(resp.data.warnings.join(' ')).toContain('Circuit breaker overridden');
+    expect(post).toHaveBeenCalled();
+  });
+
+  test('nothing is placed in a non-TTY without --yes', async () => {
+    const post = setup();
+    const wasTty = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+    try {
+      const resp = await run(['buy', 'slug', '50', '0.42']);
+      expect(resp.ok).toBe(false);
+      expect(resp.error?.code).toBe('CANCELLED');
+      expect(post).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process.stdin, 'isTTY', { value: wasTty, configurable: true });
+    }
+  });
+
+  test('a bad share count is rejected before any network call', async () => {
+    const post = setup();
+    const resp = await run(['buy', 'slug', '-5', '--yes']);
+    expect(resp.ok).toBe(false);
+    expect(resp.error?.code).toBe('INVALID_ARG');
+    expect(post).not.toHaveBeenCalled();
+  });
+});
+
+describe('trade — argument shape', () => {
+  test('price and outcome are recognised by shape, in either order', async () => {
+    const buildSpy = spyOn(orders, 'buildOrder');
+    setup();
+    await run(['buy', 'slug', '50', '0.42', 'no', '--yes']);
+    expect(buildSpy.mock.calls[0]![0]).toMatchObject({ outcome: 'no', limitPrice: 0.42 });
+
+    buildSpy.mockClear();
+    await run(['buy', 'slug', '50', 'no', '--yes']);
+    // No price token: a market order on the No side, not a limit at NaN.
+    expect(buildSpy.mock.calls[0]![0]).toMatchObject({ outcome: 'no' });
+    expect(buildSpy.mock.calls[0]![0].limitPrice).toBeUndefined();
+  });
+});
+
+describe('trade — what gets written', () => {
+  test('a filled buy opens a position and logs the trade', async () => {
+    setup({ filled: 50 });
+    const resp = await run(['buy', 'slug', '50', '0.42', '--yes']);
+    expect(resp.ok).toBe(true);
+
+    const positions = getOpenPositions(db);
+    expect(positions).toHaveLength(1);
+    expect(positions[0]).toMatchObject({ ticker: 'will-btc-hit-100k', direction: 'Yes', size: 50 });
+    expect(getRecentTrades(db, 10)).toHaveLength(1);
+  });
+
+  test('a resting limit order is not a position', async () => {
+    // Writing an unfilled order as a position would inflate the concentration
+    // and correlation checks with exposure that does not exist.
+    setup({ filled: 0 });
+    const resp = await run(['buy', 'slug', '50', '0.20', '--yes']);
+
+    expect(resp.ok).toBe(true);
+    expect(resp.data.filledShares).toBe(0);
+    expect(getOpenPositions(db)).toHaveLength(0);
+  });
+
+  test('only the matched portion is recorded', async () => {
+    setup({ filled: 20 });
+    await run(['buy', 'slug', '50', '0.42', '--yes']);
+    expect(getOpenPositions(db)[0]!.size).toBe(20);
+  });
+
+  test('a sell reduces the holding rather than closing it outright', async () => {
+    setup({ filled: 30 });
+    openPosition(db, {
+      position_id: 'p1', ticker: 'will-btc-hit-100k', event_ticker: 'btc-2026',
+      direction: 'Yes', size: 50, entry_price: 0.4, opened_at: 1, status: 'open',
+    });
+
+    await run(['sell', 'slug', '30', '0.45', '--yes']);
+    const open = getOpenPositions(db);
+    expect(open).toHaveLength(1);
+    expect(open[0]!.size).toBe(20);
+  });
+
+  test('selling the whole holding closes it', async () => {
+    setup({ filled: 50 });
+    openPosition(db, {
+      position_id: 'p1', ticker: 'will-btc-hit-100k', event_ticker: 'btc-2026',
+      direction: 'Yes', size: 50, entry_price: 0.4, opened_at: 1, status: 'open',
+    });
+
+    await run(['sell', 'slug', '50', '0.45', '--yes']);
+    expect(getOpenPositions(db)).toHaveLength(0);
+  });
+});
+
+describe('trade — selling what you actually hold', () => {
+  test('selling more than the venue says you hold is refused, in shares', async () => {
+    // A market buy spends dollars, so it leaves 21.914894 shares behind, and
+    // the venue refuses "22" with "balance: 21914894, order amount: 22000000".
+    // That is not a number anyone can act on.
+    const post = setup({ held: 21.914894 });
+    const resp = await run(['sell', 'slug', '22', '--yes']);
+
+    expect(resp.ok).toBe(false);
+    expect(resp.error?.code).toBe('INSUFFICIENT_SHARES');
+    expect(resp.error?.message).toContain('21.914894');
+    expect(resp.error?.message).toContain('max');
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  test('`sell <slug> max` sells the exact holding', async () => {
+    const buildSpy = spyOn(orders, 'buildOrder');
+    setup({ held: 21.914894, filled: 21.914894 });
+    await run(['sell', 'slug', 'max', '--yes']);
+
+    expect(buildSpy.mock.calls[0]![0]).toMatchObject({ shares: 21.914894 });
+  });
+
+  test('selling exactly what is held is allowed', async () => {
+    const post = setup({ held: 21.914894, filled: 21.914894 });
+    const resp = await run(['sell', 'slug', '21.914894', '--yes']);
+
+    expect(resp.ok).toBe(true);
+    expect(post).toHaveBeenCalled();
+  });
+
+  test('an unreadable balance warns rather than blocking', async () => {
+    // The venue is the authority, but losing the read must not lose the order:
+    // a wallet that holds nothing and a CLOB that cannot be reached are not the
+    // same thing.
+    const post = setup({ held: null, filled: 50 });
+    const resp = await run(['sell', 'slug', '50', '--yes']);
+
+    expect(resp.ok).toBe(true);
+    expect(resp.data.warnings.join(' ')).toContain('Could not read your on-chain balance');
+    expect(post).toHaveBeenCalled();
+  });
+
+  test('`max` with no readable balance refuses rather than guessing', async () => {
+    const post = setup({ held: null });
+    const resp = await run(['sell', 'slug', 'max', '--yes']);
+
+    expect(resp.ok).toBe(false);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  test('`max` is not a size for a buy', async () => {
+    // There is no holding to derive it from, so it stays an invalid size.
+    const post = setup();
+    const resp = await run(['buy', 'slug', 'max', '--yes']);
+
+    expect(resp.ok).toBe(false);
+    expect(resp.error?.code).toBe('INVALID_ARG');
+    expect(post).not.toHaveBeenCalled();
+  });
+});
+
+describe('trade — the TUI path never prompts on stdin', () => {
+  // The TUI holds the terminal in raw mode with the kitty keyboard protocol
+  // enabled. A readline prompt is a second reader on the same stream: it echoes
+  // key-release escapes as literal text ("y3u") and, on close, resets modes the
+  // TUI set, corrupting input for the rest of the session. So `/buy` must hand
+  // the question back to the TUI rather than ask it here.
+  test('/buy returns a signed order awaiting confirmation, and submits nothing', async () => {
+    const post = setup();
+    const { handleSlashCommand } = await import('../index.js');
+    const result = await handleSlashCommand('/buy slug 50 0.42');
+
+    expect(result?.pendingTrade).toBeDefined();
+    expect(result?.pendingTrade?.action).toBe('buy');
+    expect(result?.output).toContain('Buy');
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  test('confirming submits the order that was already prepared', async () => {
+    const post = setup({ filled: 50 });
+    const { handleSlashCommand, executePendingTrade } = await import('../index.js');
+    const result = await handleSlashCommand('/buy slug 50 0.42');
+
+    const text = await executePendingTrade(result!.pendingTrade!);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(text).toContain('Bought');
+  });
+
+  test('--yes submits straight away, with nothing left pending', async () => {
+    const post = setup({ filled: 50 });
+    const { handleSlashCommand } = await import('../index.js');
+    const result = await handleSlashCommand('/buy slug 50 0.42 --yes');
+
+    expect(result?.pendingTrade).toBeUndefined();
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  test('a refused order reports the reason instead of going pending', async () => {
+    const post = setup({ tier: 'watch' });
+    const { handleSlashCommand } = await import('../index.js');
+    const result = await handleSlashCommand('/buy slug 50 0.42');
+
+    expect(result?.pendingTrade).toBeUndefined();
+    expect(result?.output).toContain('watch-only');
+    expect(post).not.toHaveBeenCalled();
+  });
+});
+
+describe('reducePosition', () => {
+  beforeEach(() => {
+    openPosition(db, {
+      position_id: 'p1', ticker: 't', event_ticker: 'e',
+      direction: 'Yes', size: 10, entry_price: 0.5, opened_at: 1, status: 'open',
+    });
+  });
+
+  test('a partial reduction keeps the position open', () => {
+    reducePosition(db, 'p1', 4, 2);
+    expect(getOpenPositions(db)[0]!.size).toBe(6);
+  });
+
+  test('floating-point dust still closes the position', () => {
+    // 10 - 9.9999999 is not 0, but it is not a position either.
+    reducePosition(db, 'p1', 9.9999999, 2);
+    expect(getOpenPositions(db)).toHaveLength(0);
+  });
+
+  test('reducing an unknown position is a no-op, not a crash', () => {
+    expect(() => reducePosition(db, 'nope', 1, 2)).not.toThrow();
+  });
+});

@@ -53,6 +53,10 @@ export interface TradeExecutedEvent extends AuditBase {
   order_id: string;
   fill_price: number;
   size: number;
+  /** buy or sell. Without it the log cannot tell an entry from an exit. */
+  action?: string;
+  /** Outcome traded — "Yes", "Team A". Not every market is binary. */
+  outcome?: string;
 }
 
 export interface AlertSentEvent extends AuditBase {

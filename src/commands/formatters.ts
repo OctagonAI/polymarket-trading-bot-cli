@@ -109,7 +109,7 @@ export function formatBalance(data: PolymarketBalanceResponse): string {
   lines.push(`Position Value:  ${fmtUsd(data.portfolio_value)}`);
   if (data.address) lines.push(`Wallet:          ${data.address}`);
   lines.push('');
-  lines.push('Free USDC balance is held on-chain and is not reported here.');
+  lines.push('Free collateral (pUSD) is held on-chain and is not reported here.');
   return lines.join('\n');
 }
 

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import type { Database } from 'bun:sqlite';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -9,6 +9,10 @@ import { AuditTrail } from '../../audit/trail.js';
 import { ScanLoop } from '../loop.js';
 import { upsertTheme } from '../../db/themes.js';
 import { getLatestSnapshot } from '../../db/risk.js';
+import { RiskSnapshotError } from '../../risk/circuit-breaker.js';
+import * as erc20 from '../../chain/erc20.js';
+import * as walletStore from '../../wallet/store.js';
+import { resetWalletIdentityCache } from '../../wallet/identity.js';
 import type { OctagonVariant } from '../types.js';
 
 function makeAudit(): { audit: AuditTrail; path: string } {
@@ -37,6 +41,7 @@ describe('ScanLoop', () => {
   let auditPath: string;
   let loop: ScanLoop;
   let originalFetch: typeof globalThis.fetch;
+  const spies: Array<{ mockRestore: () => void }> = [];
 
   beforeEach(() => {
     db = createDb(':memory:');
@@ -44,9 +49,18 @@ describe('ScanLoop', () => {
     audit = a.audit;
     auditPath = a.path;
 
-    // Set, but deliberately inert: getWalletAddress ignores it until the wallet
-    // phase. Kept here so this test fails loudly if that ever silently changes.
-    process.env.POLYMARKET_WALLET_ADDRESS = '0x' + '1'.repeat(40);
+    // A watch-tier wallet. The snapshot refusal below is gated on there being
+    // an account to protect, and a saved wallet is the only way to have one.
+    // Stubbing the store also keeps this off whatever wallet the machine
+    // running the tests happens to have.
+    spies.push(
+      spyOn(walletStore, 'readWalletFile').mockImplementation(() => ({
+        version: 1 as const,
+        address: '0x18eD5C15CeD1bFdf88e701601C4a0BbD4F5142dE',
+        createdAt: 0,
+      })),
+    );
+    resetWalletIdentityCache();
 
     // Seed theme with one event ticker
     upsertTheme(db, { theme_id: 'test-theme', name: 'Test', tickers: '["EV-1"]' });
@@ -83,6 +97,13 @@ describe('ScanLoop', () => {
         }]);
       }
 
+      // Polygon RPC — the pUSD balance. Without this the read fails, equity is
+      // unknown, and a snapshot is refused outright rather than recorded as an
+      // account worth nothing. 1000 pUSD in base units.
+      if (urlStr.includes('drpc.org') || urlStr.includes('polygon')) {
+        return json({ jsonrpc: '2.0', id: 1, result: `0x${(1_000_000_000).toString(16).padStart(64, '0')}` });
+      }
+
       // Data API portfolio value + positions (USDC)
       if (urlStr.includes('data-api.polymarket.com/value')) {
         return json([{ user: '0x1', value: 1000 }]);
@@ -98,9 +119,10 @@ describe('ScanLoop', () => {
   });
 
   afterEach(() => {
+    for (const sp of spies.splice(0)) sp.mockRestore();
     globalThis.fetch = originalFetch;
     loop.stop();
-    delete process.env.POLYMARKET_WALLET_ADDRESS;
+    resetWalletIdentityCache();
   });
 
   test('runs one full scan cycle', async () => {
@@ -120,33 +142,55 @@ describe('ScanLoop', () => {
     expect(rows[0].ticker).toBe('MKT-YES');
   });
 
-  test('risk_snapshots record no account data while the wallet path is disabled', async () => {
+  test('a scan pass records a snapshot with account fields present', async () => {
     await loop.runOnce({ theme: 'test-theme' });
 
     const snapshot = getLatestSnapshot(db);
     expect(snapshot).not.toBeNull();
-    // The wallet is off until the trading phase, so the Data API is never read
-    // even though POLYMARKET_WALLET_ADDRESS is set above. Both of these are
-    // wallet-derived, so both stay 0.
-    expect(snapshot!.portfolio_value).toBe(0);
-    expect(snapshot!.open_exposure).toBe(0);
-    // cash_balance is deliberately NOT asserted: it comes from the
-    // risk.bankroll_usdc setting, not the wallet, and is legitimately non-zero
-    // for anyone who has configured one. Asserting 0 only passed because the
-    // default is 0, and made this test fail on a developer machine with a
-    // bankroll set — reading the real ~/.polymarket-bot/config.json.
+    // With a wallet address set, the Data API and the RPC are both read on every
+    // pass and their mocked values land in the snapshot — previously these
+    // columns were always 0 because the wallet path was switched off entirely.
+    expect(snapshot!.portfolio_value).not.toBeNull();
+    expect(snapshot!.open_exposure).not.toBeNull();
+    // Both legs mocked, so equity is real. A pass that could not read the
+    // balance would record nothing at all — see the refusal test below.
+    expect(snapshot!.wallet_cash).toBe(1000);
+    expect(snapshot!.equity).not.toBeNull();
+    // cash_balance is deliberately NOT asserted: it falls back to the
+    // risk.bankroll_usdc setting, which is legitimately non-zero on a developer
+    // machine that has one configured.
   });
 
   test('drawdown stays 0 so the risk gate cannot trip on a phantom loss', async () => {
-    // portfolio_value is mark-to-market position value with no cash term, so if
-    // the wallet were live, closing positions would read as a ~100% drawdown and
-    // fail every later analyze. With the wallet off the high-water mark stays 0
-    // and the drawdown branch is never taken. Guards the regression directly.
+    // Drawdown is measured on equity, so closing a position is not a loss: the
+    // value moves from one term to the other and equity is unchanged. A single
+    // pass against a steady balance must therefore show no drawdown at all.
     await loop.runOnce({ theme: 'test-theme' });
 
     const snapshot = getLatestSnapshot(db);
     expect(snapshot!.drawdown_current).toBe(0);
     expect(snapshot!.drawdown_max).toBe(0);
+  });
+
+  test('a pass that cannot read the balance records nothing and says so', async () => {
+    // A gated RPC is the case this guards: writing a row with drawdown 0 would
+    // report safety the next time `check()` ran. The pass fails instead, and it
+    // alerts on the way out — an unattended scanner that stops silently is the
+    // failure nobody reports.
+    const emitted: string[] = [];
+    const alerter = (loop as unknown as { alerter: { emit(a: { message: string }): Promise<void> } }).alerter;
+    const realEmit = alerter.emit.bind(alerter);
+    alerter.emit = async (a) => {
+      emitted.push(a.message);
+      await realEmit(a);
+    };
+    spies.push(
+      spyOn(erc20, 'readPusdBalance').mockImplementation(async () => null),
+    );
+
+    await expect(loop.runOnce({ theme: 'test-theme' })).rejects.toThrow(RiskSnapshotError);
+    expect(getLatestSnapshot(db)).toBeNull();
+    expect(emitted.join(' ')).toContain('scanning has stopped');
   });
 
   test('audit trail has SCAN_START and SCAN_COMPLETE', async () => {

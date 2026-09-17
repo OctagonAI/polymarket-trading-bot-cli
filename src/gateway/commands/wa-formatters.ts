@@ -66,8 +66,8 @@ export function formatPortfolioForWhatsApp(data: PortfolioData): string {
   const acct = data.accountSummary;
   if (acct) {
     lines.push(`Cash: $${acct.cashBalance.toFixed(2)}`);
-    lines.push(`Portfolio: $${acct.portfolioValue.toFixed(2)}`);
-    lines.push(`Exposure: $${acct.openExposure.toFixed(2)}`);
+    lines.push(`Portfolio: ${acct.portfolioValue === null ? 'unknown' : `$${acct.portfolioValue.toFixed(2)}`}`);
+    lines.push(`Exposure: ${acct.openExposure === null ? 'unknown' : `$${acct.openExposure.toFixed(2)}`}`);
     lines.push(`Available: $${acct.available.toFixed(2)}`);
   } else {
     lines.push(`Account data unavailable`);

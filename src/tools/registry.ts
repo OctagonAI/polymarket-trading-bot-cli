@@ -6,6 +6,8 @@ import { tavilySearch, WEB_SEARCH_DESCRIPTION } from './search/index.js';
 import { webFetchTool, WEB_FETCH_DESCRIPTION } from './fetch/web-fetch.js';
 import { edgeQueryTool, EDGE_QUERY_DESCRIPTION } from './v2/edge-query.js';
 import { portfolioQueryTool, PORTFOLIO_QUERY_DESCRIPTION } from './v2/portfolio-query.js';
+import { portfolioOverviewTool, getWalletAddress } from './polymarket/portfolio.js';
+import { portfolioReviewTool, PORTFOLIO_REVIEW_DESCRIPTION } from './v2/portfolio-review.js';
 import { riskStatusTool, RISK_STATUS_DESCRIPTION } from './v2/risk-status.js';
 import { octagonReportTool, OCTAGON_REPORT_DESCRIPTION } from './v2/octagon-report.js';
 import { scanTool, SCAN_DESCRIPTION } from './v2/scan.js';
@@ -23,23 +25,23 @@ export interface RegisteredTool {
 }
 
 /*
- * portfolio_overview is NOT registered while the wallet path is disabled.
+ * portfolio_overview is registered only when a wallet address is configured.
  *
  * fetchPortfolioValue and fetchPositions both default their wallet argument to
- * requireWalletAddress(), which throws unconditionally until the wallet phase.
- * Registering the tool would hand the agent a capability that can only raise,
- * and an unset wallet is the normal state — so the agent would surface a raw
- * exception rather than an explanation. Unlike polymarket_trade, which is kept
- * registered so trade intent gets a clear refusal, there is no research value in
- * the agent attempting a portfolio read it cannot perform: `portfolio` is hidden
- * from users too, so the agent should not believe the capability exists.
+ * requireWalletAddress(), which throws with no wallet — and having no wallet is
+ * a perfectly normal state for a research session. Registering unconditionally
+ * would hand the agent a capability that can only raise, and it has no way to
+ * tell that apart from a real outage. Registering conditionally means the tool
+ * simply is not there, which the agent handles correctly by construction.
  *
- * portfolio_review is unregistered for the same reason: reviewPortfolio calls
- * fetchPositions, so it throws on the same missing wallet.
+ * This differs from polymarket_trade, which stays registered precisely so trade
+ * intent gets an explanatory refusal rather than being silently routed into a
+ * read-only tool. The difference is that a refusal carries information there,
+ * and here it would not.
  *
- * Re-register both alongside the wallet work; their descriptions are unchanged.
+ * portfolio_review is registered on the same condition. It reviews open
+ * positions for exit signals, and those are now written when an order fills.
  */
-
 const PORTFOLIO_OVERVIEW_DESCRIPTION = `
 Quick portfolio overview tool. Returns total portfolio value and all open positions in a single call.
 
@@ -96,6 +98,20 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       tool: portfolioQueryTool,
       description: PORTFOLIO_QUERY_DESCRIPTION,
     },
+    ...(getWalletAddress()
+      ? [
+          {
+            name: 'portfolio_overview',
+            tool: portfolioOverviewTool,
+            description: PORTFOLIO_OVERVIEW_DESCRIPTION,
+          },
+          {
+            name: 'portfolio_review',
+            tool: portfolioReviewTool,
+            description: PORTFOLIO_REVIEW_DESCRIPTION,
+          },
+        ]
+      : []),
     {
       name: 'risk_status',
       tool: riskStatusTool,

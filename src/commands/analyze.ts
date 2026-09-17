@@ -10,7 +10,6 @@ import * as readline from 'node:readline';
 import { lookupMarket, normalizePolymarketInput } from '../tools/polymarket/markets.js';
 import { fetchEventBySlug, searchEvents } from '../tools/polymarket/events.js';
 import { fetchPositions } from '../tools/polymarket/portfolio.js';
-import { TRADING_UNAVAILABLE_MESSAGE } from '../tools/polymarket/polymarket-trade.js';
 import type { PolymarketMarket } from '../tools/polymarket/types.js';
 import { openPosition, closePosition, getOpenPositions } from '../db/positions.js';
 import { logTrade } from '../db/trades.js';
@@ -87,7 +86,7 @@ export interface AnalyzeData {
   reportId: string;
   rawReport: string;
   existingPosition?: { direction: 'yes' | 'no'; size: number } | null;
-  closePriceCents?: number | null;
+  closePrice?: number | null;
 }
 
 
@@ -442,8 +441,13 @@ export async function handleAnalyze(
     reportId: report.reportId,
     rawReport: report.rawResponse,
     existingPosition,
-    closePriceCents: existingPosition
-      ? Math.round((existingPosition.direction === 'yes' ? yesBid : noBid) * 100) || null
+    // Decimal USDC, the price a close would actually hit — the bid on the side
+    // held. Kept unrounded; the venue tick applies at order time.
+    closePrice: existingPosition
+      ? (() => {
+          const bid = existingPosition.direction === 'yes' ? yesBid : noBid;
+          return Number.isFinite(bid) && bid > 0 ? bid : null;
+        })()
       : null,
   };
 }
@@ -538,6 +542,9 @@ export function formatAnalyzeHuman(data: AnalyzeData): string {
     }
     if (data.kelly.skippedReason) {
       lines.push(`    ⚠ ${data.kelly.skippedReason}`);
+    }
+    if (data.kelly.sizingCaveat) {
+      lines.push(`    ⚠ ${data.kelly.sizingCaveat}`);
     }
   }
   lines.push('');
@@ -647,9 +654,27 @@ export async function promptAnalyzeActions(data: AnalyzeData): Promise<void> {
       }
 
       case '3': {
-        // Order placement is deferred until wallet signing lands; the analysis
-        // above is still fully usable, so only this action is blocked.
-        console.log(`  ${TRADING_UNAVAILABLE_MESSAGE}`);
+        // The sizing above already picked a side and a share count, so this
+        // hands them to the trade command rather than asking again. That
+        // command runs its own confirmation with the cost on screen.
+        const shares = data.kelly.shares;
+        if (shares <= 0) {
+          console.log(
+            `  No size to trade: ${data.kelly.skippedReason ?? 'sizing produced zero shares'}`,
+          );
+          break;
+        }
+        const { handleTrade, formatTradeHuman } = await import('./trade.js');
+        const { parseArgs } = await import('./parse-args.js');
+        const args = parseArgs([
+          'buy',
+          data.ticker,
+          String(shares),
+          String(data.kelly.entryPrice.toFixed(2)),
+          data.kelly.side,
+        ]);
+        const resp = await handleTrade('buy', args);
+        console.log(resp.ok ? formatTradeHuman(resp.data) : `  ${resp.error?.message ?? 'buy failed'}`);
         break;
       }
       case '4':

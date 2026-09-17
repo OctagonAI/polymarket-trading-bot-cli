@@ -2,15 +2,15 @@
 
 AI-powered Polymarket research CLI that finds edge across prediction markets.
 
-> **⏳ Read-only for now.** Market data, search, analysis and watch run natively
-> against Polymarket (Gamma / CLOB / Data APIs) and need no credentials. Octagon
-> powers the research commands — `search`, `search edge`, `similar`, `events`,
-> `trust`, `report`.
+> **Research works with no credentials.** Market data, search, analysis and watch
+> run natively against Polymarket (Gamma / CLOB / Data APIs). Octagon powers the
+> research commands — `search`, `search edge`, `similar`, `events`, `trust`,
+> `report`.
 >
-> **Order placement is not implemented yet** — `buy`, `sell` and `cancel` return a clear
-> error. Polymarket orders need EIP-712 wallet signing and on-chain USDC/CTF allowances.
-> `portfolio` is gated with them: every view it offers reads an account, and the wallet
-> that requires is part of the same trading setup. Run `status` to check your setup.
+> **Trading needs a wallet.** Create an account on [polymarket.com](https://polymarket.com),
+> fund it there, then `polymarket wallet import <private-key>`. Accounts made on
+> the site arrive already approved for trading. Then `buy`, `sell`, `orders`,
+> `cancel` and `portfolio` all work. Run `status` to check your setup.
 
 Runs deep fundamental research on every market — independent probability estimates, ranked price drivers, catalyst calendars — then computes edge as the spread between model price and the live order book. Signals are sized using half-Kelly and filtered through a 5-gate risk engine before a dollar is risked.
 
@@ -111,12 +111,25 @@ Type help for commands, or just ask a question.
 
 > trust fed-decision-in-september-762
 
-  Trader Trust scorecard — Fed Decision in September?
-  Event quality  72/100  Healthy  ·  5/5 markets scored
+  Trust Index — fed-decision-in-september-762 · Fed Decision in September?
 
-  Market                    Quality  Liquidity  Move  Resol.  Fair  Spread
-  no-change                     78         81    64      95   53¢      1¢
-  25-bps-decrease               74         77     —      95   44¢      1¢
+  ██████████████████░░░░░░░░░░░░   59  ● Caution
+
+  HOW IT ADDS UP
+  Integrity       80% of score   54  ● Caution
+  Trade quality   20% of score   76  ● Good
+  ──────────────────────────────────────────────
+  = Trust score                  59  ● Caution
+
+  TRUST PROFILE
+  Integrity   4 screens run · 3 don't apply · 3 awaiting data
+    Market integrity     74  ● Good
+    Info fairness        30  ● High Risk
+    Resolution quality   60  ● Caution
+  Trade quality
+    Liquidity            75  ● Tradeable
+    Move quality         70  ● Stable
+    Rule clarity         95  ● Clear
 ```
 
 <sub>`buy` and `portfolio` appear in the command table below but are not enabled yet — see the port status note at the top.</sub>
@@ -125,26 +138,28 @@ Type help for commands, or just ask a question.
 
 | Command | Description |
 |---------|-------------|
-| `search [theme\|ticker\|query]` | Find markets by keyword or theme (Octagon-backed when key set) |
+| `search [theme\|query]` | Find **events** by theme or keyword (Octagon-backed when key set). `search <event-slug>` drills into that event's markets; `search crypto:btc` narrows a theme |
 | `search edge [--min-edge N]` | Scan all markets by model edge (Octagon `markets-with-edge`) |
 | `similar <market-slug\|"query">` | Related markets: same event → series → category, or keyword query |
 | `events` / `events <event-slug>` | Octagon events list + outcome ladder per event |
 | `catalysts upcoming --days N` | Markets closing in the next N days, grouped by week |
-| `trust <event-slug>` | Trader Trust scorecard — per-market integrity scores (table view) |
+| `trust <event-slug>` | Octagon Trust Index — overall score, how Integrity and Trade quality add up, and the trust profile. `--verbose` adds per-contract market quality |
 | `trust <event-slug> --market <market-slug>` | Single-market Trader Trust detail card (use `--verbose` for evidence) |
 | `report <event-slug>` | Full Octagon markdown report for an event (accepts event slug, market slug, or URL). `--refresh` forces a fresh pull. |
 | `themes` (registry) | Editorial narrative buckets — list/show/import/create/delete/add-series |
 | `themes report` | 25-theme dashboard with SEO + liquidity |
 | `themes audit` | Flag dead themes (high SEO + zero volume) |
 | `themes overlap` | Cross-theme dedupe report |
+| `wallet [show\|create\|import]` | Create, import, or inspect your Polymarket wallet |
 | `analyze <ticker>` | Deep analysis: edge, drivers, Kelly sizing |
 | `watch <ticker>` | Live price and orderbook feed |
 | `watch --theme <theme>` | Continuous theme scan |
-| `buy <ticker> <count> [price] [yes\|no]` | Buy contracts — **⏳ trading not implemented yet** |
-| `sell <ticker> <count> [price] [yes\|no]` | Sell contracts — **⏳ trading not implemented yet** |
-| `cancel <order_id>` | Cancel a resting order — **⏳ trading not implemented yet** |
+| `buy <slug> <shares> [price] [outcome]` | Buy shares — omit price for a market order |
+| `sell <slug> <shares\|max> [price] [outcome]` | Sell shares you hold — `max` sells the whole position |
+| `orders [<order>]` | Your resting orders on the CLOB — needs a wallet with a key. With an id, or a short prefix of one, the full detail for a single order |
+| `orders cancel <order>` | Cancel a resting order, or `--all` for every one |
 | `backtest` | Model accuracy scorecard + live edge scanner |
-| `portfolio` | Positions, P&L, risk snapshot — **⏳ ships with trading support** |
+| `portfolio` | Cash, positions, P&L, risk snapshot — needs a wallet |
 | `setup` | Re-run setup wizard (inside TUI) |
 | `init` | Launch setup wizard from CLI (`polymarket init`) |
 | `clear-cache` | Delete local cache and rebuild (`polymarket clear-cache`) |
@@ -180,6 +195,9 @@ Type help for commands, or just ask a question.
 | `--aggregate-by series` | Roll up search results to the series level |
 | `--active-only` | Drop non-active markets (defensive flag — open universe by default) |
 | `--series-prefix <prefix>` | Server-side series prefix match (e.g. `bitcoin` matches `bitcoin-above-…`) |
+| `--force` | Replace an existing wallet (`wallet import`); override the circuit breaker (`buy`, `sell`) |
+| `--yes` | Skip the confirmation prompt (`buy`, `sell`) |
+| `--all` | Cancel every resting order (`orders cancel`) |
 
 ### Discovery & Portfolio (Octagon-powered)
 
@@ -285,10 +303,6 @@ UNRESOLVED (105 markets)
   ...
 ```
 
-### Staging
-
-Set `POLYMARKET_USE_STAGING=true` in your `.env` to point the Gamma, CLOB and Data clients at Polymarket's staging hosts. Those hostnames are documented but do not currently resolve, so treat this as unverified. Individual services can also be overridden with `POLYMARKET_GAMMA_URL`, `POLYMARKET_CLOB_URL` and `POLYMARKET_DATA_URL`.
-
 ## Scripting & Parallel Use
 
 The `bunx polymarket-trading-bot-cli@latest …` form is great for one-off interactive use, but it has two gotchas when you script against it:
@@ -372,7 +386,6 @@ ANALYSIS=$(polymarket analyze bitcoin-above-95k-by-april-30 --json)
 EDGE=$(echo "$ANALYSIS" | jq '.data.edge')
 
 # 3. Trade if edge is high enough
-#    (buy is not implemented yet — this is the shape it will take)
 if (( $(echo "$EDGE > 0.05" | bc -l) )); then
   polymarket buy bitcoin-above-95k-by-april-30 3 0.58 --json
 fi
@@ -384,11 +397,9 @@ The `watch --theme` command outputs NDJSON (one JSON object per scan cycle), sui
 
 ### Environment Variables
 
-The setup wizard (run automatically on first launch, or invoke with `polymarket init`) handles this interactively. To edit by hand:
+The setup wizard (run automatically on first launch, or invoke with `polymarket init`) writes `~/.polymarket-bot/.env` for you. Edit that file directly to change anything below.
 
-```bash
-cp env.example ~/.polymarket-bot/.env
-```
+> **There is no testnet.** Polymarket runs a single environment, so every order this tool places is real money. Nothing here is a paper-trading mode.
 
 **Required:**
 
@@ -403,13 +414,14 @@ Polymarket market data is public, so there is no exchange key to set — reads w
 
 | Variable | Description |
 |----------|-------------|
-| `POLYMARKET_USE_STAGING` | `true` to target Polymarket's staging hosts (unverified) |
-| `POLYMARKET_GAMMA_URL` / `POLYMARKET_CLOB_URL` / `POLYMARKET_DATA_URL` | Override an individual service base URL |
+| `DEFAULT_MODEL` | Override the default LLM (default `gpt-5.4`) |
+| `POLYMARKET_GAMMA_URL` / `POLYMARKET_CLOB_URL` / `POLYMARKET_DATA_URL` | Override an individual service base URL, for a local proxy or mock |
 | `ANTHROPIC_API_KEY` | Anthropic (Claude) |
 | `GOOGLE_API_KEY` | Google (Gemini) |
 | `XAI_API_KEY` | xAI (Grok) |
 | `OPENROUTER_API_KEY` | OpenRouter (multi-model) |
 | `TAVILY_API_KEY` | Tavily web search for event research |
+| `POLYMARKET_RPC_URL` | Polygon RPC (default `https://polygon.drpc.org`) |
 
 > **Note:** The bot defaults to GPT-5.4. If using a different provider, switch the model via the `config` command — otherwise queries will fail without `OPENAI_API_KEY`.
 
@@ -417,22 +429,89 @@ Polymarket market data is public, so there is no exchange key to set — reads w
 
 Each Octagon report costs 3 credits. Reports are cached with tiered TTLs based on market close proximity — markets closing soon get shorter cache windows. Use `--refresh` to force a fresh report. Set a daily credit ceiling with `config octagon.daily_credit_ceiling <n>`.
 
+### Wallet
+
+Research and market data need no wallet. Reading your balance, positions and P&L
+needs one, and placing trades needs its private key.
+
+**Start on polymarket.com.** Create your account there and fund it, then bring
+that key here. There is no `wallet create`: a wallet generated by this CLI would
+be a fresh account with no Polymarket history, and the site deposits only into
+the account it made for you.
+
+```bash
+polymarket wallet import <private-key>  # your polymarket.com key — enables trading
+polymarket wallet import <address>      # read-only: balances and positions
+polymarket wallet show                  # addresses, wallet type, mode, key source
+```
+
+A Polymarket account has **two** addresses, and confusing them is the classic
+way to see a zero balance on a funded account:
+
+| | |
+|---|---|
+| **Signing wallet** | The keypair. Signs orders. Holds nothing, pays nothing. |
+| **Funding wallet** | A contract it controls. Holds your pUSD. **Deposit here.** |
+
+`wallet show` prints both. Which contract is the funding wallet depends on when
+your account was made — recent ones get a *deposit wallet*, older ones a *proxy*
+or a *Safe* — and it is not computable from the key alone. So `wallet import`
+asks Polymarket once and records the answer; `wallet show` reports which kind
+you have. An address you paste is taken as the *funding* wallet, which is what
+your polymarket.com profile shows and what the Data API calls `proxyWallet`.
+
+**Whatever the key controls, this CLI controls.** The private key is stored on
+this machine, so keep in that account only what you intend to trade.
+
+The key is written to `~/.polymarket-bot/wallet.json` with owner-only (`0600`)
+permissions — never to `.env`, which this CLI writes world-readable and which
+is easy to commit by accident. There is no environment override for the key or
+for the address: switching wallets is `polymarket wallet import <private-key>
+--force`, or the setup wizard. To watch an account without a key on the machine,
+import the address instead: `polymarket wallet import <address>`.
+
+#### Trading approvals
+
+Trading needs on-chain permissions for the exchange contracts to move your pUSD
+and your outcome tokens. **Polymarket grants them during onboarding** — a live
+account was verified with all seven in place, having never traded and without
+this CLI ever touching it — so there is nothing to do here and no command for
+it. If one were ever missing, the venue rejects the order and says so, and
+placing a single trade on polymarket.com prompts for it.
+
+This CLI signs no on-chain transactions at all: orders are EIP-712 messages that
+Polymarket settles, so you never need POL for gas.
+
 ### Bankroll
 
-Position sizing needs to know how much capital to size against, and Polymarket
-has no cash-balance endpoint — free USDC is an on-chain ERC-20 balance, not
-something the market-data APIs report. So the amount is a setting rather than
-something the CLI can discover:
+With a wallet configured, position sizing uses your on-chain **pUSD** balance
+automatically — nothing to set.
+
+`risk.bankroll_usdc` is an optional **cap** on top of that, for when the wallet
+holds more than you want this bot to trade:
 
 ```bash
 polymarket config risk.bankroll_usdc 1000
 ```
 
-The setup wizard asks for this. Until it is set, `analyze` still reports edge,
-probabilities and catalysts, but skips position sizing with *"No bankroll
-configured"* — it will not size against a number it does not have. This is not a
-deposit or a transfer; it is only the figure Kelly sizing and the risk gate
-work from, and you can change it at any time.
+The two combine as `min(wallet balance, cap − open exposure)`. Open exposure is
+subtracted from the cap but **not** from the wallet balance, because positions
+are held as outcome tokens rather than as reserved cash — the balance is already
+net of them.
+
+| Wallet | `risk.bankroll_usdc` | Sizing uses |
+|---|---|---|
+| yes | unset | the wallet balance |
+| yes | set | the lower of the two |
+| no | set | the cap, less open exposure |
+| no | unset | nothing — `analyze` reports edge but skips sizing |
+
+Without either, `analyze` still reports edge, probabilities and catalysts, but
+skips sizing with *"No bankroll available"* rather than sizing against a number
+it does not have.
+
+If the balance cannot be read — an unreachable RPC, say — that is reported as
+*unknown*, never as zero. A failed read must not look like an empty account.
 
 ### Runtime Settings
 

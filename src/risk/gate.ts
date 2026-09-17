@@ -65,7 +65,11 @@ export function riskGate(params: RiskGateParams): RiskGateResult {
         : `Kelly produced 0 shares for ${ticker}`)
       : !kellyWithinLimit
         ? `Notional $${kelly.notionalUsdc.toFixed(2)} exceeds ${maxPositionPct * 100}% of bankroll $${kelly.availableBankroll.toFixed(2)}`
-        : `${kelly.shares} ${kelly.side.toUpperCase()} shares, $${kelly.notionalUsdc.toFixed(2)} within limits`,
+        // A size computed from incomplete inputs still passes, but the gate is
+        // where someone looks to decide whether to trust it.
+        : `${kelly.shares} ${kelly.side.toUpperCase()} shares, $${kelly.notionalUsdc.toFixed(2)} within limits${
+            kelly.sizingCaveat ? ` — ${kelly.sizingCaveat}` : ''
+          }`,
   });
 
   // 2. Liquidity check — spread and volume (using dollar-aware spread)

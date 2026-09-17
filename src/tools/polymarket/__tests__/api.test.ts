@@ -1,3 +1,4 @@
+import { resetPortfolioCaches } from '../portfolio.js';
 import { describe, test, expect, afterEach } from 'bun:test';
 import { callPolymarketApi, PolymarketApiError } from '../api.js';
 
@@ -57,6 +58,7 @@ describe('PolymarketApiError', () => {
 describe('fetchPositions pagination', () => {
   test('pages until a short page and preserves an explicit limit as one page', async () => {
     const { fetchPositions } = await import('../portfolio.js');
+    resetPortfolioCaches(); // the 15s read cache would otherwise serve a prior case's pages
     const wallet = '0x' + '1'.repeat(40);
 
     const seen: string[] = [];
@@ -89,6 +91,7 @@ describe('fetchPositions pagination', () => {
     // with a full final page, returns 2,000, and must warn rather than let the
     // caller treat a partial list as complete.
     const { fetchPositions } = await import('../portfolio.js');
+    resetPortfolioCaches(); // the 15s read cache would otherwise serve a prior case's pages
     const { logger } = await import('../../../utils/logger.js');
     const wallet = '0x' + '1'.repeat(40);
 
@@ -125,6 +128,7 @@ describe('fetchPositions pagination', () => {
     // the acceptable false positive of the "full final page" heuristic — assert
     // the current behaviour so a change to it is deliberate.
     const { fetchPositions } = await import('../portfolio.js');
+    resetPortfolioCaches(); // the 15s read cache would otherwise serve a prior case's pages
     const { logger } = await import('../../../utils/logger.js');
     const wallet = '0x' + '1'.repeat(40);
 

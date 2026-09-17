@@ -11,12 +11,21 @@ export interface CLIResponse<T> {
     octagon_cache_hits?: number;
     octagon_fresh_reports?: number;
     octagon_credits_used?: number;
+    /**
+     * Non-fatal problems encountered while building `data`.
+     *
+     * Previously written by `handlePortfolio` but absent from this type — it
+     * only typechecked because object spread skips excess-property checks — and
+     * never rendered in human output, so a failed positions query or an
+     * unreachable Data API showed up as a healthy, empty account.
+     */
+    warnings?: string[];
     bankroll?: {
       cash_balance: number;
-      portfolio_value: number;
-      open_exposure: number;
+      portfolio_value: number | null;
+      open_exposure: number | null;
       available: number;
-      positions_count: number;
+      positions_count: number | null;
     };
   };
   error?: { code: string; message: string };

@@ -1,5 +1,5 @@
 import { fetchExchangeStatus } from '../tools/polymarket/exchange.js';
-import { TRADING_UNAVAILABLE_MESSAGE } from '../tools/polymarket/polymarket-trade.js';
+import { TRADING_UNAVAILABLE_MESSAGE, commandUnavailableReason } from '../tools/polymarket/polymarket-trade.js';
 import { formatExchangeStatus } from './formatters.js';
 import { handleThemes, formatThemesHuman } from './themes.js';
 import type { ParsedArgs, Subcommand } from './parse-args.js';
@@ -12,6 +12,9 @@ function defaultArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
     unresolved: false,
     behavioral: false, ranked: false, showCluster: false,
     activeOnly: false, cells: false, autoProbs: false,
+    force: false,
+    yes: false,
+    all: false,
     parseErrors: [],
     ...overrides,
   };
@@ -27,6 +30,10 @@ import { handleClusters, formatClustersHuman } from './clusters.js';
 import { handlePeers, formatPeersHuman } from './peers.js';
 import { handleCorrelate, formatCorrelationHuman } from './correlate.js';
 import { handleBasket, formatBasketHuman } from './basket.js';
+import { handleWallet, formatWalletHuman } from './wallet.js';
+import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
+import { handleOrders, handleCancelOrders, formatOrdersHuman, formatCancelHuman } from './orders.js';
+import { prepareTrade, submitTrade, formatTradeHuman, type PreparedTrade } from './trade.js';
 import { handleEvents, formatEventsHuman } from './events.js';
 import { handleTrust, formatTrustHuman } from './trust.js';
 import { handleReport, formatReportHuman } from './report.js';
@@ -36,13 +43,17 @@ import { handleCatalysts, formatCatalystsHuman } from './catalysts.js';
 
 export interface CommandResult {
   output: string;
-  /** If set, show this as a pending trade requiring approval */
+  /**
+   * A signed, unsent order awaiting the user's yes.
+   *
+   * The TUI cannot prompt on stdin — it holds the terminal in raw mode, and a
+   * second reader corrupts the input stream — so the order is prepared here,
+   * previewed, and submitted from the TUI's own input loop.
+   */
   pendingTrade?: {
-    ticker: string;
+    prepared: PreparedTrade;
     action: 'buy' | 'sell';
-    side: 'yes' | 'no';
-    count: number;
-    price: number | undefined;
+    outcome: string;
   };
   /** If set, run this async function after showing `output` and append the result */
   asyncFollowUp?: () => Promise<string>;
@@ -59,6 +70,13 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
   // distinguish e.g. "basket build" vs "basket backtest", or thematic vs
   // behavioral clusters. Outer command name is always tracked.
   const slashMeta: Record<string, string | boolean> = { command: command ?? '' };
+  if (command === 'wallet') {
+    const sub = args[0]?.toLowerCase();
+    // Sub-verb only. An address or key must never reach telemetry.
+    if (sub === 'create' || sub === 'import' || sub === 'address' || sub === 'show' || sub === 'approve') {
+      slashMeta.subview = sub;
+    }
+  }
   if (command === 'basket') {
     const sub = args[0]?.toLowerCase();
     if (sub === 'build' || sub === 'backtest' || sub === 'size' || sub === 'candles') {
@@ -104,17 +122,12 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
       return handlePortfolioSlash('balance');
     case 'positions':
       return handlePortfolioSlash('positions');
-    case 'orders':
-      return handlePortfolioSlash('orders');
 
     // ─── Trading ─────────────────────────────────────────────────────
     case 'buy':
       return handleTradeCommand('buy', args);
     case 'sell':
       return handleTradeCommand('sell', args);
-    case 'cancel':
-      return handleCancel(args[0]);
-
     // ─── /themes (editorial registry) ────────────────────────────────
     // The bare /themes call now hits the editorial-themes registry. Legacy
     // "Kalshi category labels" is still reachable via /search themes.
@@ -224,6 +237,38 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
         },
       };
     }
+    case 'orders': {
+      // `cancel` is a verb on the orders resource, not a command of its own.
+      if (args[0]?.toLowerCase() === 'cancel') {
+        const parsed = parseArgs(['orders', ...args.slice(1)]);
+        return {
+          output: 'Cancelling...',
+          asyncFollowUp: async () => {
+            const resp = await handleCancelOrders(parsed);
+            return resp.ok ? formatCancelHuman(resp.data) : (resp.error?.message ?? 'cancel failed');
+          },
+        };
+      }
+      const parsed = parseArgs(['orders', ...args]);
+      return {
+        output: 'Loading orders...',
+        asyncFollowUp: async () => {
+          const resp = await handleOrders(parsed);
+          return resp.ok ? formatOrdersHuman(resp.data) : (resp.error?.message ?? 'orders failed');
+        },
+      };
+    }
+    case 'wallet': {
+      const parsed = parseArgs(['wallet', ...args]);
+      const sub = parsed.positionalArgs[0] ?? 'show';
+      return {
+        output: `Running wallet ${sub}...`,
+        asyncFollowUp: async () => {
+          const resp = await handleWallet(parsed);
+          return resp.ok ? formatWalletHuman(resp.data) : (resp.error?.message ?? 'wallet failed');
+        },
+      };
+    }
     case 'basket': {
       const parsed = parseArgs(['basket', ...args]);
       const sub = parsed.positionalArgs[0] ?? '';
@@ -302,22 +347,34 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
   }
 }
 
-export async function executePendingTrade(_trade: NonNullable<CommandResult['pendingTrade']>): Promise<string> {
-  return TRADING_UNAVAILABLE_MESSAGE;
+export async function executePendingTrade(trade: NonNullable<CommandResult['pendingTrade']>): Promise<string> {
+  // The order was signed when it was prepared; the user has now said yes, so
+  // this is the submit half and nothing is re-parsed or re-priced.
+  const resp = await submitTrade(trade.prepared);
+  return resp.ok ? formatTradeHuman(resp.data) : (resp.error?.message ?? `${trade.action} failed`);
 }
 
 // ─── Portfolio subview handler ──────────────────────────────────────────────
 
 /**
- * `/status` is the only account-adjacent view still available: it checks setup
- * and CLOB reachability, neither of which needs a wallet. Positions, balance and
- * resting orders all read an account, and configuring that wallet is part of the
- * trading setup that does not exist yet.
+ * `/status` checks setup and CLOB reachability and needs no wallet, so it is
+ * always available. Every other subview reads an account and therefore needs at
+ * least an address — reporting an empty portfolio for someone with no wallet
+ * would look exactly like a real, empty account.
  */
 async function handlePortfolioSlash(subview?: string): Promise<CommandResult> {
   const view = subview?.toLowerCase() ?? 'overview';
   if (view !== 'status') {
-    return { output: TRADING_UNAVAILABLE_MESSAGE };
+    const unavailable = commandUnavailableReason('portfolio');
+    if (unavailable) return { output: unavailable };
+    const parsed = parseArgs(['portfolio', ...(subview ? [subview] : [])]);
+    return {
+      output: 'Loading portfolio...',
+      asyncFollowUp: async () => {
+        const resp = await handlePortfolio(parsed);
+        return resp.ok ? formatPortfolioHuman(resp.data, resp.meta?.warnings ?? []) : (resp.error?.message ?? 'portfolio failed');
+      },
+    };
   }
   try {
     const data = await fetchExchangeStatus();
@@ -350,32 +407,33 @@ function parseSide(val: string | undefined): 'yes' | 'no' | null {
   return null;
 }
 
-function handleTradeCommand(action: 'buy' | 'sell', args: string[]): CommandResult {
-  const [ticker, countStr, ...rest] = args;
-
-  if (!ticker || !countStr) {
-    return { output: `Usage: /${action} <ticker> <count> [price_in_cents] [yes|no]` };
+/**
+ * Argument shape lives in `prepareTrade`, so the TUI and the CLI cannot drift
+ * apart on what `/buy 10 0.42 no` means.
+ *
+ * `--yes` submits without asking, matching the CLI. Otherwise this returns the
+ * preview and a signed order, and the TUI collects the answer itself.
+ */
+async function handleTradeCommand(action: 'buy' | 'sell', args: string[]): Promise<CommandResult> {
+  const parsed = parseArgs([action, ...args]);
+  const result = await prepareTrade(action, parsed);
+  if (!result.ok) {
+    return { output: result.response.error?.message ?? `${action} failed` };
   }
 
-  // Extract side and price from remaining args: [price] [side], [side], or nothing
-  let side: 'yes' | 'no' = 'yes';
-  let priceArg: string | undefined;
-
-  if (rest.length >= 2) {
-    // e.g. /buy TICKER 10 50 no
-    priceArg = rest[0];
-    side = parseSide(rest[1]) ?? 'yes';
-  } else if (rest.length === 1) {
-    // Could be price or side: /buy TICKER 10 50  OR  /buy TICKER 10 no
-    const asSide = parseSide(rest[0]);
-    if (asSide) {
-      side = asSide;
-    } else {
-      priceArg = rest[0];
-    }
+  if (parsed.yes) {
+    const resp = await submitTrade(result.prepared);
+    return { output: resp.ok ? formatTradeHuman(resp.data) : (resp.error?.message ?? `${action} failed`) };
   }
 
-  return { output: TRADING_UNAVAILABLE_MESSAGE };
+  return {
+    output: result.prepared.preview,
+    pendingTrade: {
+      prepared: result.prepared,
+      action,
+      outcome: result.prepared.built.outcomeLabel,
+    },
+  };
 }
 
 /** Reads open positions, so it needs the wallet trading setup provides. */
@@ -383,6 +441,4 @@ async function handleReviewCommand(): Promise<CommandResult> {
   return { output: TRADING_UNAVAILABLE_MESSAGE };
 }
 
-async function handleCancel(_orderId: string | undefined): Promise<CommandResult> {
-  return { output: TRADING_UNAVAILABLE_MESSAGE };
-}
+

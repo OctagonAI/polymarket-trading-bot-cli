@@ -2,10 +2,10 @@
 
 AI-powered prediction market terminal for [Polymarket](https://polymarket.com). Ask natural language questions and research markets from your terminal.
 
-> **⏳ Read-only for now.** Order placement is not implemented: `/buy`, `/sell` and
-> `/cancel` return an explanation rather than trading, and `/portfolio` is gated with
-> them because every view it offers needs a wallet that arrives with trading support.
-> Market data and research need no credentials. Commands marked ⏳ below are unavailable.
+> **Trading is live.** `/buy`, `/sell`, `/orders` and `/orders cancel` place and manage
+> real orders once a wallet is imported. `/portfolio` is gated with
+> them because every view it offers needs a configured wallet.
+> Market data and research need no credentials at all.
 
 ---
 
@@ -29,7 +29,7 @@ bunx polymarket-trading-bot-cli@latest
 
 That's it — no clone required. The setup wizard runs automatically on first launch and writes your API keys to `~/.polymarket-bot/.env`.
 
-The wizard also asks for a **bankroll** — how much USDC position sizing should assume you have. Polymarket has no cash-balance endpoint (free USDC is an on-chain ERC-20 balance, not something the market-data APIs report), so this figure cannot be discovered and has to be set:
+The wizard also asks about a **bankroll**. With a wallet configured you can leave it empty: sizing reads your on-chain **pUSD** balance. Set a figure only to cap risk below that balance. Without a wallet there is nothing to read, so the figure is the only thing sizing has:
 
 ```bash
 polymarket config risk.bankroll_usdc 1000
@@ -59,12 +59,16 @@ bun start        # or `bun run dev` for hot-reload
 
 ### Environment Variables
 
-Polymarket market data is public — there is no exchange key or private key to set.
+Polymarket market data is public — no credentials are needed to research. Reading
+your own balance and positions needs a wallet address; trading needs its private
+key. The only way to supply either is `polymarket wallet import`, which writes
+`~/.polymarket-bot/wallet.json` with owner-only permissions — pass a private key
+to trade, or a bare address to watch an account with no key on the machine.
+Neither can be set from the environment.
 
 | Variable | Required | Description |
 |---|---|---|
-| `POLYMARKET_USE_STAGING` | No | Point reads at Polymarket's staging hosts (unverified) |
-| `POLYMARKET_GAMMA_URL` / `POLYMARKET_CLOB_URL` / `POLYMARKET_DATA_URL` | No | Override an individual service base URL |
+| `POLYMARKET_GAMMA_URL` / `POLYMARKET_CLOB_URL` / `POLYMARKET_DATA_URL` | No | Override an individual service base URL, for a local proxy or mock |
 | `OPENAI_API_KEY` | One of these | OpenAI API key |
 | `ANTHROPIC_API_KEY` | One of these | Anthropic API key |
 | `GOOGLE_API_KEY` | One of these | Google AI API key |
@@ -72,6 +76,7 @@ Polymarket market data is public — there is no exchange key or private key to 
 | `OPENROUTER_API_KEY` | One of these | OpenRouter API key |
 | `OLLAMA_BASE_URL` | No | Ollama endpoint (default `http://127.0.0.1:11434`) |
 | `TAVILY_API_KEY` | No | Enables web search tool for background research |
+| `POLYMARKET_RPC_URL` | No | Polygon RPC (default `https://polygon.drpc.org`) |
 | `LANGSMITH_API_KEY` | No | LangSmith tracing for debugging |
 
 
@@ -94,16 +99,17 @@ Type `/model` to pick your LLM provider and model. Your choice persists across s
 
 Quick commands that bypass the AI agent and call the exchange or Octagon API directly.
 
-⏳ marks a command that is not available yet: it is hidden from `/help` and
-autocomplete, and running it explains why.
-
 | Command | Description | Example |
 |---|---|---|
 | `/help` | Show all available commands | `/help` |
 | `/status` | Setup check: connectivity, API keys | `/status` |
-| `/balance` ⏳ | Account balance — **needs trading support** | `/balance` |
-| `/positions` ⏳ | Open positions with P&L — **needs trading support** | `/positions` |
-| `/orders` ⏳ | Resting (open) orders — **needs trading support** | `/orders` |
+| `/wallet` | Show your wallet: addresses, wallet type, mode | `/wallet` |
+| `/wallet import <key\|address>` | Import your polymarket.com wallet (key = trading, address = read-only) | `/wallet import 0x…` |
+| `/balance` | Free pUSD in your funding wallet | `/balance` |
+| `/positions` | Open positions with P&L | `/positions` |
+| `/orders` | Resting (open) orders | `/orders` |
+| `/orders <id>` | One resting order in full, by id or short prefix | `/orders 0xb726a9d0` |
+| `/orders cancel <id>` | Cancel a resting order (`--all` for every one) | `/orders cancel 0xb726a9d0` |
 | `/markets [series]` | Browse markets, optionally filter by series slug | `/markets bitcoin` |
 | `/market <market-slug>` | Market detail + top-of-book orderbook | `/market bitcoin-above-95k-by-april-30` |
 | `/search <query>` | Full-text market search (Octagon when key set) | `/search "bitcoin price" --min-volume 10000` |
@@ -115,16 +121,15 @@ autocomplete, and running it explains why.
 | `/themes report` | 25-theme dashboard with SEO + liquidity | `/themes report` |
 | `/themes audit` | Flag dead themes (high SEO + zero volume) | `/themes audit` |
 | `/themes overlap` | Cross-theme dedupe report | `/themes overlap` |
-| `/buy <market-slug> <shares> [price]` ⏳ | Buy YES shares (price 0-1) — **not implemented** | `/buy bitcoin-above-95k-by-april-30 5 0.56` |
-| `/sell <market-slug> <shares> [price]` ⏳ | Sell YES shares — **not implemented** | `/sell bitcoin-above-95k-by-april-30 5 0.60` |
-| `/cancel <order_id>` ⏳ | Cancel a resting order — **not implemented** | `/cancel abc-123-def` |
+| `/buy <market-slug> <shares> [price]` | Buy shares (price 0-1; omit for a market order) | `/buy bitcoin-above-95k-by-april-30 5 0.56` |
+| `/sell <market-slug> <shares\|max> [price]` | Sell shares you hold (`max` = the whole position) | `/sell bitcoin-above-95k-by-april-30 max` |
 
 **Trading is not available yet.** These commands return an explanation instead of
 placing an order; Polymarket orders need EIP-712 wallet signing and on-chain
 USDC/CTF allowances. When they land, `/buy` and `/sell` will show a confirmation
 prompt before executing.
 
-**Price format:** Prices are decimal USDC in [0, 1]. `0.56` = $0.56 per share = 56% implied probability.
+**Price format:** Prices are decimal USDC in [0, 1]. `0.56` = $0.56 per share = 56% implied probability. Omit the price on `/buy` or `/sell` for a market order.
 
 ---
 
@@ -340,8 +345,8 @@ The primary research tool. Takes your natural language query and automatically r
 
 Routes natural language trade instructions to the appropriate trading action. **Always requires user approval** before executing.
 
-> **⏳ Not implemented yet.** Order placement is deferred; this tool currently returns an
-> explanatory error. Polymarket orders need EIP-712 wallet signing and on-chain allowances.
+> **Note.** The agent never places an order itself. This tool explains what to run,
+> so that spending money stays an explicit act by the user.
 
 **Sub-tools:**
 
@@ -353,12 +358,12 @@ Routes natural language trade instructions to the appropriate trading action. **
 | `cancel_orders` | Batch cancel | `order_ids[]` |
 | `place_batch_orders` | Place multiple orders at once | `orders[]` (array of order specs) |
 
-### portfolio_overview ⏳
+### portfolio_overview
 
 Quick composite tool that fetches balance + all positions in a single call.
-**Not registered yet** — it reads positions through a wallet, which arrives with
-trading support, so the agent is not offered it. `portfolio_review` is
-unregistered for the same reason.
+Registered only when a wallet is configured — with no wallet there is no account
+to read, so the agent is not offered it. `portfolio_review` is registered on the
+same condition.
 
 ### exchange_status
 
@@ -408,7 +413,7 @@ share, which implies a **56% probability** of that outcome. YES + NO prices sum 
 
 ## Tips
 
-- **Staging**: Set `POLYMARKET_USE_STAGING=true` to point reads at Polymarket's staging hosts (currently unverified — the documented hostnames do not resolve)
+- **No testnet**: Polymarket runs one environment. There is no demo, sandbox or paper-trading mode — every order is real money
 - **Multi-step research**: The search router automatically drills down — ask "what's the implied probability of X" and it will find the event, then fetch contract-level prices
 - **Be specific**: "BTC markets closing this week" works better than "crypto"
 - **Trade safely**: when trading lands, all orders will require explicit confirmation — the agent shows the order details and asks for approval

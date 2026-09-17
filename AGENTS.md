@@ -45,6 +45,12 @@ A CLI + TUI for AI-assisted prediction market research and trading on **Polymark
 When a command's flags or signature change, update **all** of: `src/commands/parse-args.ts`, `src/commands/help.ts`,
 `src/commands/index.ts`, `src/commands/dispatch.ts`, `src/cli.ts` (autocomplete `slashCommands`),
 `src/components/intro.ts`, `README.md`, `src/__tests__/e2e.test.ts`, `src/gateway/commands/handler.ts`.
+
+Adding a **non-optional** `ParsedArgs` field additionally breaks every copy of the defaults list.
+There are seven, not the two named above — `rg -l 'parseErrors: \[\],' src` finds them all, and
+`bun run typecheck` names any that were missed. A new wizard step also touches `src/setup/wizard.ts`,
+where the `Step N/M` titles are hard-coded in three parallel switches.
+
 This is the single largest source of drift in the repo — see `CLAUDE.md`.
 
 ## LLM Providers
@@ -68,7 +74,7 @@ agent policy in `src/agent/prompts.ts` must not name them: an unregistered tool 
 ## Environment Variables
 
 - Exchange: none — Gamma / CLOB / Data reads are public. Order placement will use a Polygon wallet signature, not an API key.
-- Endpoints: `POLYMARKET_USE_STAGING`, `POLYMARKET_GAMMA_URL`, `POLYMARKET_CLOB_URL`, `POLYMARKET_DATA_URL`
+- Endpoints: `POLYMARKET_GAMMA_URL`, `POLYMARKET_CLOB_URL`, `POLYMARKET_DATA_URL` (no staging/testnet exists)
 - Research: `OCTAGON_API_KEY`, `OCTAGON_BASE_URL`, `OCTAGON_CONCURRENCY`
 - LLM: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_BASE_URL`, `DEFAULT_MODEL`
 - Other: `TAVILY_API_KEY`, `TELEMETRY_ENABLED`

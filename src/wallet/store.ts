@@ -1,0 +1,183 @@
+/**
+ * Persistence for the Polymarket wallet.
+ *
+ * The private key lives here and NOT in the shared `.env`, for two reasons that
+ * are both about blast radius:
+ *
+ *  - `ENV_PATH` (`src/utils/env.ts`) prefers a repo-root `.env` when one exists,
+ *    which is precisely the file that gets committed by accident.
+ *  - `saveApiKeyToEnv` sets no file mode, so `~/.polymarket-bot/.env` lands at
+ *    0644 in a 0755 directory. An API key at 0644 is bad; a signing key at 0644
+ *    is a different category of bad.
+ *
+ * It is also not a `BotConfig` setting: `polymarket config` prints every setting
+ * unredacted, `setBotSetting` writes an audit entry containing old and new
+ * values, and string settings get no validation at all — so a typo'd funding
+ * address would be accepted silently.
+ *
+ * Every read and write takes an explicit path, defaulting to the app dir. That
+ * keeps the permission behaviour testable against a tmpdir without adding an
+ * env override to `paths.ts` purely for tests — the same injection shape as
+ * `new AuditTrail(filePath?)` and `createDb(':memory:')`.
+ */
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, renameSync, unlinkSync } from 'fs';
+import { dirname } from 'path';
+import { appPath } from '../utils/paths.js';
+
+export const WALLET_FILE_MODE = 0o600;
+export const WALLET_DIR_MODE = 0o700;
+
+/**
+ * Which kind of contract holds the funds. Resolved by the SDK at import and
+ * recorded so the file is self-describing.
+ *
+ * `proxy` and `safe` are older Polymarket accounts. New accounts — anything
+ * created on polymarket.com recently — are `deposit`.
+ */
+export type WalletType = 'deposit' | 'proxy' | 'safe' | 'eoa';
+
+const WALLET_TYPES: readonly WalletType[] = ['deposit', 'proxy', 'safe', 'eoa'];
+
+export interface StoredWallet {
+  version: 1;
+  /** Absent for a pasted address: nothing was resolved, so nothing is claimed. */
+  type?: WalletType;
+  /** The contract that holds funds. Always present — this is what gets queried. */
+  address: string;
+  /** Signing EOA. Absent for a watch-only wallet. */
+  signer?: string;
+  /** Absent for a watch-only wallet. */
+  privateKey?: string;
+  createdAt: number;
+  /**
+   * CLOB L2 credentials, derived from the private key.
+   *
+   * Cached rather than issued: anyone with the key can re-derive them, so this
+   * is a convenience, not an escalation. Stored here because the file already
+   * has the right permissions for a credential.
+   */
+  apiCreds?: { key: string; secret: string; passphrase: string };
+}
+
+function isApiCreds(v: unknown): v is { key: string; secret: string; passphrase: string } {
+  if (typeof v !== 'object' || v === null) return false;
+  const c = v as Record<string, unknown>;
+  return typeof c.key === 'string' && typeof c.secret === 'string' && typeof c.passphrase === 'string';
+}
+
+export function walletPath(): string {
+  return appPath('wallet.json');
+}
+
+export function walletExists(path: string = walletPath()): boolean {
+  return existsSync(path);
+}
+
+/**
+ * Validate an untrusted object into a `StoredWallet`.
+ *
+ * Throws rather than returning a partial wallet: a file that half-parses would
+ * otherwise produce a wallet with no address, and every downstream read would
+ * report an empty account instead of a broken config.
+ */
+export function parseStoredWallet(raw: unknown): StoredWallet {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new Error('wallet file is not a JSON object');
+  }
+  const w = raw as Record<string, unknown>;
+
+  if (w.version !== 1) throw new Error(`unsupported wallet file version: ${String(w.version)}`);
+  if (w.type !== undefined && !WALLET_TYPES.includes(w.type as WalletType)) {
+    throw new Error(`unsupported wallet type: ${String(w.type)}`);
+  }
+
+  const address = typeof w.address === 'string' ? w.address.trim() : '';
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    throw new Error(`wallet file has no valid address (got ${JSON.stringify(w.address)})`);
+  }
+
+  const signer = typeof w.signer === 'string' && w.signer.trim() ? w.signer.trim() : undefined;
+  const privateKey =
+    typeof w.privateKey === 'string' && w.privateKey.trim() ? w.privateKey.trim() : undefined;
+
+  // A key without a signer address is recoverable (derive it), but a signer
+  // without a key is just a watch-only wallet, so neither is fatal.
+  return {
+    version: 1,
+    ...(w.type !== undefined ? { type: w.type as WalletType } : {}),
+    address,
+    ...(signer ? { signer } : {}),
+    ...(privateKey ? { privateKey } : {}),
+    createdAt: typeof w.createdAt === 'number' ? w.createdAt : 0,
+    ...(isApiCreds(w.apiCreds) ? { apiCreds: w.apiCreds } : {}),
+  };
+}
+
+/** Returns null when no wallet file exists; throws when one exists but is unusable. */
+export function readWalletFile(path: string = walletPath()): StoredWallet | null {
+  if (!existsSync(path)) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf-8'));
+  } catch (err) {
+    throw new Error(
+      `Could not read wallet file ${path}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  try {
+    return parseStoredWallet(parsed);
+  } catch (err) {
+    throw new Error(`Invalid wallet file ${path}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * Write the wallet with owner-only permissions.
+ *
+ * `chmodSync` runs unconditionally after the write because the `mode` option is
+ * ignored when the file already exists — without it, a wallet first written by
+ * an older build would keep its original permissions forever.
+ */
+/**
+ * Replace the wallet file atomically.
+ *
+ * Writing in place would truncate first, and this file holds the only copy of
+ * the private key — a crash mid-write leaves it empty. The window is not
+ * theoretical: the file is rewritten every time CLOB credentials are cached.
+ *
+ * Writing a temp file in the same directory and renaming over the target means
+ * a reader sees the old file or the new one, never a half-written one. Same
+ * directory matters — rename is only atomic within a filesystem.
+ */
+export function writeWalletFile(wallet: StoredWallet, path: string = walletPath()): void {
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true, mode: WALLET_DIR_MODE });
+
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, `${JSON.stringify(wallet, null, 2)}\n`, { mode: WALLET_FILE_MODE });
+    // The mode argument is ignored when a file already exists, so set it
+    // explicitly before the rename rather than after — the target must never be
+    // briefly world-readable.
+    try {
+      chmodSync(tmp, WALLET_FILE_MODE);
+    } catch {
+      // Windows and some network filesystems have no POSIX modes. The write
+      // succeeded; refusing here would be worse than the weaker permissions.
+    }
+    renameSync(tmp, path);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // Nothing to clean up if it was never created.
+    }
+    throw err;
+  }
+
+  try {
+    chmodSync(dir, WALLET_DIR_MODE);
+  } catch {
+    // As above.
+  }
+}

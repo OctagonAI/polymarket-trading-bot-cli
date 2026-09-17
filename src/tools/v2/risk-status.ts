@@ -4,6 +4,7 @@ import { getDb } from '../../db/index.js';
 import { getOpenPositions } from '../../db/positions.js';
 import { getLatestSnapshot } from '../../db/risk.js';
 import { formatToolResult } from '../types.js';
+import { getBotSetting } from '../../utils/bot-config.js';
 
 export const riskStatusTool = new DynamicStructuredTool({
   name: 'risk_status',
@@ -15,8 +16,10 @@ export const riskStatusTool = new DynamicStructuredTool({
     const snapshot = getLatestSnapshot(db);
     const openPositions = getOpenPositions(db);
 
-    const maxDrawdownPct = 0.20;
-    const maxTotalPositions = 10;
+    // Read the same settings gate.ts enforces. Hardcoding them meant this tool
+    // could report "within limits" against a limit the gate was not using.
+    const maxDrawdownPct = Number(getBotSetting('risk.max_drawdown'));
+    const maxTotalPositions = Number(getBotSetting('risk.max_positions'));
 
     const checks = [];
 
@@ -64,8 +67,10 @@ export const riskStatusTool = new DynamicStructuredTool({
     checks.push({
       name: 'daily_pnl',
       status: 'INFO',
+      // Already USDC — CircuitBreaker.snapshot writes it as a dollar amount.
+      // The /100 here was a Kalshi-cents carryover that under-reported by 100x.
       detail: snapshot?.daily_pnl != null
-        ? `Daily P&L: $${(snapshot.daily_pnl / 100).toFixed(2)}`
+        ? `Daily P&L: $${snapshot.daily_pnl.toFixed(2)}`
         : 'No daily P&L data',
       current: snapshot?.daily_pnl ?? null,
     });

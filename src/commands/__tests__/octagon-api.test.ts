@@ -25,6 +25,9 @@ function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
     activeOnly: false,
     cells: false,
     autoProbs: false,
+    force: false,
+    yes: false,
+    all: false,
     parseErrors: [],
     ...overrides,
   };

@@ -26,7 +26,7 @@
   "main": "src/index.tsx",
   "bin": {
     "polymarket": "./src/index.tsx",
-    "poly": "./src/index.tsx"
+    "polymarket-trading-bot-cli": "./src/index.tsx"
   },
   "engines": {
     "bun": ">=1.1.0"
@@ -54,9 +54,11 @@
     "@langchain/tavily": "^1.0.1",
     "@mariozechner/pi-tui": "^0.52.9",
     "@mozilla/readability": "^0.6.0",
+    "@polymarket/client": "^0.10.0",
     "dotenv": "^17.2.3",
     "langsmith": "^0.4.10",
     "linkedom": "^0.18.12",
+    "viem": "^2.46.3",
     "zod": "^4.1.13"
   },
   "devDependencies": {

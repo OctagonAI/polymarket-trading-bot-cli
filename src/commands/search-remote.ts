@@ -30,6 +30,12 @@ function fmtVol(v: number | null | undefined): string {
 
 function fmtCloseDate(iso: string | null): string {
   if (!iso) return '-';
+  // Slicing blind renders a malformed value as garbage in the column. Validate
+  // first, matching the guard formatMarketsWithEdgeHuman already uses below —
+  // but still slice the original rather than re-serialising, because
+  // toISOString() would shift the displayed day for any offset-bearing
+  // timestamp.
+  if (Number.isNaN(new Date(iso).getTime())) return '-';
   return iso.slice(0, 10);
 }
 
@@ -88,6 +94,12 @@ export function formatEventSearchHuman(
     e.category ?? '-',
   ]);
   lines.push(formatTable(['Slug', 'Event', 'Last', '24h Vol', 'Category'], rows));
+  const first = page.data[0];
+  if (first) {
+    const slug = first.native_event_ticker ?? stripVenuePrefix(first.event_ticker);
+    lines.push('');
+    lines.push(`Drill into one event: search ${slug}`);
+  }
   return lines.join('\n');
 }
 

@@ -112,3 +112,23 @@ export function themeTagLabels(): Record<string, string[]> {
   for (const theme of THEMES) out[theme.id] = theme.tags;
   return out;
 }
+
+/**
+ * Split `theme:subtheme` into its parts. `crypto:btc` → the crypto theme plus
+ * the raw subtheme `btc`. Free text yields `{ theme: undefined }`.
+ *
+ * `findTheme` alone cannot do this — it is a flat map lookup, so a composite
+ * string misses and falls through to a literal free-text search for
+ * "crypto:btc", which matches nothing. The colon syntax is advertised in the
+ * `search themes` output, and both `scan` and the TUI already honour it; this
+ * is what lets the non-interactive `search` honour it too.
+ */
+export function parseThemeQuery(input: string): { theme?: Theme; subtheme?: string } {
+  const trimmed = input.trim();
+  const colon = trimmed.indexOf(':');
+  if (colon === -1) return { theme: findTheme(trimmed) };
+  const theme = findTheme(trimmed.slice(0, colon));
+  if (!theme) return {};
+  const subtheme = trimmed.slice(colon + 1).trim();
+  return subtheme ? { theme, subtheme } : { theme };
+}

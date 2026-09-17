@@ -30,9 +30,9 @@ export const portfolioReviewTool = new DynamicStructuredTool({
         edgePp: r.edge == null ? null : `${r.edge >= 0 ? '+' : ''}${(r.edge * 100).toFixed(0)}pp`,
         signal: r.signal,
         reason: r.reason,
-        closePriceCents: r.closePriceCents,
+        closePrice: r.closePrice,
         sellCommand: r.signal === 'SELL'
-          ? `/sell ${r.ticker} ${r.size} ${r.closePriceCents} ${r.direction}`
+          ? `/sell ${r.ticker} ${r.size} ${r.closePrice.toFixed(2)} ${r.direction}`
           : null,
         analyzeError: r.analyzeError ?? null,
       })),
