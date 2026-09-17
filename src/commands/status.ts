@@ -61,7 +61,6 @@ export async function handleStatus(): Promise<string> {
 
   lines.push('');
   lines.push(allGood ? '✓ All good — ready to research.' : '✗ Fix the issues above before continuing.');
-  lines.push('  Order placement is not implemented yet; buy/sell/cancel are unavailable.');
 
   return lines.join('\n');
 }

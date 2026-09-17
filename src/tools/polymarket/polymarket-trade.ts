@@ -8,31 +8,27 @@ import { loadWalletIdentity } from '../../wallet/identity.js';
  * the case where the agent is asked to trade and the wallet cannot sign.
  */
 export const TRADING_UNAVAILABLE_MESSAGE =
-  'Placing orders needs a wallet with a private key. Run `polymarket wallet import <private-key>` ' +
-  'for a new one or `polymarket wallet import <private-key>` to bring your own, fund ' +
-  'it with pUSD on polymarket.com first.';
+  'Placing orders needs a wallet with a private key. Create an account on polymarket.com and fund ' +
+  'it there, then run `polymarket wallet import <private-key>`.';
 
 /**
- * Commands hidden until wallet/trading support lands.
+ * Commands hidden until a wallet is configured.
  *
  * `portfolio` is here alongside the order commands because everything it reads —
- * positions, portfolio value, resting orders — hangs off a configured wallet,
- * and configuring that wallet is part of the trading setup that does not exist
- * yet. Without one the command can only report an empty portfolio, so listing it
+ * positions, portfolio value, resting orders — hangs off a configured wallet.
+ * Without one the command can only report an empty portfolio, so listing it
  * promises an account view the CLI cannot produce.
+ *
+ * Nothing here is gated on a missing feature any more: placement shipped, and
+ * these are gated purely on what the configured wallet can do.
  *
  * Kept separate from octagon-capabilities.ts: those commands are gated by what
  * Octagon can answer, these by what this CLI can do.
  */
-export const TRADING_COMMANDS = ['buy', 'sell', 'cancel', 'orders', 'portfolio'] as const;
+export const TRADING_COMMANDS = ['buy', 'sell', 'orders', 'portfolio'] as const;
 
-/**
- * Everything that needs a signing key.
- *
- * `buy`/`sell` moved here from a not-implemented list once placement shipped;
- * there is no longer any command gated on the feature rather than the wallet.
- */
-export const KEY_COMMANDS = ['buy', 'sell', 'cancel', 'orders'] as const;
+/** Everything that needs a signing key. */
+export const KEY_COMMANDS = ['buy', 'sell', 'orders'] as const;
 
 /** Need an address, but not a key — the watch tier is enough. */
 export const ACCOUNT_COMMANDS = ['portfolio'] as const;

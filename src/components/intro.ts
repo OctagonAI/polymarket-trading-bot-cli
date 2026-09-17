@@ -90,7 +90,7 @@ export class IntroComponent extends Container {
     for (const [name, desc] of commandRows) {
       const bare = name.split(' ')[0]!.replace(/^\//, '');
       if (isDeferredCommand(bare)) continue;
-      // Order placement is not implemented yet — don't advertise it.
+      // Gated on the configured wallet: no key, no order commands.
       if (!isCommandAvailable(bare)) continue;
       this.addChild(new Text(cmd(name) + desc, 0, 0));
     }

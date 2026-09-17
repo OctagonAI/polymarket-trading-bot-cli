@@ -2,10 +2,10 @@
 
 AI-powered prediction market terminal for [Polymarket](https://polymarket.com). Ask natural language questions and research markets from your terminal.
 
-> **⏳ Read-only for now.** Order placement is not implemented: `/buy`, `/sell` and
-> `/orders cancel` return an explanation rather than trading, and `/portfolio` is gated with
-> them because every view it offers needs a wallet that arrives with trading support.
-> Market data and research need no credentials. Commands marked ⏳ below are unavailable.
+> **Trading is live.** `/buy`, `/sell`, `/orders` and `/orders cancel` place and manage
+> real orders once a wallet is imported. `/portfolio` is gated with
+> them because every view it offers needs a configured wallet.
+> Market data and research need no credentials at all.
 
 ---
 
@@ -101,9 +101,6 @@ Type `/model` to pick your LLM provider and model. Your choice persists across s
 
 Quick commands that bypass the AI agent and call the exchange or Octagon API directly.
 
-⏳ marks a command that is not available yet: it is hidden from `/help` and
-autocomplete, and running it explains why.
-
 | Command | Description | Example |
 |---|---|---|
 | `/help` | Show all available commands | `/help` |
@@ -126,8 +123,8 @@ autocomplete, and running it explains why.
 | `/themes report` | 25-theme dashboard with SEO + liquidity | `/themes report` |
 | `/themes audit` | Flag dead themes (high SEO + zero volume) | `/themes audit` |
 | `/themes overlap` | Cross-theme dedupe report | `/themes overlap` |
-| `/buy <market-slug> <shares> [price]` ⏳ | Buy YES shares (price 0-1) — **not implemented** | `/buy bitcoin-above-95k-by-april-30 5 0.56` |
-| `/sell <market-slug> <shares> [price]` ⏳ | Sell YES shares — **not implemented** | `/sell bitcoin-above-95k-by-april-30 5 0.60` |
+| `/buy <market-slug> <shares> [price]` | Buy shares (price 0-1; omit for a market order) | `/buy bitcoin-above-95k-by-april-30 5 0.56` |
+| `/sell <market-slug> <shares> [price]` | Sell shares you hold | `/sell bitcoin-above-95k-by-april-30 5 0.60` |
 
 **Trading is not available yet.** These commands return an explanation instead of
 placing an order; Polymarket orders need EIP-712 wallet signing and on-chain
@@ -350,8 +347,8 @@ The primary research tool. Takes your natural language query and automatically r
 
 Routes natural language trade instructions to the appropriate trading action. **Always requires user approval** before executing.
 
-> **⏳ Not implemented yet.** Order placement is deferred; this tool currently returns an
-> explanatory error. Polymarket orders need EIP-712 wallet signing and on-chain allowances.
+> **Note.** The agent never places an order itself. This tool explains what to run,
+> so that spending money stays an explicit act by the user.
 
 **Sub-tools:**
 
@@ -363,12 +360,12 @@ Routes natural language trade instructions to the appropriate trading action. **
 | `cancel_orders` | Batch cancel | `order_ids[]` |
 | `place_batch_orders` | Place multiple orders at once | `orders[]` (array of order specs) |
 
-### portfolio_overview ⏳
+### portfolio_overview
 
 Quick composite tool that fetches balance + all positions in a single call.
-**Not registered yet** — it reads positions through a wallet, which arrives with
-trading support, so the agent is not offered it. `portfolio_review` is
-unregistered for the same reason.
+Registered only when a wallet is configured — with no wallet there is no account
+to read, so the agent is not offered it. `portfolio_review` is registered on the
+same condition.
 
 ### exchange_status
 

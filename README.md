@@ -386,7 +386,6 @@ ANALYSIS=$(polymarket analyze bitcoin-above-95k-by-april-30 --json)
 EDGE=$(echo "$ANALYSIS" | jq '.data.edge')
 
 # 3. Trade if edge is high enough
-#    (buy is not implemented yet — this is the shape it will take)
 if (( $(echo "$EDGE > 0.05" | bc -l) )); then
   polymarket buy bitcoin-above-95k-by-april-30 3 0.58 --json
 fi

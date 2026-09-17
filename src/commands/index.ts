@@ -13,7 +13,6 @@ function defaultArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
     behavioral: false, ranked: false, showCluster: false,
     activeOnly: false, cells: false, autoProbs: false,
     force: false,
-    check: false,
     yes: false,
     all: false,
     parseErrors: [],

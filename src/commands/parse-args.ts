@@ -86,8 +86,6 @@ export interface ParsedArgs {
   market?: string;
   /** --force: overwrite an existing wallet instead of refusing. */
   force: boolean;
-  /** --check: report state without changing anything. */
-  check: boolean;
   /** --yes: skip an interactive confirmation. Scripting only. */
   yes: boolean;
   /** --all: include grants that trading does not require. */
@@ -106,7 +104,6 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
   let minEdge: number | undefined;
   let live = false;
   let force = false;
-  let check = false;
   let yes = false;
   let all = false;
   let refresh = false;
@@ -230,8 +227,6 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
       }
     } else if (arg === '--force') {
       force = true;
-    } else if (arg === '--check') {
-      check = true;
     } else if (arg === '--all') {
       all = true;
     } else if (arg === '--yes' || arg === '-y') {
@@ -493,7 +488,7 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
     weights, bankroll, kellyMultiplier, n, maxPerCluster, maxCorrelation, minReturn, seriesTicker,
     sortBy, probabilities, tickers, query, showCluster, aggregateBy, activeOnly,
     seriesPrefix, sides, cells, autoProbs, daysToClose, market,
-    force, check, yes, all,
+    force, yes, all,
     parseErrors,
   };
 }
