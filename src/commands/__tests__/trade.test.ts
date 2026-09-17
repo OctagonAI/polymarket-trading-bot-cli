@@ -6,12 +6,10 @@ import { getRecentTrades } from '../../db/trades.js';
 import { insertRiskSnapshot } from '../../db/risk.js';
 import { parseArgs } from '../parse-args.js';
 import * as identity from '../../wallet/identity.js';
-import * as approvals from '../../chain/approvals.js';
 import * as orders from '../../clob/orders.js';
 import * as analyze from '../analyze.js';
 import * as dbModule from '../../db/index.js';
 import type { PolymarketMarket } from '../../tools/polymarket/types.js';
-import type { ApprovalStatus } from '../../chain/approvals.js';
 
 /**
  * The guards in front of an order, and what gets written after one fills.
@@ -46,13 +44,8 @@ function market(over: Partial<PolymarketMarket> = {}): PolymarketMarket {
   } as PolymarketMarket;
 }
 
-const approved = (): ApprovalStatus[] => [
-  { target: 'CTF Exchange', kind: 'collateral', spender: '0x1', approved: true, required: true, allowance: 1e9 },
-];
-
 function setup(opts: {
   tier?: identity.WalletTier;
-  statuses?: ApprovalStatus[];
   filled?: number;
   orderId?: string;
 } = {}) {
@@ -78,7 +71,6 @@ function setup(opts: {
     spyOn(identity, 'loadWalletIdentity').mockImplementation(() => ({
       tier, address: PROXY, ...(tier === 'trade' ? { signer: SIGNER } : {}), source: 'file' as const,
     })),
-    spyOn(approvals, 'checkApprovals').mockImplementation(async () => opts.statuses ?? approved()),
     spyOn(analyze, 'resolveMarket').mockImplementation(async () => market()),
     spyOn(orders, 'buildOrder').mockImplementation(async () => built as never),
     postSpy,
@@ -98,20 +90,6 @@ describe('trade — guards before an order', () => {
 
     expect(resp.ok).toBe(false);
     expect(resp.error?.code).toBe('NO_KEY');
-    expect(post).not.toHaveBeenCalled();
-  });
-
-  test('missing approvals name where they actually get fixed', async () => {
-    // This CLI cannot grant them, so pointing at one of its own commands would
-    // send the user in a circle.
-    const post = setup({
-      statuses: [{ ...approved()[0]!, approved: false }],
-    });
-    const resp = await run(['buy', 'slug', '50', '0.42', '--yes']);
-
-    expect(resp.ok).toBe(false);
-    expect(resp.error?.code).toBe('NOT_APPROVED');
-    expect(resp.error?.message).toContain('polymarket.com');
     expect(post).not.toHaveBeenCalled();
   });
 

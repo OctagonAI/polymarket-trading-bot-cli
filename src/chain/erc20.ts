@@ -71,24 +71,3 @@ export async function readPusdBalance(owner: string): Promise<number | null> {
     return null;
   }
 }
-
-/** pUSD a spender is approved to move on the owner's behalf, or null. */
-export async function readPusdAllowance(owner: string, spender: string): Promise<number | null> {
-  try {
-    const data = encodeFunctionData({
-      abi: erc20Abi,
-      functionName: 'allowance',
-      args: [getAddress(owner), getAddress(spender)],
-    });
-    const raw = await ethCall(PUSD_ADDRESS, data);
-    if (!raw || raw === '0x') return null;
-    const decoded = decodeFunctionResult({
-      abi: erc20Abi,
-      functionName: 'allowance',
-      data: raw as `0x${string}`,
-    });
-    return fromPusdUnits(decoded as bigint);
-  } catch {
-    return null;
-  }
-}

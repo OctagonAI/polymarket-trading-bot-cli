@@ -225,7 +225,15 @@ export async function postOrder(built: BuiltOrder): Promise<PostedOrder> {
 
   // The CLOB reports refusal in-band; a 200 that is not `ok` is a rejection.
   if (!raw.ok) {
-    throw new OrderError(`Order rejected: ${raw.message || raw.code || 'no reason given'}`);
+    // The venue cannot tell these two apart, and neither can we without a round
+    // trip nobody asked for — but both have the same fix, so name both.
+    const hint =
+      raw.code === 'insufficient_balance_or_allowance'
+        ? ' The wallet is either short of pUSD, or has not granted the on-chain approvals trading' +
+          ' needs. Both are fixed on polymarket.com — deposit there, or place one trade there to be' +
+          ' prompted for the approvals.'
+        : '';
+    throw new OrderError(`Order rejected: ${raw.message || raw.code || 'no reason given'}.${hint}`);
   }
 
   return {

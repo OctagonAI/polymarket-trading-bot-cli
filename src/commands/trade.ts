@@ -17,6 +17,11 @@
  *
  * Nothing is signed before the user confirms, and nothing is confirmed without
  * the cost, the price, and any objections on screen.
+ *
+ * There is no on-chain pre-flight. Polymarket grants trading approvals during
+ * onboarding, so checking them before every order spent a round trip on a
+ * question whose answer is always yes; when it is not, the venue says so in the
+ * rejection and `postOrder` explains what to do about it.
  */
 import * as readline from 'node:readline';
 import { randomUUID } from 'crypto';
@@ -25,7 +30,6 @@ import { wrapSuccess, wrapError, type CLIResponse } from './json.js';
 import { validateTradeArgs } from './help.js';
 import { buildOrder, postOrder, OrderError, type TradeAction } from '../clob/orders.js';
 import { ClobAuthError } from '../clob/client.js';
-import { checkApprovals, readyToTrade } from '../chain/approvals.js';
 import { loadWalletIdentity } from '../wallet/identity.js';
 import { resolveMarket } from './analyze.js';
 import { getDb } from '../db/index.js';
@@ -122,25 +126,6 @@ export async function handleTrade(
     );
   }
   if (breakerStatus.active) warnings.push(`Circuit breaker overridden: ${breakerStatus.reason}`);
-
-  // Approvals: the CLOB rejects an unapproved order with an opaque error, so
-  // catch it here where the fix can be named.
-  try {
-    const statuses = await checkApprovals(id.address);
-    if (statuses.some((s) => s.error)) {
-      warnings.push('Could not verify on-chain approvals; the order may be rejected.');
-    } else if (!readyToTrade(statuses)) {
-      return wrapError(
-        action,
-        'NOT_APPROVED',
-        'This wallet has not granted the on-chain approvals trading needs. Polymarket grants them ' +
-          'when you first trade on polymarket.com — do that once, then retry. ' +
-          'See the detail with: polymarket wallet approvals',
-      );
-    }
-  } catch (err) {
-    warnings.push(`Approval check failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
 
   let market: PolymarketMarket;
   try {

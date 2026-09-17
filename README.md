@@ -9,9 +9,8 @@ AI-powered Polymarket research CLI that finds edge across prediction markets.
 >
 > **Trading needs a wallet.** Create an account on [polymarket.com](https://polymarket.com),
 > fund it there, then `polymarket wallet import <private-key>`. Accounts made on
-> the site arrive already approved for trading — check with
-> `polymarket wallet approvals`. Then `buy`, `sell`, `orders`, `cancel` and
-> `portfolio` all work. Run `status` to check your setup.
+> the site arrive already approved for trading. Then `buy`, `sell`, `orders`,
+> `cancel` and `portfolio` all work. Run `status` to check your setup.
 
 Runs deep fundamental research on every market — independent probability estimates, ranked price drivers, catalyst calendars — then computes edge as the spread between model price and the live order book. Signals are sized using half-Kelly and filtered through a 5-gate risk engine before a dollar is risked.
 
@@ -475,29 +474,15 @@ funding address cannot be derived from the key.
 
 #### Trading approvals
 
-Trading needs **seven** on-chain permissions: the two exchange contracts, the
-neg-risk adapter and the conditional-tokens contract allowed to move your pUSD,
-and the first three also allowed to move your outcome tokens when you sell.
+Trading needs on-chain permissions for the exchange contracts to move your pUSD
+and your outcome tokens. **Polymarket grants them during onboarding** — a live
+account was verified with all seven in place, having never traded and without
+this CLI ever touching it — so there is nothing to do here and no command for
+it. If one were ever missing, the venue rejects the order and says so, and
+placing a single trade on polymarket.com prompts for it.
 
-Four further grants exist, to the two *collateral adapters*, and they are
-**not** needed to trade. Their deployed bytecode exposes only `splitPosition`,
-`mergePositions` and `redeemPositions` — the collateral path for building,
-combining and redeeming complete sets. CLOB orders never touch them: all twelve
-accounts sampled from the volume leaderboard hold the seven required grants, and
-only four hold these. They are listed separately and this CLI never needs them.
-
-**You do not grant these here.** Polymarket grants them during onboarding — a
-live deposit wallet was verified at 7/7 without this CLI ever touching it — and
-if one is ever missing, placing a trade on polymarket.com prompts for it. This
-command only reads:
-
-```bash
-polymarket wallet approvals   # free: no gas, no signature, no transaction
-```
-
-That is the *only* on-chain question this CLI asks. It signs no transactions at
-all: orders are EIP-712 messages that Polymarket settles, so you never need POL
-for gas.
+This CLI signs no on-chain transactions at all: orders are EIP-712 messages that
+Polymarket settles, so you never need POL for gas.
 
 ### Bankroll
 

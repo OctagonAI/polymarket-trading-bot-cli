@@ -21,8 +21,6 @@ export const DEFAULT_RPC_URL = 'https://polygon.drpc.org';
 /** Used only in the error message, to give a stuck user somewhere to go. */
 export const FALLBACK_RPC_URL = 'https://1rpc.io/matic';
 
-export const POLYGON_CHAIN_ID = 137;
-
 const RPC_TIMEOUT_MS = 10_000;
 
 export class RpcError extends Error {
@@ -50,7 +48,7 @@ interface JsonRpcResponse {
  * failures alike — callers that want to degrade gracefully catch it and say the
  * value is unknown, never that it is zero.
  */
-export async function rpcCall(method: string, params: unknown[]): Promise<unknown> {
+async function rpcCall(method: string, params: unknown[]): Promise<unknown> {
   const url = rpcUrl();
   const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
 
@@ -92,20 +90,8 @@ export async function rpcCall(method: string, params: unknown[]): Promise<unknow
   }
 }
 
-/** Deployed bytecode at an address. `'0x'` means nothing is deployed there. */
-export async function ethGetCode(address: string): Promise<string> {
-  const result = await rpcCall('eth_getCode', [address, 'latest']);
-  return typeof result === 'string' ? result : '0x';
-}
-
 /** Raw `eth_call` return data. */
 export async function ethCall(to: string, data: string): Promise<string> {
   const result = await rpcCall('eth_call', [{ to, data }, 'latest']);
   return typeof result === 'string' ? result : '0x';
-}
-
-/** Native POL balance in wei, as a bigint. */
-export async function ethGetBalance(address: string): Promise<bigint> {
-  const result = await rpcCall('eth_getBalance', [address, 'latest']);
-  return typeof result === 'string' ? BigInt(result) : 0n;
 }

@@ -28,26 +28,11 @@ import {
   loadPrivateKey,
   type WalletTier,
 } from '../wallet/identity.js';
-import {
-  checkApprovals,
-  pendingApprovals,
-  readyToTrade,
-  type ApprovalKind,
-} from '../chain/approvals.js';
 import { auditTrail } from '../audit/index.js';
 import { theme } from '../theme.js';
 
-export interface ApprovalRow {
-  target: string;
-  kind: ApprovalKind;
-  approved: boolean;
-  required: boolean;
-  note?: string;
-  error?: string;
-}
-
 export interface WalletData {
-  action: 'import' | 'address' | 'show' | 'approvals';
+  action: 'import' | 'address' | 'show';
   tier: WalletTier;
   /** Funding address — the one that holds funds. */
   address?: string;
@@ -59,11 +44,6 @@ export interface WalletData {
   configPath?: string;
   /** Env and saved wallet disagree about which account to use. */
   conflict?: string;
-  approvals?: ApprovalRow[];
-  pendingCount?: number;
-  /** Missing grants that trading does not need. Reported, never auto-sent. */
-  optionalPendingCount?: number;
-  readyToTrade?: boolean;
   message?: string;
 }
 
@@ -175,41 +155,6 @@ async function showHandler(): Promise<CLIResponse<WalletData>> {
 }
 
 
-/**
- * Report the on-chain grants trading needs. Read-only, free, no gas.
- *
- * There is no send counterpart. Polymarket grants these during onboarding —
- * verified against a live account, which arrived 7/7 without this CLI touching
- * it — and the only routing we could have implemented went through the type-1
- * proxy factory, which cannot serve the deposit wallets new accounts get. So
- * this reports, and polymarket.com fixes.
- */
-async function approvalsHandler(): Promise<CLIResponse<WalletData>> {
-  const id = loadWalletIdentity();
-  if (!id.address) return wrapError('wallet', 'NO_WALLET', NO_WALLET_MESSAGE);
-
-  const statuses = await checkApprovals(id.address);
-  const pending = pendingApprovals(statuses);
-
-  return wrapSuccess('wallet', {
-    action: 'approvals',
-    readyToTrade: readyToTrade(statuses),
-    optionalPendingCount: pendingApprovals(statuses, true).length - pending.length,
-    tier: id.tier,
-    address: id.address,
-    signer: id.signer,
-    pendingCount: pending.length,
-    approvals: statuses.map((a) => ({
-      target: a.target,
-      kind: a.kind,
-      approved: a.approved,
-      required: a.required,
-      ...(a.note ? { note: a.note } : {}),
-      ...(a.error ? { error: a.error } : {}),
-    })),
-  });
-}
-
 export const NO_WALLET_MESSAGE =
   'No wallet configured. Create an account on polymarket.com, then run ' +
   '`polymarket wallet import <private-key>`. An address alone works for read-only use.';
@@ -222,15 +167,6 @@ export async function handleWallet(args: ParsedArgs): Promise<CLIResponse<Wallet
     switch (sub) {
       case 'import':
         return await importHandler(rest[0], args.force);
-      case 'approvals':
-        return await approvalsHandler();
-      case 'approve':
-        return wrapError(
-          'wallet',
-          'MOVED',
-          'This CLI does not send approvals. Polymarket grants them when you first trade on ' +
-            'polymarket.com. Run `polymarket wallet approvals` to see their state.',
-        );
       case 'address':
         return addressHandler();
       case 'show':
@@ -240,7 +176,7 @@ export async function handleWallet(args: ParsedArgs): Promise<CLIResponse<Wallet
         return wrapError(
           'wallet',
           'UNKNOWN_SUB',
-          `Unknown subcommand: ${sub}. Try: import, address, show, approvals.`,
+          `Unknown subcommand: ${sub}. Try: import, address, show.`,
         );
     }
   } catch (err) {
@@ -250,56 +186,6 @@ export async function handleWallet(args: ParsedArgs): Promise<CLIResponse<Wallet
 
 export function formatWalletHuman(data: WalletData): string {
   const lines: string[] = [];
-
-  if (data.action === 'approvals') {
-    lines.push('  Trading approvals');
-    lines.push('');
-
-    const mark = (a: ApprovalRow) =>
-      a.error
-        ? theme.error('  ?   ') // unreadable: NOT the same as unapproved
-        : a.approved
-          ? theme.success('  OK  ')
-          : theme.muted('  --  ');
-    const label = (a: ApprovalRow) => `${a.kind === 'collateral' ? 'pUSD' : 'CTF '} → ${a.target}`;
-
-    const rows = data.approvals ?? [];
-    for (const a of rows.filter((r) => r.required)) {
-      lines.push(`${mark(a)}${label(a)}${a.error ? theme.muted('  could not read') : ''}`);
-    }
-
-    // Listed separately, because showing these alongside the required ones made
-    // a wallet that trades perfectly well report four outstanding approvals.
-    const optional = rows.filter((r) => !r.required);
-    if (optional.length > 0) {
-      lines.push('');
-      lines.push(theme.muted('  Optional — not needed to trade:'));
-      for (const a of optional) {
-        lines.push(`${mark(a)}${label(a)}${a.note ? theme.muted(`   ${a.note}`) : ''}`);
-      }
-    }
-
-    lines.push('');
-    if (data.message) {
-      lines.push(theme.muted(`    ${data.message}`));
-    } else if ((data.pendingCount ?? 0) > 0) {
-      lines.push(
-        theme.muted(`    ${data.pendingCount} required grant(s) missing. Polymarket grants these when`),
-      );
-      lines.push(theme.muted('    you first trade on polymarket.com — do it there, then re-run this.'));
-    } else if (data.readyToTrade) {
-      lines.push(theme.success('    Ready to trade — every required approval is in place.'));
-      if ((data.optionalPendingCount ?? 0) > 0) {
-        lines.push(
-          theme.muted(
-            `    ${data.optionalPendingCount} optional grant(s) not set. Only needed to split, merge or`,
-          ),
-        );
-        lines.push(theme.muted('    redeem positions directly, which this CLI does not do.'));
-      }
-    }
-    return lines.join('\n');
-  }
 
   if (data.action === 'address') {
     return data.address ?? '';

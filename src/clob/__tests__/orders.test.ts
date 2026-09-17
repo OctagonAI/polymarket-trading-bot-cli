@@ -183,6 +183,21 @@ describe('postOrder', () => {
     expect(posted.filledShares).toBe(50);
   });
 
+  test('a balance-or-allowance refusal says where both are fixed', async () => {
+    // This replaced an 11-call on-chain pre-flight before every order. The
+    // venue cannot separate the two causes, so the message must name both.
+    stubClob({ ok: false, code: 'insufficient_balance_or_allowance', message: 'not enough balance' });
+    const built = await buildOrder({ market: market(), action: 'buy', outcome: 'yes', shares: 50 });
+    await expect(postOrder(built)).rejects.toThrow(/polymarket\.com/);
+  });
+
+  test('an unrelated rejection gets no balance advice', async () => {
+    stubClob({ ok: false, code: 'post_only_would_cross', message: 'would cross' });
+    const built = await buildOrder({ market: market(), action: 'buy', outcome: 'yes', shares: 50 });
+    await expect(postOrder(built)).rejects.toThrow(/would cross/);
+    await expect(postOrder(built)).rejects.not.toThrow(/polymarket\.com/);
+  });
+
   test('a sell reads its share count from the maker leg', async () => {
     // A sell gives up shares and receives dollars, so takingAmount is USD here.
     // Reading it as the fill would record 21 shares sold instead of 50.

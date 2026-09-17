@@ -60,7 +60,6 @@ ${p}wallet import <private-key>  Import your polymarket.com wallet (enables trad
 ${p}wallet import <address>      Read-only: balances and positions, no trading
 ${p}wallet address               Print the funding address only
 ${p}wallet show                  Addresses, wallet type, mode, key source
-${p}wallet approvals             List all 11 approvals and their state (free)
 
 Flags:
   --force                           Replace an existing wallet
@@ -87,14 +86,10 @@ permissions, never to .env. Override it for one session with
 POLYMARKET_PRIVATE_KEY, which takes precedence over the saved file.
 
 Approvals
-  Trading needs 7 on-chain permissions. Polymarket grants them during
-  onboarding, so an account made on polymarket.com arrives ready — this CLI
-  reads them and never sends any. ${p}wallet approvals lists all 11 for free.
-  Four of the 11, to the collateral adapters, are NOT needed to trade: they
-  only matter if you split, merge or redeem positions directly, which this CLI
-  does not do, so they are listed separately.
-  If a required grant is missing, place one trade on polymarket.com and it will
-  prompt for it.`,
+  Trading needs on-chain permissions, and Polymarket grants them during
+  onboarding — an account made on polymarket.com arrives ready. This CLI never
+  reads or sends them. If one is somehow missing, the venue rejects the order
+  and says so, and placing a trade on polymarket.com prompts for it.`,
 
     portfolio: `**${p}portfolio** — Account state
 
@@ -515,7 +510,6 @@ Analysis:
 
 Account:
   wallet                        Create, import, or inspect your wallet
-  wallet approvals              Check the on-chain trading approvals
   buy <slug> <shares> [price]   Buy shares (omit price for a market order)
   sell <slug> <shares> [price]  Sell shares you hold
   orders                        Your resting orders on the CLOB
@@ -598,7 +592,6 @@ Analysis:
 
 Account:
   /wallet                        Create, import, or inspect your wallet
-  /wallet approvals              Check the on-chain trading approvals
   /buy <slug> <shares> [price]   Buy shares (omit price for a market order)
   /sell <slug> <shares> [price]  Sell shares you hold
   /orders                        Your resting orders on the CLOB
