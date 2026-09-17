@@ -40,7 +40,7 @@ export function requireSigner(): string {
     throw new Error(
       id.tier === 'watch'
         ? `This wallet is watch-only (${id.address}). Run \`polymarket wallet import <private-key> --force\` to place orders.`
-        : 'No wallet configured. Run `polymarket wallet create` or `polymarket wallet import <private-key>`.',
+        : 'No wallet configured. Run `polymarket wallet import <private-key>`.',
     );
   }
   return id.signer!;
@@ -50,8 +50,8 @@ export function requireWalletAddress(): string {
   const addr = getWalletAddress();
   if (!addr) {
     throw new Error(
-      'No wallet configured. Run `polymarket wallet create` for a new one, or ' +
-        '`polymarket wallet import <address>` to read an existing account.'
+      'No wallet configured. Run `polymarket wallet import <private-key>` to trade, or ' +
+        '`polymarket wallet import <address>` to read an account.'
     );
   }
   return addr;

@@ -61,9 +61,10 @@ bun start        # or `bun run dev` for hot-reload
 
 Polymarket market data is public — no credentials are needed to research. Reading
 your own balance and positions needs a wallet address; trading needs its private
-key. Prefer `polymarket wallet create` / `wallet import` over setting these by
-hand: that writes `~/.polymarket-bot/wallet.json` with owner-only permissions,
-whereas `.env` is written world-readable.
+key. Prefer `polymarket wallet import` over setting these by hand: it writes
+`~/.polymarket-bot/wallet.json` with owner-only permissions, whereas `.env` is
+written world-readable. `POLYMARKET_PRIVATE_KEY` needs `POLYMARKET_WALLET_ADDRESS`
+alongside it — the funding address cannot be derived from the key.
 
 | Variable | Required | Description |
 |---|---|---|
@@ -107,9 +108,8 @@ autocomplete, and running it explains why.
 |---|---|---|
 | `/help` | Show all available commands | `/help` |
 | `/status` | Setup check: connectivity, API keys | `/status` |
-| `/wallet` | Show your wallet: addresses, mode, on-chain status | `/wallet` |
-| `/wallet create` | Generate a new dedicated wallet | `/wallet create` |
-| `/wallet import <key\|address>` | Bring an existing wallet (key = trading, address = read-only) | `/wallet import 0x…` |
+| `/wallet` | Show your wallet: addresses, wallet type, mode | `/wallet` |
+| `/wallet import <key\|address>` | Import your polymarket.com wallet (key = trading, address = read-only) | `/wallet import 0x…` |
 | `/wallet approve --check` | Read all 11 approvals — free, no gas | `/wallet approve --check` |
 | `/wallet approve` | Grant the 7 trading needs (confirms, then costs POL) | `/wallet approve` |
 | `/balance` | Free pUSD in your funding wallet | `/balance` |

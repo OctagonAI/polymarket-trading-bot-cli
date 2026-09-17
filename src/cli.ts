@@ -487,8 +487,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     }},
     { name: 'wallet', description: 'Create, import, or inspect your Polymarket wallet', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
       const opts = [
-        { value: 'show', label: 'show', description: 'Funding + signing address, mode, and on-chain proxy status' },
-        { value: 'create', label: 'create', description: 'Generate a new dedicated wallet' },
+        { value: 'show', label: 'show', description: 'Funding + signing address, wallet type, mode, key source' },
         { value: 'import', label: 'import', description: '<private-key|address>  Bring an existing wallet' },
         { value: 'address', label: 'address', description: 'Print the funding address only' },
         { value: 'approve', label: 'approve', description: 'Grant trading approvals (--check to inspect first)' },

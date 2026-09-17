@@ -1,11 +1,15 @@
 /**
- * `wallet` — create, import and inspect the Polymarket wallet.
+ * `wallet` — import and inspect the Polymarket wallet.
  *
- * Nothing here moves funds or signs anything. It manages a keypair and reports
- * what the chain says about the derived proxy.
+ * There is no `create`. A wallet generated here would be a fresh account with
+ * no Polymarket history, and the account that matters is the one the user
+ * already made on polymarket.com: that is where their money is, and it is the
+ * only one the site will deposit into. So the way in is to import that key.
+ *
+ * Nothing here moves funds. `approve` is the one subcommand that signs.
  */
 import * as readline from 'node:readline';
-import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import { privateKeyToAccount } from 'viem/accounts';
 import { getAddress } from 'viem';
 import type { ParsedArgs } from './parse-args.js';
 import { wrapSuccess, wrapError, type CLIResponse } from './json.js';
@@ -15,15 +19,10 @@ import {
   walletPath,
   walletExists,
   type StoredWallet,
+  type WalletType,
 } from '../wallet/store.js';
-import {
-  deriveProxyAddress,
-  isAddress,
-  isPrivateKey,
-  normalizePrivateKey,
-  verifyProxyOnChain,
-  type ProxyCodeStatus,
-} from '../wallet/proxy.js';
+import { isAddress, isPrivateKey, normalizePrivateKey } from '../wallet/keys.js';
+import { resolveAccount, AccountResolutionError, WALLET_TYPE_LABEL } from '../wallet/account.js';
 import {
   loadWalletIdentity,
   resetWalletIdentityCache,
@@ -52,18 +51,16 @@ export interface ApprovalRow {
 }
 
 export interface WalletData {
-  action: 'create' | 'import' | 'address' | 'show' | 'approve';
+  action: 'import' | 'address' | 'show' | 'approve';
   tier: WalletTier;
-  /** Proxy address — the one that holds funds. */
+  /** Funding address — the one that holds funds. */
   address?: string;
   /** Signing EOA. */
   signer?: string;
+  /** What Polymarket says the funding contract is. Unknown for a pasted address. */
+  walletType?: WalletType;
   source?: string;
   configPath?: string;
-  /** Only ever populated by `create`, and only for the one-time display. */
-  privateKey?: string;
-  proxyStatus?: ProxyCodeStatus;
-  proxyStatusError?: string;
   /** Env and saved wallet disagree about which account to use. */
   conflict?: string;
   /** POL held by the signing EOA — this is who pays gas. */
@@ -79,59 +76,14 @@ export interface WalletData {
   message?: string;
 }
 
-/** Chain lookup is best-effort: unreachable means unknown, never means wrong. */
-async function checkProxy(address: string): Promise<Pick<WalletData, 'proxyStatus' | 'proxyStatusError'>> {
-  try {
-    const { status } = await verifyProxyOnChain(address);
-    return { proxyStatus: status };
-  } catch (err) {
-    return { proxyStatusError: err instanceof Error ? err.message : String(err) };
-  }
-}
-
 function persist(wallet: StoredWallet): void {
   writeWalletFile(wallet);
   resetWalletIdentityCache();
 }
 
-async function createHandler(force: boolean): Promise<CLIResponse<WalletData>> {
-  if (walletExists() && !force) {
-    return wrapError(
-      'wallet',
-      'WALLET_EXISTS',
-      `A wallet already exists at ${walletPath()}. Move or delete it first, or pass --force to replace it. ` +
-        `Replacing a funded wallet without its private key backed up loses the funds.`,
-    );
-  }
-
-  const privateKey = generatePrivateKey();
-  const signer = privateKeyToAccount(privateKey).address;
-  const address = deriveProxyAddress(signer);
-
-  persist({
-    version: 1,
-    type: 'proxy',
-    address,
-    signer,
-    privateKey,
-    createdAt: Math.floor(Date.now() / 1000),
-  });
-
-  return wrapSuccess('wallet', {
-    action: 'create',
-    tier: 'trade',
-    address,
-    signer,
-    privateKey,
-    configPath: walletPath(),
-    message: 'Back up the private key now. It is not recoverable from anywhere else.',
-  });
-}
-
 async function importHandler(
   value: string | undefined,
   force: boolean,
-  proxyOverride?: string,
 ): Promise<CLIResponse<WalletData>> {
   if (!value) {
     return wrapError(
@@ -152,42 +104,49 @@ async function importHandler(
 
   if (isPrivateKey(trimmed)) {
     const privateKey = normalizePrivateKey(trimmed);
-    const signer = privateKeyToAccount(privateKey).address;
-    // --proxy exists because derivation is the one step that can be silently
-    // wrong; a user who knows their deposit address can pin it.
-    const address = proxyOverride ? getAddress(proxyOverride) : deriveProxyAddress(signer);
+    // Which contract holds the funds is not derivable offline, so ask
+    // Polymarket once and record the answer. Guessing here produces a real,
+    // empty address that is indistinguishable from an unfunded account.
+    let account;
+    try {
+      account = await resolveAccount(privateKey);
+    } catch (err) {
+      if (err instanceof AccountResolutionError) {
+        return wrapError('wallet', 'RESOLVE_FAILED', err.message);
+      }
+      throw err;
+    }
     persist({
       version: 1,
-      type: 'proxy',
-      address,
-      signer,
+      type: account.walletType,
+      address: account.address,
+      signer: account.signer,
       privateKey,
       createdAt: Math.floor(Date.now() / 1000),
+      apiCreds: account.apiCreds,
     });
     return wrapSuccess('wallet', {
       action: 'import',
       tier: 'trade',
-      address,
-      signer,
+      address: account.address,
+      signer: account.signer,
+      walletType: account.walletType,
       configPath: walletPath(),
-      ...(await checkProxy(address)),
     });
   }
 
   if (isAddress(trimmed)) {
-    // A pasted address is the PROXY, not the EOA: that is what the Polymarket
-    // UI shows as the deposit address and what the Data API returns as
-    // `proxyWallet`. Deriving from it would produce a real-looking address that
-    // has never held anything.
+    // A pasted address is the FUNDING wallet, not the signing EOA: that is what
+    // polymarket.com shows and what the Data API returns as `proxyWallet`.
+    // Nothing is resolved here, so no wallet type is claimed.
     const address = getAddress(trimmed);
-    persist({ version: 1, type: 'proxy', address, createdAt: Math.floor(Date.now() / 1000) });
+    persist({ version: 1, address, createdAt: Math.floor(Date.now() / 1000) });
     return wrapSuccess('wallet', {
       action: 'import',
       tier: 'watch',
       address,
       configPath: walletPath(),
       message: 'Read-only: balances and positions work, trading needs a private key.',
-      ...(await checkProxy(address)),
     });
   }
 
@@ -218,10 +177,10 @@ async function showHandler(): Promise<CLIResponse<WalletData>> {
     address: id.address,
     signer: id.signer,
     source: id.source,
+    ...(id.walletType ? { walletType: id.walletType } : {}),
     configPath: walletPath(),
     ...(id.conflict ? { conflict: id.conflict } : {}),
     ...(id.signer ? { polBalance: await polBalance(id.signer).then(formatPol).catch(() => undefined) } : {}),
-    ...(id.address ? await checkProxy(id.address) : {}),
   });
 }
 
@@ -410,8 +369,8 @@ async function approveHandler(args: ParsedArgs): Promise<CLIResponse<WalletData>
 }
 
 export const NO_WALLET_MESSAGE =
-  'No wallet configured. Run `polymarket wallet create` for a new one, or ' +
-  '`polymarket wallet import <private-key|address>` to bring your own.';
+  'No wallet configured. Create an account on polymarket.com, then run ' +
+  '`polymarket wallet import <private-key>`. An address alone works for read-only use.';
 
 export async function handleWallet(args: ParsedArgs): Promise<CLIResponse<WalletData>> {
   const sub = args.positionalArgs[0]?.toLowerCase();
@@ -419,10 +378,8 @@ export async function handleWallet(args: ParsedArgs): Promise<CLIResponse<Wallet
 
   try {
     switch (sub) {
-      case 'create':
-        return await createHandler(args.force);
       case 'import':
-        return await importHandler(rest[0], args.force, args.proxy);
+        return await importHandler(rest[0], args.force);
       case 'approve':
         return await approveHandler(args);
       case 'address':
@@ -434,19 +391,13 @@ export async function handleWallet(args: ParsedArgs): Promise<CLIResponse<Wallet
         return wrapError(
           'wallet',
           'UNKNOWN_SUB',
-          `Unknown subcommand: ${sub}. Try: create, import, address, show, approve.`,
+          `Unknown subcommand: ${sub}. Try: import, address, show, approve.`,
         );
     }
   } catch (err) {
     return wrapError('wallet', 'WALLET_ERROR', err instanceof Error ? err.message : String(err));
   }
 }
-
-const PROXY_STATUS_TEXT: Record<ProxyCodeStatus, string> = {
-  undeployed: 'not deployed yet (normal until the first on-chain action)',
-  confirmed: 'confirmed on-chain',
-  foreign: 'WARNING: code at this address is not a Polymarket proxy',
-};
 
 export function formatWalletHuman(data: WalletData): string {
   const lines: string[] = [];
@@ -509,19 +460,6 @@ export function formatWalletHuman(data: WalletData): string {
     return lines.join('\n');
   }
 
-  if (data.action === 'create') {
-    lines.push(theme.success('  Wallet created.'));
-    lines.push('');
-    lines.push(`    Signing wallet   ${data.signer}`);
-    lines.push(`    Funding wallet   ${data.address}  ${theme.muted('(deposit here)')}`);
-    lines.push('');
-    lines.push(theme.error('    Private key      ') + data.privateKey);
-    lines.push(theme.error('    Back this up now — it is not recoverable from anywhere else.'));
-    lines.push('');
-    lines.push(theme.muted(`    Saved to ${data.configPath}`));
-    return lines.join('\n');
-  }
-
   if (data.action === 'address') {
     return data.address ?? '';
   }
@@ -537,13 +475,8 @@ export function formatWalletHuman(data: WalletData): string {
   if (data.source) lines.push(`    Key source       ${data.source}`);
   if (data.configPath) lines.push(`    Config           ${data.configPath}`);
 
-  if (data.proxyStatus) {
-    const text = PROXY_STATUS_TEXT[data.proxyStatus];
-    lines.push(
-      `    Proxy            ${data.proxyStatus === 'foreign' ? theme.error(text) : theme.muted(text)}`,
-    );
-  } else if (data.proxyStatusError) {
-    lines.push(`    Proxy            ${theme.muted('could not check — ' + data.proxyStatusError)}`);
+  if (data.walletType) {
+    lines.push(`    Wallet type      ${theme.muted(WALLET_TYPE_LABEL[data.walletType])}`);
   }
 
   // logger.warn only buffers for the TUI, so a conflict would otherwise be

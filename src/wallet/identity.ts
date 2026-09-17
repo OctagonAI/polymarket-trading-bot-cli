@@ -19,8 +19,8 @@
  */
 import { privateKeyToAccount } from 'viem/accounts';
 import { getAddress } from 'viem';
-import { readWalletFile, type StoredWallet } from './store.js';
-import { deriveProxyAddress, isAddress, isPrivateKey, normalizePrivateKey } from './proxy.js';
+import { readWalletFile, type StoredWallet, type WalletType } from './store.js';
+import { isAddress, isPrivateKey, normalizePrivateKey } from './keys.js';
 import { logger } from '../utils/logger.js';
 
 export type WalletTier = 'none' | 'watch' | 'trade';
@@ -29,10 +29,12 @@ export type WalletSource = 'env-key' | 'env-address' | 'file' | 'none';
 
 export interface WalletIdentity {
   tier: WalletTier;
-  /** Proxy address — what holds funds and what the Data API is queried with. */
+  /** Funding address — what holds funds and what the Data API is queried with. */
   address?: string;
   /** Signing EOA. Only present at tier `trade`. */
   signer?: string;
+  /** What kind of contract the funder is. Only known for a saved wallet. */
+  walletType?: WalletType;
   source: WalletSource;
   /** Set when the env and the wallet file disagree about which account to use. */
   conflict?: string;
@@ -49,32 +51,47 @@ export interface IdentityEnv {
  * Precedence is env over file, and the env key wins *wholesale* rather than
  * merging with the file — a half-merged identity (this file's address, that
  * env's key) would sign with one account and read another.
+ *
+ * An environment key carries no funding address. Which contract holds the money
+ * for a given signer is not computable offline, so there is nothing honest to
+ * put there: `POLYMARKET_WALLET_ADDRESS` supplies it, or `wallet import` does
+ * the resolution once and saves it. Signing still works without it — the CLOB
+ * client resolves its own wallet — but reads have no account to query.
  */
 export function resolveIdentity(env: IdentityEnv, file: StoredWallet | null): WalletIdentity {
   const envKey = env.POLYMARKET_PRIVATE_KEY?.trim();
+  const envAddress = env.POLYMARKET_WALLET_ADDRESS?.trim();
+  const envFunder = envAddress && isAddress(envAddress) ? getAddress(envAddress) : undefined;
+
   if (envKey) {
     if (!isPrivateKey(envKey)) {
       // Never echo the value.
       logger.warn('POLYMARKET_PRIVATE_KEY is not a 32-byte hex key; ignoring it');
     } else {
       const signer = privateKeyToAccount(normalizePrivateKey(envKey)).address;
-      const address = deriveProxyAddress(signer);
-      const conflict =
-        file && file.address.toLowerCase() !== address.toLowerCase()
-          ? `POLYMARKET_PRIVATE_KEY resolves to ${address}, but the saved wallet is ${file.address}. Using the environment key.`
-          : undefined;
-      return { tier: 'trade', address, signer, source: 'env-key', ...(conflict ? { conflict } : {}) };
+      const conflict = envFunder
+        ? file && file.address.toLowerCase() !== envFunder.toLowerCase()
+          ? `POLYMARKET_WALLET_ADDRESS is ${envFunder}, but the saved wallet is ${file.address}. Using the environment.`
+          : undefined
+        : 'POLYMARKET_PRIVATE_KEY is set without POLYMARKET_WALLET_ADDRESS, so balances and positions ' +
+          'have no account to read. Set it, or run `polymarket wallet import <private-key>`.';
+      return {
+        tier: 'trade',
+        ...(envFunder ? { address: envFunder } : {}),
+        signer,
+        source: 'env-key',
+        ...(conflict ? { conflict } : {}),
+      };
     }
   }
 
   if (file?.privateKey && isPrivateKey(file.privateKey)) {
     const signer = file.signer ?? privateKeyToAccount(normalizePrivateKey(file.privateKey)).address;
-    return { tier: 'trade', address: file.address, signer, source: 'file' };
+    return { tier: 'trade', address: file.address, signer, walletType: file.type, source: 'file' };
   }
 
-  const envAddress = env.POLYMARKET_WALLET_ADDRESS?.trim();
-  if (envAddress && isAddress(envAddress)) {
-    return { tier: 'watch', address: getAddress(envAddress), source: 'env-address' };
+  if (envFunder) {
+    return { tier: 'watch', address: envFunder, source: 'env-address' };
   }
 
   if (file) {
@@ -82,6 +99,7 @@ export function resolveIdentity(env: IdentityEnv, file: StoredWallet | null): Wa
       tier: 'watch',
       address: file.address,
       ...(file.signer ? { signer: file.signer } : {}),
+      walletType: file.type,
       source: 'file',
     };
   }

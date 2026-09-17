@@ -8,7 +8,7 @@ import { loadWalletIdentity } from '../../wallet/identity.js';
  * the case where the agent is asked to trade and the wallet cannot sign.
  */
 export const TRADING_UNAVAILABLE_MESSAGE =
-  'Placing orders needs a wallet with a private key. Run `polymarket wallet create` ' +
+  'Placing orders needs a wallet with a private key. Run `polymarket wallet import <private-key>` ' +
   'for a new one or `polymarket wallet import <private-key>` to bring your own, fund ' +
   'it with pUSD, then `polymarket wallet approve`.';
 
@@ -56,8 +56,8 @@ export function isTradingCommand(name: string): boolean {
 export function commandUnavailableReason(name: string): string | null {
   if ((ACCOUNT_COMMANDS as readonly string[]).includes(name)) {
     return loadWalletIdentity().tier === 'none'
-      ? 'No wallet configured, so there is no account to report. Run `polymarket wallet create` ' +
-          'for a new one, or `polymarket wallet import <address>` to read an existing account.'
+      ? 'No wallet configured, so there is no account to report. Run `polymarket wallet import ' +
+          '<private-key>` to trade, or `polymarket wallet import <address>` to read an account.'
       : null;
   }
   if ((KEY_COMMANDS as readonly string[]).includes(name)) {
@@ -66,8 +66,8 @@ export function commandUnavailableReason(name: string): string | null {
     return tier === 'watch'
       ? 'This wallet is watch-only. Orders are authenticated with your private key. ' +
           'Run `polymarket wallet import <private-key> --force` to use them.'
-      : 'No wallet configured. Run `polymarket wallet create` or ' +
-          '`polymarket wallet import <private-key>`.';
+      : 'No wallet configured. Run `polymarket wallet import <private-key>` with the key for ' +
+          'your polymarket.com account.';
   }
   return null;
 }

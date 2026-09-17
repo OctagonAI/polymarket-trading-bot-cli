@@ -239,7 +239,7 @@ export async function kellySize(params: KellySizeParams): Promise<KellyResult> {
   if (bankroll.bankrollUnset) {
     return makeResult({
       skippedReason:
-        'No bankroll available — configure a wallet (polymarket wallet create) so the ' +
+        'No bankroll available — configure a wallet (polymarket wallet import) so the ' +
         'pUSD balance can be read, or set a limit with: polymarket config risk.bankroll_usdc <amount>',
     });
   }

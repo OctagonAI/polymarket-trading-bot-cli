@@ -56,33 +56,36 @@ Tip: ${p}similar <market-slug> walks the event → series → category tree to f
     wallet: `**${p}wallet** — Your Polymarket wallet
 
 ${p}wallet                       Show the current wallet (same as \`show\`)
-${p}wallet create                Generate a new dedicated wallet
-${p}wallet import <private-key>  Bring an existing wallet (enables trading)
+${p}wallet import <private-key>  Import your polymarket.com wallet (enables trading)
 ${p}wallet import <address>      Read-only: balances and positions, no trading
 ${p}wallet address               Print the funding address only
-${p}wallet show                  Addresses, mode, key source, on-chain proxy status
+${p}wallet show                  Addresses, wallet type, mode, key source
 ${p}wallet approve --check       List all 11 approvals and their state (free)
 ${p}wallet approve               Grant the 7 trading needs (on-chain, costs gas)
 ${p}wallet approve --all         Also grant the 4 optional split/merge/redeem ones
 
 Flags:
   --force                           Replace an existing wallet
-  --proxy <address>                 Pin the funding address instead of deriving it
   --check                           Report approval state without sending anything
   --yes                             Skip the confirmation prompt (scripting)
   --all                             Include approvals trading does not require
 
+There is no ${p}wallet create. A wallet made here would be a fresh account with
+no Polymarket history, and polymarket.com deposits only into the account it made
+for you — so the way in is to import the key for the account you already have.
+
 A Polymarket account has two addresses:
-  Signing wallet   the keypair that signs. Pays gas in POL.
-  Funding wallet   a contract derived from it. Holds your pUSD. Deposit here.
+  Signing wallet   the keypair that signs. Pays gas in POL. Holds nothing.
+  Funding wallet   a contract it controls. Holds your pUSD. Deposit here.
 
 Reading a balance at the signing wallet always shows zero, so ${p}wallet show
-prints both. An address you paste is treated as the FUNDING wallet, which is
-what polymarket.com shows you as your deposit address.
+prints both. Which contract is the funding wallet is not computable from the
+key — Polymarket is asked once, at import, and the answer is saved. An address
+you paste is taken as the FUNDING wallet, which is what your polymarket.com
+profile shows.
 
-Use a dedicated wallet. The private key is stored on this machine and whatever
-it controls, this CLI controls — so fund it with what you intend to trade, not
-with everything you own.
+Whatever the key controls, this CLI controls — so keep in that account only
+what you intend to trade.
 
 The key is written to ~/.polymarket-bot/wallet.json with owner-only (0600)
 permissions, never to .env. Override it for one session with

@@ -98,12 +98,26 @@ describe('parseStoredWallet', () => {
   });
 
   test('rejects unknown versions and wallet types', () => {
-    expect(() => parseStoredWallet({ version: 2, type: 'proxy', address: ADDRESS })).toThrow(
+    expect(() => parseStoredWallet({ version: 2, type: 'deposit', address: ADDRESS })).toThrow(
       /unsupported wallet file version/,
     );
-    expect(() => parseStoredWallet({ version: 1, type: 'safe', address: ADDRESS })).toThrow(
+    expect(() => parseStoredWallet({ version: 1, type: 'multisig', address: ADDRESS })).toThrow(
       /unsupported wallet type/,
     );
+  });
+
+  test('every wallet type Polymarket reports survives a round trip', () => {
+    for (const type of ['deposit', 'proxy', 'safe', 'eoa'] as const) {
+      expect(parseStoredWallet({ version: 1, type, address: ADDRESS }).type).toBe(type);
+    }
+  });
+
+  test('an address with no type is kept rather than assigned one', () => {
+    // A pasted address resolves nothing, so claiming a type would be a guess
+    // recorded as fact.
+    const w = parseStoredWallet({ version: 1, address: ADDRESS });
+    expect(w.address).toBe(ADDRESS);
+    expect(w.type).toBeUndefined();
   });
 
   test('rejects non-objects', () => {

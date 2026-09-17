@@ -61,7 +61,7 @@ function resolveAlias(subcommand: Subcommand, positionalArgs: string[]): Resolve
     // Legacy "polymarket search themes" (Kalshi category labels) is still reachable
     // via `search themes`.
 
-    // wallet sub-routing (create/import/address/show) — telemetry granularity.
+    // wallet sub-routing (import/address/show/approve) — telemetry granularity.
     // The sub-verb is recorded; no address or key ever reaches telemetry.
     case 'wallet': {
       const sub = positionalArgs[0]?.toLowerCase();

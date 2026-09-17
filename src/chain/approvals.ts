@@ -32,7 +32,13 @@
 import { encodeFunctionData, decodeFunctionResult, erc20Abi, getAddress, maxUint256, parseAbi } from 'viem';
 import { ethCall } from './rpc.js';
 import { PUSD_ADDRESS, fromPusdUnits } from './erc20.js';
-import { PROXY_FACTORY } from '../wallet/proxy.js';
+
+/**
+ * Relay target for `buildApprovalBatch`, which only works for a type-1 proxy.
+ * The send path is being replaced by the SDK's own approval routing; the read
+ * path below is wallet-type agnostic and stays.
+ */
+export const PROXY_FACTORY = '0xaB45c5A4B0c941a2F231C04C3f49182e1A254052';
 
 export const CONDITIONAL_TOKENS = '0x4D97DCd97eC945f40cF65F87097ACe5EA0476045';
 
@@ -229,4 +235,3 @@ export function buildApprovalBatch(pending: ApprovalStatus[]): `0x${string}` {
   return encodeFunctionData({ abi: proxyAbi, functionName: 'proxy', args: [calls] });
 }
 
-export { PROXY_FACTORY };

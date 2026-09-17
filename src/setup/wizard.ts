@@ -9,13 +9,8 @@ import { loadBotConfig, saveBotConfig, setBotSetting } from '../utils/bot-config
 import { appPath } from '../utils/paths.js';
 import { writeWalletFile, walletExists, walletPath, type StoredWallet } from '../wallet/store.js';
 import { resetWalletIdentityCache } from '../wallet/identity.js';
-import {
-  deriveProxyAddress,
-  isAddress,
-  isPrivateKey,
-  normalizePrivateKey,
-} from '../wallet/proxy.js';
-import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import { isAddress, isPrivateKey, normalizePrivateKey } from '../wallet/keys.js';
+import { resolveAccount, AccountResolutionError } from '../wallet/account.js';
 import { getAddress } from 'viem';
 import type { SelectItem } from '@mariozechner/pi-tui';
 
@@ -26,7 +21,6 @@ export type WizardState =
   | 'llm_api_key'
   | 'wallet_choice'
   | 'wallet_input'
-  | 'wallet_created'
   | 'bankroll'
   | 'testing'
   | 'complete';
@@ -50,8 +44,8 @@ export class SetupWizardController {
   /** Staged like the env keys — written to disk only when the wizard completes. */
   private pendingWallet: StoredWallet | null = null;
   private walletError: string | null = null;
-  /** Shown once on the wallet_created screen, then only inside pendingWallet. */
-  private generatedKey: string | null = null;
+  /** True while the SDK is being asked which wallet a pasted key controls. */
+  private resolvingWallet = false;
   private readonly onComplete: () => void;
   private readonly onChange: () => void;
   private active = false;
@@ -85,7 +79,7 @@ export class SetupWizardController {
     this.bankrollError = null;
     this.pendingWallet = null;
     this.walletError = null;
-    this.generatedKey = null;
+    this.resolvingWallet = false;
     this.currentInput = null;
     this.currentSelector = null;
     this.onChange();
@@ -138,9 +132,7 @@ export class SetupWizardController {
       case 'wallet_choice':
         return 'Step 4/5: Wallet';
       case 'wallet_input':
-        return 'Step 4/5: Wallet — bring your own';
-      case 'wallet_created':
-        return 'Step 4/5: Wallet — save your key';
+        return 'Step 4/5: Wallet — import yours';
       case 'bankroll':
         return 'Step 5/5: Bankroll';
       case 'testing':
@@ -161,16 +153,15 @@ export class SetupWizardController {
       case 'llm_api_key':
         return `Paste your ${this.selectedProvider ?? 'LLM'} API key below.`;
       case 'wallet_choice':
-        return 'A wallet lets the CLI read your balance and positions, and later place trades.\n'
+        return 'A wallet lets the CLI read your balance and positions, and place trades.\n'
           + 'Research and market data work without one.\n'
-          + 'Use a wallet dedicated to this bot: its key is stored on this machine,\n'
-          + 'and whatever that key controls, this CLI controls.';
+          + 'Use the account you already have on polymarket.com — that is where\n'
+          + 'your funds are. Its key is stored on this machine, and whatever that\n'
+          + 'key controls, this CLI controls.';
       case 'wallet_input':
-        return 'Paste a private key (64 hex characters) to enable trading,\n'
-          + 'or a wallet address (0x + 40 hex) for read-only access.\n'
-          + 'An address is the one polymarket.com shows you as your deposit address.';
-      case 'wallet_created':
-        return 'This is the only time the private key is shown. Copy it somewhere safe.';
+        return 'Paste the private key of your polymarket.com account (64 hex characters)\n'
+          + 'to enable trading, or a wallet address (0x + 40 hex) for read-only access.\n'
+          + 'The address is the one polymarket.com shows on your profile.';
       case 'bankroll':
         // Framed as a LIMIT, not as "what you have". Polymarket's collateral is
         // pUSD held on-chain, which this build cannot read yet — so the figure
@@ -210,8 +201,6 @@ export class SetupWizardController {
         return 'Enter to confirm · Esc to cancel setup';
       case 'wallet_choice':
         return 'Enter to confirm · Esc to cancel setup';
-      case 'wallet_created':
-        return 'Enter once you have saved the key';
       case 'llm_provider_select':
         return 'Enter to confirm · Esc to cancel setup';
       case 'testing':
@@ -241,22 +230,8 @@ export class SetupWizardController {
   /** Returns extra body lines for states without an interactive component */
   getBodyLines(): string[] {
     if (this.wizardState === 'wallet_choice' || this.wizardState === 'wallet_input') {
+      if (this.resolvingWallet) return ['', theme.muted('  Asking Polymarket which wallet this key controls…')];
       return this.walletError ? ['', theme.error(`  ${this.walletError}`)] : [];
-    }
-    if (this.wizardState === 'wallet_created') {
-      const w = this.pendingWallet;
-      if (!w) return [];
-      return [
-        '',
-        `    Signing wallet   ${w.signer}`,
-        `    Funding wallet   ${w.address}  ${theme.muted('(deposit pUSD here)')}`,
-        '',
-        theme.error('    Private key'),
-        `    ${this.generatedKey}`,
-        '',
-        theme.error('    Copy this now. It is shown once and cannot be recovered.'),
-        theme.muted(`    On finish it is saved to ${walletPath()} (owner-only).`),
-      ];
     }
     if (this.wizardState === 'bankroll') {
       return this.bankrollError ? ['', theme.error(`  ${this.bankrollError}`)] : [];
@@ -284,7 +259,7 @@ export class SetupWizardController {
         lines.push(theme.success('  OK') + `  Wallet ${this.pendingWallet.address} (${mode})`);
       } else {
         lines.push(theme.muted('  --') + '  No wallet — research and market data only.');
-        lines.push(theme.muted('      Set one up later: polymarket wallet create'));
+        lines.push(theme.muted('      Set one up later: polymarket wallet import <private-key>'));
       }
       if (this.pendingBankroll !== null) {
         lines.push(theme.success(`  OK`) + `  Position sizing limit: $${this.pendingBankroll}`);
@@ -357,11 +332,10 @@ export class SetupWizardController {
       case 'wallet_choice': {
         if (!this.currentSelector) {
           const items: SelectItem[] = [
-            { value: 'create', label: '1. Create a new dedicated wallet (recommended)' },
-            { value: 'import', label: '2. Use a wallet I already have' },
-            { value: 'skip', label: '3. Skip — research only, set up later' },
+            { value: 'import', label: '1. Import my polymarket.com wallet' },
+            { value: 'skip', label: '2. Skip — research only, set up later' },
           ];
-          const list = new VimSelectList(items, 6, selectListTheme);
+          const list = new VimSelectList(items, 5, selectListTheme);
           list.onSelect = (item) => this.handleWalletChoice(item.value);
           list.onCancel = () => this.cancel();
           this.currentSelector = list;
@@ -400,10 +374,6 @@ export class SetupWizardController {
     if (keyData === '\r') {
       if (this.wizardState === 'welcome') {
         this.transition('octagon_api_key');
-        return;
-      }
-      if (this.wizardState === 'wallet_created') {
-        this.transition('bankroll');
         return;
       }
       if (this.wizardState === 'complete') {
@@ -555,23 +525,6 @@ export class SetupWizardController {
       return;
     }
 
-    if (choice === 'create') {
-      const privateKey = generatePrivateKey();
-      const signer = privateKeyToAccount(privateKey).address;
-      this.pendingWallet = {
-        version: 1,
-        type: 'proxy',
-        address: deriveProxyAddress(signer),
-        signer,
-        privateKey,
-        createdAt: Math.floor(Date.now() / 1000),
-      };
-      this.generatedKey = privateKey;
-      this.walletError = null;
-      this.transition('wallet_created');
-      return;
-    }
-
     this.transition('wallet_input');
   }
 
@@ -580,7 +533,7 @@ export class SetupWizardController {
    * silently skipping — a mistyped key that quietly becomes "no wallet" is
    * indistinguishable from having declined one.
    */
-  private handleWalletInput(value: string | null) {
+  private async handleWalletInput(value: string | null) {
     const raw = value?.trim() ?? '';
     if (raw === '') {
       this.pendingWallet = null;
@@ -590,27 +543,43 @@ export class SetupWizardController {
     }
 
     if (isPrivateKey(raw)) {
+      // Which contract holds the funds is not derivable offline, so this is a
+      // network call. Staying on the step while it runs means a wrong key or an
+      // unreachable API is reported here rather than becoming a silent skip.
       const privateKey = normalizePrivateKey(raw);
-      const signer = privateKeyToAccount(privateKey).address;
-      this.pendingWallet = {
-        version: 1,
-        type: 'proxy',
-        address: deriveProxyAddress(signer),
-        signer,
-        privateKey,
-        createdAt: Math.floor(Date.now() / 1000),
-      };
       this.walletError = null;
-      this.transition('bankroll');
+      this.resolvingWallet = true;
+      this.onChange();
+      try {
+        const account = await resolveAccount(privateKey);
+        this.pendingWallet = {
+          version: 1,
+          type: account.walletType,
+          address: account.address,
+          signer: account.signer,
+          privateKey,
+          createdAt: Math.floor(Date.now() / 1000),
+          apiCreds: account.apiCreds,
+        };
+        this.transition('bankroll');
+      } catch (err) {
+        this.walletError =
+          err instanceof AccountResolutionError
+            ? `${err.message} Press Enter on an empty field to skip.`
+            : `Could not resolve this key's wallet: ${err instanceof Error ? err.message : String(err)}`;
+        this.currentInput = null;
+        this.onChange();
+      } finally {
+        this.resolvingWallet = false;
+      }
       return;
     }
 
     if (isAddress(raw)) {
-      // Treated as the funding (proxy) address — that is what a user copies
-      // from polymarket.com. Deriving from it would yield an empty account.
+      // Treated as the funding address — that is what a user copies from their
+      // polymarket.com profile. Nothing is resolved, so no type is claimed.
       this.pendingWallet = {
         version: 1,
-        type: 'proxy',
         address: getAddress(raw),
         createdAt: Math.floor(Date.now() / 1000),
       };

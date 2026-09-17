@@ -103,7 +103,7 @@ export async function handleTrade(
       'NO_KEY',
       id.tier === 'watch'
         ? `This wallet is watch-only (${id.address}). Run \`polymarket wallet import <private-key> --force\` to trade.`
-        : 'No wallet configured. Run `polymarket wallet create`, fund it, then `polymarket wallet approve`.',
+        : 'No wallet configured. Run `polymarket wallet import <private-key>` with your polymarket.com key.',
     );
   }
 

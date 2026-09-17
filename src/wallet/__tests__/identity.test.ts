@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import { privateKeyToAccount } from 'viem/accounts';
 import { resolveIdentity, type IdentityEnv } from '../identity.js';
-import { deriveProxyAddress, isAddress, isPrivateKey, normalizePrivateKey, classifyProxyCode, expectedProxyRuntimeCode } from '../proxy.js';
+import { isAddress, isPrivateKey, normalizePrivateKey } from '../keys.js';
 import type { StoredWallet } from '../store.js';
 
 /**
@@ -10,14 +10,12 @@ import type { StoredWallet } from '../store.js';
  */
 
 const KEY_A = `0x${'11'.repeat(32)}`;
-const KEY_B = `0x${'22'.repeat(32)}`;
 const SIGNER_A = privateKeyToAccount(KEY_A as `0x${string}`).address;
-const PROXY_A = deriveProxyAddress(SIGNER_A);
-const PROXY_B = deriveProxyAddress(privateKeyToAccount(KEY_B as `0x${string}`).address);
+const SAVED = '0x18eD5C15CeD1bFdf88e701601C4a0BbD4F5142dE';
 const OTHER = '0x1111111111111111111111111111111111111111';
 
 function fileWallet(overrides: Partial<StoredWallet> = {}): StoredWallet {
-  return { version: 1, type: 'proxy', address: PROXY_B, createdAt: 0, ...overrides };
+  return { version: 1, type: 'deposit', address: SAVED, createdAt: 0, ...overrides };
 }
 
 describe('tier resolution', () => {
@@ -25,17 +23,32 @@ describe('tier resolution', () => {
     expect(resolveIdentity({}, null)).toEqual({ tier: 'none', source: 'none' });
   });
 
-  test('an env key gives trading, with the proxy derived from it', () => {
+  test('an env key alone gives trading but no account to read', () => {
+    // Which contract holds the funds is not derivable from the key, so there is
+    // nothing honest to put in `address`. Inventing one would name a real,
+    // empty account — indistinguishable from an unfunded wallet.
     const id = resolveIdentity({ POLYMARKET_PRIVATE_KEY: KEY_A }, null);
     expect(id.tier).toBe('trade');
     expect(id.signer).toBe(SIGNER_A);
-    expect(id.address).toBe(PROXY_A);
+    expect(id.address).toBeUndefined();
     expect(id.source).toBe('env-key');
+    expect(id.conflict).toContain('POLYMARKET_WALLET_ADDRESS');
   });
 
-  test('a stored key gives trading', () => {
+  test('an env key paired with an address is complete and quiet', () => {
+    const id = resolveIdentity(
+      { POLYMARKET_PRIVATE_KEY: KEY_A, POLYMARKET_WALLET_ADDRESS: OTHER },
+      null,
+    );
+    expect(id).toMatchObject({ tier: 'trade', signer: SIGNER_A, address: OTHER, source: 'env-key' });
+    expect(id.conflict).toBeUndefined();
+  });
+
+  test('a stored key gives trading, and carries the resolved wallet type', () => {
     const id = resolveIdentity({}, fileWallet({ signer: SIGNER_A, privateKey: KEY_A }));
     expect(id.tier).toBe('trade');
+    expect(id.address).toBe(SAVED);
+    expect(id.walletType).toBe('deposit');
     expect(id.source).toBe('file');
   });
 
@@ -48,17 +61,22 @@ describe('tier resolution', () => {
     expect(resolveIdentity({}, fileWallet())).toMatchObject({ tier: 'watch', source: 'file' });
   });
 
-  test('the env key wins wholesale and reports the disagreement', () => {
-    // Merging the file's address with the env's key would sign as one account
-    // and read balances from another.
-    const id = resolveIdentity({ POLYMARKET_PRIVATE_KEY: KEY_A }, fileWallet());
-    expect(id.address).toBe(PROXY_A);
-    expect(id.address).not.toBe(PROXY_B);
-    expect(id.conflict).toContain(PROXY_B);
+  test('the env address wins over the file and reports the disagreement', () => {
+    // Reading one account while signing for another is the failure this exists
+    // to prevent, so the two must never be merged silently.
+    const id = resolveIdentity(
+      { POLYMARKET_PRIVATE_KEY: KEY_A, POLYMARKET_WALLET_ADDRESS: OTHER },
+      fileWallet(),
+    );
+    expect(id.address).toBe(OTHER);
+    expect(id.conflict).toContain(SAVED);
   });
 
   test('no conflict is reported when env and file agree', () => {
-    const id = resolveIdentity({ POLYMARKET_PRIVATE_KEY: KEY_A }, fileWallet({ address: PROXY_A }));
+    const id = resolveIdentity(
+      { POLYMARKET_PRIVATE_KEY: KEY_A, POLYMARKET_WALLET_ADDRESS: SAVED },
+      fileWallet(),
+    );
     expect(id.conflict).toBeUndefined();
   });
 
@@ -73,7 +91,14 @@ describe('tier resolution', () => {
   test('a malformed env key is ignored rather than crashing the session', () => {
     const id = resolveIdentity({ POLYMARKET_PRIVATE_KEY: 'nonsense' }, fileWallet());
     expect(id.tier).toBe('watch');
-    expect(id.address).toBe(PROXY_B);
+    expect(id.address).toBe(SAVED);
+  });
+
+  test('a legacy proxy wallet file still resolves, and says so', () => {
+    // Refusing to load it would brick an existing install over a migration.
+    const id = resolveIdentity({}, fileWallet({ type: 'proxy', signer: SIGNER_A, privateKey: KEY_A }));
+    expect(id.tier).toBe('trade');
+    expect(id.walletType).toBe('proxy');
   });
 });
 
@@ -88,36 +113,5 @@ describe('input recognition', () => {
     expect(isPrivateKey(OTHER)).toBe(false);
     expect(isAddress(OTHER)).toBe(true);
     expect(isAddress(`0x${'a'.repeat(64)}`)).toBe(false);
-  });
-});
-
-describe('proxy derivation and code check', () => {
-  test('derivation is deterministic and is not the signing address', () => {
-    expect(deriveProxyAddress(SIGNER_A)).toBe(PROXY_A);
-    // Reading a balance at the EOA returns zero for every funded account, so
-    // conflating the two is a silent money bug.
-    expect(PROXY_A.toLowerCase()).not.toBe(SIGNER_A.toLowerCase());
-  });
-
-  test('different signers derive different proxies', () => {
-    expect(PROXY_A).not.toBe(PROXY_B);
-  });
-
-  test('code classification separates undeployed, confirmed and foreign', () => {
-    const impl = '0x44e999d5c2F66Ef0861317f9A4805AC2e90aEB4f';
-    expect(classifyProxyCode('0x', impl)).toBe('undeployed');
-    expect(classifyProxyCode('', impl)).toBe('undeployed');
-    expect(classifyProxyCode(expectedProxyRuntimeCode(impl), impl)).toBe('confirmed');
-    // Real leaderboard accounts include Safes and older relay proxies; those
-    // must report as foreign rather than be assumed good.
-    expect(classifyProxyCode('0xdeadbeef', impl)).toBe('foreign');
-  });
-
-  test('the expected runtime code is an EIP-1167 clone of the implementation', () => {
-    const impl = '0x44e999d5c2F66Ef0861317f9A4805AC2e90aEB4f';
-    const code = expectedProxyRuntimeCode(impl);
-    expect(code.startsWith('0x363d3d373d3d3d363d73')).toBe(true);
-    expect(code).toContain(impl.slice(2).toLowerCase());
-    expect(code.endsWith('5af43d82803e903d91602b57fd5bf3')).toBe(true);
   });
 });

@@ -27,21 +27,28 @@ import { appPath } from '../utils/paths.js';
 export const WALLET_FILE_MODE = 0o600;
 export const WALLET_DIR_MODE = 0o700;
 
-/** Only signature type 1 is supported; the field exists so the file is self-describing. */
-export type WalletType = 'proxy';
+/**
+ * Which kind of contract holds the funds. Resolved by the SDK at import and
+ * recorded so the file is self-describing.
+ *
+ * `proxy` and `safe` are older Polymarket accounts. New accounts — anything
+ * created on polymarket.com recently — are `deposit`.
+ */
+export type WalletType = 'deposit' | 'proxy' | 'safe' | 'eoa';
+
+const WALLET_TYPES: readonly WalletType[] = ['deposit', 'proxy', 'safe', 'eoa'];
 
 export interface StoredWallet {
   version: 1;
-  type: WalletType;
-  /** The proxy that holds funds. Always present — this is what gets queried. */
+  /** Absent for a pasted address: nothing was resolved, so nothing is claimed. */
+  type?: WalletType;
+  /** The contract that holds funds. Always present — this is what gets queried. */
   address: string;
   /** Signing EOA. Absent for a watch-only wallet. */
   signer?: string;
   /** Absent for a watch-only wallet. */
   privateKey?: string;
   createdAt: number;
-  /** Unix seconds when `eth_getCode` last confirmed the proxy. */
-  verifiedCodeAt?: number;
   /**
    * CLOB L2 credentials, derived from the private key.
    *
@@ -80,7 +87,9 @@ export function parseStoredWallet(raw: unknown): StoredWallet {
   const w = raw as Record<string, unknown>;
 
   if (w.version !== 1) throw new Error(`unsupported wallet file version: ${String(w.version)}`);
-  if (w.type !== 'proxy') throw new Error(`unsupported wallet type: ${String(w.type)}`);
+  if (w.type !== undefined && !WALLET_TYPES.includes(w.type as WalletType)) {
+    throw new Error(`unsupported wallet type: ${String(w.type)}`);
+  }
 
   const address = typeof w.address === 'string' ? w.address.trim() : '';
   if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
@@ -95,12 +104,11 @@ export function parseStoredWallet(raw: unknown): StoredWallet {
   // without a key is just a watch-only wallet, so neither is fatal.
   return {
     version: 1,
-    type: 'proxy',
+    ...(w.type !== undefined ? { type: w.type as WalletType } : {}),
     address,
     ...(signer ? { signer } : {}),
     ...(privateKey ? { privateKey } : {}),
     createdAt: typeof w.createdAt === 'number' ? w.createdAt : 0,
-    ...(typeof w.verifiedCodeAt === 'number' ? { verifiedCodeAt: w.verifiedCodeAt } : {}),
     ...(isApiCreds(w.apiCreds) ? { apiCreds: w.apiCreds } : {}),
   };
 }
