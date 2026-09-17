@@ -1,4 +1,4 @@
-import { Container, ProcessTerminal, Spacer, Text, TUI, CombinedAutocompleteProvider } from '@mariozechner/pi-tui';
+import { Container, ProcessTerminal, Spacer, Text, TUI, CombinedAutocompleteProvider, isKeyRelease } from '@mariozechner/pi-tui';
 import type { SlashCommand, AutocompleteItem } from '@mariozechner/pi-tui';
 import type {
   ApprovalDecision,
@@ -31,6 +31,7 @@ import {
   createProviderSelector,
 } from './components/index.js';
 import { editorTheme, theme } from './theme.js';
+import { confirmKeyAction } from './components/confirm-key.js';
 import { handleSlashCommand, executePendingTrade } from './commands/index.js';
 import type { CommandResult } from './commands/index.js';
 import { formatResponse } from './utils/markdown-table.js';
@@ -185,6 +186,62 @@ export async function runCli(options?: { forceSetup?: boolean }) {
   const inputHistory = new InputHistoryController(() => tui.requestRender());
   let lastError: string | null = null;
   let pendingTrade: CommandResult['pendingTrade'] | null = null;
+
+  /**
+   * A prepared order answers to a single keypress.
+   *
+   * The prompt is modal while it is up: every key except Ctrl+C is swallowed,
+   * so a half-typed "yes" cannot leave "es" in the editor to be sent to the
+   * agent as a query, and no stray text reaches the input line at all. Ctrl+C
+   * is deliberately passed through — the editor owns quitting, and a
+   * confirmation prompt must never be a trap.
+   *
+   * Key *release* events are ignored rather than consumed. With the kitty
+   * protocol active a single "y" arrives as a press and a release; treating the
+   * release as a second answer would act twice on one keystroke.
+   */
+  const resolvePendingTrade = async (confirmed: boolean) => {
+    const trade = pendingTrade;
+    if (!trade) return;
+    pendingTrade = null;
+    chatLog.resetToolGrouping();
+
+    if (!confirmed) {
+      trackEvent('trade_rejected', { action: trade.action, side: trade.outcome });
+      chatLog.finalizeAnswer('Order canceled.');
+      tui.requestRender();
+      return;
+    }
+
+    // One keypress and no echoed line, so the indicator is the only sign the
+    // answer registered while the order is in flight.
+    workingIndicator.setState({ status: 'thinking' });
+    tui.requestRender();
+    try {
+      chatLog.finalizeAnswer(await executePendingTrade(trade));
+    } catch (err) {
+      chatLog.finalizeAnswer(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      workingIndicator.setState({ status: 'idle' });
+    }
+    tui.requestRender();
+  };
+
+  tui.addInputListener((data: string) => {
+    if (!pendingTrade) return;
+    switch (confirmKeyAction(data, isKeyRelease(data))) {
+      case 'passthrough':
+        return;
+      case 'submit':
+        void resolvePendingTrade(true);
+        return { consume: true };
+      case 'cancel':
+        void resolvePendingTrade(false);
+        return { consume: true };
+      default:
+        return { consume: true };
+    }
+  });
 
   const onError = (message: string) => {
     lastError = message;
@@ -613,32 +670,6 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       return;
     }
 
-    // Handle pending trade confirmation (yes/no)
-    if (pendingTrade) {
-      const answer = query.trim().toLowerCase();
-      if (answer === 'y' || answer === 'yes') {
-        chatLog.addQuery(query);
-        chatLog.resetToolGrouping();
-        try {
-          const result = await executePendingTrade(pendingTrade);
-          chatLog.finalizeAnswer(result);
-        } catch (err) {
-          chatLog.finalizeAnswer(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        }
-        pendingTrade = null;
-        tui.requestRender();
-        return;
-      } else {
-        trackEvent('trade_rejected', { action: pendingTrade.action, side: pendingTrade.outcome });
-        chatLog.addQuery(query);
-        chatLog.resetToolGrouping();
-        chatLog.finalizeAnswer('Order canceled.');
-        pendingTrade = null;
-        tui.requestRender();
-        return;
-      }
-    }
-
     // Handle slash commands
     if (query.startsWith('/')) {
       chatLog.addQuery(query);
@@ -670,9 +701,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
           if (cmdResult.pendingTrade) {
             pendingTrade = cmdResult.pendingTrade;
             chatLog.finalizeAnswer(
-              formatResponse(
-                `\n**Confirm order?** Type **yes** to submit or **no** to cancel.`
-              )
+              formatResponse(`\n**Place this order?**  y to submit · n or esc to cancel`)
             );
           }
           tui.requestRender();
