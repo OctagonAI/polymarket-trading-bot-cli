@@ -34,7 +34,7 @@ import { handleBasket, formatBasketHuman } from './basket.js';
 import { handleWallet, formatWalletHuman } from './wallet.js';
 import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
 import { handleOrders, handleCancelOrders, formatOrdersHuman, formatCancelHuman } from './orders.js';
-import { handleTrade, formatTradeHuman } from './trade.js';
+import { prepareTrade, submitTrade, formatTradeHuman, type PreparedTrade } from './trade.js';
 import { handleEvents, formatEventsHuman } from './events.js';
 import { handleTrust, formatTrustHuman } from './trust.js';
 import { handleReport, formatReportHuman } from './report.js';
@@ -44,13 +44,17 @@ import { handleCatalysts, formatCatalystsHuman } from './catalysts.js';
 
 export interface CommandResult {
   output: string;
-  /** If set, show this as a pending trade requiring approval */
+  /**
+   * A signed, unsent order awaiting the user's yes.
+   *
+   * The TUI cannot prompt on stdin — it holds the terminal in raw mode, and a
+   * second reader corrupts the input stream — so the order is prepared here,
+   * previewed, and submitted from the TUI's own input loop.
+   */
   pendingTrade?: {
-    ticker: string;
+    prepared: PreparedTrade;
     action: 'buy' | 'sell';
-    side: 'yes' | 'no';
-    count: number;
-    price: number | undefined;
+    outcome: string;
   };
   /** If set, run this async function after showing `output` and append the result */
   asyncFollowUp?: () => Promise<string>;
@@ -346,17 +350,9 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
 }
 
 export async function executePendingTrade(trade: NonNullable<CommandResult['pendingTrade']>): Promise<string> {
-  // Already user-approved at the point this is called, so the handler's own
-  // prompt would be a second confirmation for the same decision.
-  const parsed = parseArgs([
-    trade.action,
-    trade.ticker,
-    String(trade.count),
-    ...(trade.price !== undefined ? [String(trade.price)] : []),
-    trade.side,
-    '--yes',
-  ]);
-  const resp = await handleTrade(trade.action, parsed);
+  // The order was signed when it was prepared; the user has now said yes, so
+  // this is the submit half and nothing is re-parsed or re-priced.
+  const resp = await submitTrade(trade.prepared);
   return resp.ok ? formatTradeHuman(resp.data) : (resp.error?.message ?? `${trade.action} failed`);
 }
 
@@ -414,17 +410,30 @@ function parseSide(val: string | undefined): 'yes' | 'no' | null {
 }
 
 /**
- * The stub this replaces parsed ticker, count, price and side and then threw it
- * all away. Argument shape now lives in `handleTrade`, so the TUI and the CLI
- * cannot drift apart on what `/buy 10 0.42 no` means.
+ * Argument shape lives in `prepareTrade`, so the TUI and the CLI cannot drift
+ * apart on what `/buy 10 0.42 no` means.
+ *
+ * `--yes` submits without asking, matching the CLI. Otherwise this returns the
+ * preview and a signed order, and the TUI collects the answer itself.
  */
-function handleTradeCommand(action: 'buy' | 'sell', args: string[]): CommandResult {
+async function handleTradeCommand(action: 'buy' | 'sell', args: string[]): Promise<CommandResult> {
   const parsed = parseArgs([action, ...args]);
+  const result = await prepareTrade(action, parsed);
+  if (!result.ok) {
+    return { output: result.response.error?.message ?? `${action} failed` };
+  }
+
+  if (parsed.yes) {
+    const resp = await submitTrade(result.prepared);
+    return { output: resp.ok ? formatTradeHuman(resp.data) : (resp.error?.message ?? `${action} failed`) };
+  }
+
   return {
-    output: `Placing ${action} order...`,
-    asyncFollowUp: async () => {
-      const resp = await handleTrade(action, parsed);
-      return resp.ok ? formatTradeHuman(resp.data) : (resp.error?.message ?? `${action} failed`);
+    output: result.prepared.preview,
+    pendingTrade: {
+      prepared: result.prepared,
+      action,
+      outcome: result.prepared.built.outcomeLabel,
     },
   };
 }

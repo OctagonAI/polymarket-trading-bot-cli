@@ -15,8 +15,16 @@
  *  confirmation, not to refuse. So gate failures are shown in the prompt and the
  *  human keeps the call.
  *
- * Nothing is signed before the user confirms, and nothing is confirmed without
- * the cost, the price, and any objections on screen.
+ * Nothing is *submitted* before the user confirms, and nothing is confirmed
+ * without the cost, the price, and any objections on screen. The order is
+ * signed first — signing is local and free, and a signature that is never
+ * posted moves nothing — but that is the only step taken on the user's behalf.
+ *
+ * Preparing and submitting are separate functions because the two front ends
+ * ask differently. The CLI owns its terminal and can block on readline; the TUI
+ * owns stdin in raw mode and must not be interrupted by a second reader, so it
+ * renders the preview, returns to its own input loop, and submits on the next
+ * line. `handleTrade` is the CLI's composition of the two.
  *
  * There is no on-chain pre-flight. Polymarket grants trading approvals during
  * onboarding, so checking them before every order spent a round trip on a
@@ -72,20 +80,40 @@ function defaultOutcome(market: PolymarketMarket): string {
   return yes ?? outcomes[0] ?? 'yes';
 }
 
-export async function handleTrade(
+/** A signed order and everything needed to submit it or describe it. */
+export interface PreparedTrade {
+  action: TradeAction;
+  market: PolymarketMarket;
+  built: Awaited<ReturnType<typeof buildOrder>>;
+  requestedShares: number;
+  warnings: string[];
+  /** Rendered order summary, shown before the confirmation either way. */
+  preview: string;
+}
+
+export type PrepareResult =
+  | { ok: true; prepared: PreparedTrade }
+  | { ok: false; response: CLIResponse<TradeData> };
+
+/**
+ * Validate, check the guards, price and sign — everything up to the point of no
+ * return. Submits nothing.
+ */
+export async function prepareTrade(
   action: TradeAction,
   args: ParsedArgs,
-): Promise<CLIResponse<TradeData>> {
+): Promise<PrepareResult> {
+  const fail = (response: CLIResponse<TradeData>): PrepareResult => ({ ok: false, response });
   const [slug, sharesArg, ...rest] = args.positionalArgs;
 
   if (!slug || !sharesArg) {
-    return wrapError(
+    return fail(wrapError(
       action,
       'MISSING_ARG',
       `Usage: polymarket ${action} <market-slug> <shares> [price] [outcome]\n` +
         `  price   decimal USD in (0,1). Omit for a market order.\n` +
         `  outcome yes|no, or an outcome name for a multi-outcome market.`,
-    );
+    ));
   }
 
   // `rest` is [price?, outcome?] but either may be omitted, so decide by shape
@@ -98,17 +126,17 @@ export async function handleTrade(
   }
 
   const parsed = validateTradeArgs(sharesArg, priceArg);
-  if ('error' in parsed) return wrapError(action, 'INVALID_ARG', parsed.error);
+  if ('error' in parsed) return fail(wrapError(action, 'INVALID_ARG', parsed.error));
 
   const id = loadWalletIdentity();
   if (id.tier !== 'trade' || !id.address) {
-    return wrapError(
+    return fail(wrapError(
       action,
       'NO_KEY',
       id.tier === 'watch'
         ? `This wallet is watch-only (${id.address}). Run \`polymarket wallet import <private-key> --force\` to trade.`
         : 'No wallet configured. Run `polymarket wallet import <private-key>` with your polymarket.com key.',
-    );
+    ));
   }
 
   const db = getDb();
@@ -118,12 +146,12 @@ export async function handleTrade(
   const breaker = new CircuitBreaker();
   const breakerStatus = breaker.check(db);
   if (breakerStatus.active && !args.force) {
-    return wrapError(
+    return fail(wrapError(
       action,
       'CIRCUIT_BREAKER',
       `Circuit breaker is active: ${breakerStatus.reason}. ` +
         'This is the limit you configured to stop trading after a bad run. Pass --force to override.',
-    );
+    ));
   }
   if (breakerStatus.active) warnings.push(`Circuit breaker overridden: ${breakerStatus.reason}`);
 
@@ -131,7 +159,7 @@ export async function handleTrade(
   try {
     market = await resolveMarket(slug);
   } catch (err) {
-    return wrapError(action, 'NOT_FOUND', err instanceof Error ? err.message : String(err));
+    return fail(wrapError(action, 'NOT_FOUND', err instanceof Error ? err.message : String(err)));
   }
 
   const outcome = outcomeArg ?? defaultOutcome(market);
@@ -158,31 +186,49 @@ export async function handleTrade(
       ...(parsed.price !== undefined ? { limitPrice: parsed.price } : {}),
     });
   } catch (err) {
-    if (err instanceof OrderError) return wrapError(action, 'ORDER_INVALID', err.message);
-    if (err instanceof ClobAuthError) return wrapError(action, 'AUTH', err.message);
-    return wrapError(action, 'ORDER_INVALID', err instanceof Error ? err.message : String(err));
+    if (err instanceof OrderError) return fail(wrapError(action, 'ORDER_INVALID', err.message));
+    if (err instanceof ClobAuthError) return fail(wrapError(action, 'AUTH', err.message));
+    return fail(wrapError(action, 'ORDER_INVALID', err instanceof Error ? err.message : String(err)));
   }
 
-  if (!args.yes) {
-    const verb = action === 'buy' ? 'Buy' : 'Sell';
-    const kind = built.isMarketOrder ? 'market order — fills now or not at all' : 'limit order — rests on the book';
-    const lines = [
-      '',
-      `  ${verb} ${built.shares} share(s) of ${theme.bold(built.outcomeLabel)}`,
-      `  ${market.ticker}`,
-      '',
-      `    Price     $${built.price.toFixed(2)} per share   ${theme.muted(`(${kind})`)}`,
-      `    ${action === 'buy' ? 'Cost ' : 'Value'}     $${built.notionalUsd.toFixed(2)}`,
-      `    Wallet    ${id.address}`,
-      '',
-    ];
-    for (const w of warnings) lines.push(theme.error(`    ! ${w}`));
-    if (warnings.length > 0) lines.push('');
-    console.log(lines.join('\n'));
-    if (!(await confirm(`  Place this order? [y/N] `))) {
-      return wrapError(action, 'CANCELLED', 'Cancelled. No order was placed.');
-    }
-  }
+  const verb = action === 'buy' ? 'Buy' : 'Sell';
+  const kind = built.isMarketOrder
+    ? 'market order — fills now or not at all'
+    : 'limit order — rests on the book';
+  const lines = [
+    '',
+    `  ${verb} ${built.shares} share(s) of ${theme.bold(built.outcomeLabel)}`,
+    `  ${market.ticker}`,
+    '',
+    `    Price     $${built.price.toFixed(2)} per share   ${theme.muted(`(${kind})`)}`,
+    `    ${action === 'buy' ? 'Cost ' : 'Value'}     $${built.notionalUsd.toFixed(2)}`,
+    `    Wallet    ${id.address}`,
+    '',
+  ];
+  for (const w of warnings) lines.push(theme.error(`    ! ${w}`));
+  if (warnings.length > 0) lines.push('');
+
+  return {
+    ok: true,
+    prepared: {
+      action,
+      market,
+      built,
+      requestedShares: parsed.count,
+      warnings,
+      preview: lines.join('\n'),
+    },
+  };
+}
+
+/**
+ * Submit a prepared order and record what filled.
+ *
+ * Separate from `prepareTrade` so a front end can put the preview in front of
+ * the user, get an answer its own way, and call this only if the answer is yes.
+ */
+export async function submitTrade(prepared: PreparedTrade): Promise<CLIResponse<TradeData>> {
+  const { action, market, built, requestedShares, warnings } = prepared;
 
   let posted;
   try {
@@ -192,7 +238,7 @@ export async function handleTrade(
     return wrapError(action, 'CLOB_ERROR', err instanceof Error ? err.message : String(err));
   }
 
-  recordFill(action, market, built, posted, parsed.count);
+  recordFill(action, market, built, posted, requestedShares);
 
   auditTrail.log({
     type: 'TRADE_EXECUTED',
@@ -220,12 +266,37 @@ export async function handleTrade(
 }
 
 /**
+ * The CLI's composition: prepare, ask on this terminal, submit.
+ *
+ * `readline` is safe here and only here — the plain CLI owns stdin. Inside the
+ * TUI a second reader corrupts the input stream, so that front end uses
+ * `prepareTrade` and `submitTrade` directly.
+ */
+export async function handleTrade(
+  action: TradeAction,
+  args: ParsedArgs,
+): Promise<CLIResponse<TradeData>> {
+  const result = await prepareTrade(action, args);
+  if (!result.ok) return result.response;
+
+  if (!args.yes) {
+    console.log(result.prepared.preview);
+    if (!(await confirm(`  Place this order? [y/N] `))) {
+      return wrapError(action, 'CANCELLED', 'Cancelled. No order was placed.');
+    }
+  }
+
+  return submitTrade(result.prepared);
+}
+
+/**
  * Persist what actually filled.
  *
  * Only the matched portion is recorded: an order that rests on the book is not
  * a position yet, and writing it as one would inflate the concentration and
  * correlation checks with exposure that does not exist.
  */
+
 function recordFill(
   action: TradeAction,
   market: PolymarketMarket,

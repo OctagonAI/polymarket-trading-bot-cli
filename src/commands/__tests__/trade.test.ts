@@ -209,6 +209,53 @@ describe('trade — what gets written', () => {
   });
 });
 
+describe('trade — the TUI path never prompts on stdin', () => {
+  // The TUI holds the terminal in raw mode with the kitty keyboard protocol
+  // enabled. A readline prompt is a second reader on the same stream: it echoes
+  // key-release escapes as literal text ("y3u") and, on close, resets modes the
+  // TUI set, corrupting input for the rest of the session. So `/buy` must hand
+  // the question back to the TUI rather than ask it here.
+  test('/buy returns a signed order awaiting confirmation, and submits nothing', async () => {
+    const post = setup();
+    const { handleSlashCommand } = await import('../index.js');
+    const result = await handleSlashCommand('/buy slug 50 0.42');
+
+    expect(result?.pendingTrade).toBeDefined();
+    expect(result?.pendingTrade?.action).toBe('buy');
+    expect(result?.output).toContain('Buy');
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  test('confirming submits the order that was already prepared', async () => {
+    const post = setup({ filled: 50 });
+    const { handleSlashCommand, executePendingTrade } = await import('../index.js');
+    const result = await handleSlashCommand('/buy slug 50 0.42');
+
+    const text = await executePendingTrade(result!.pendingTrade!);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(text).toContain('Bought');
+  });
+
+  test('--yes submits straight away, with nothing left pending', async () => {
+    const post = setup({ filled: 50 });
+    const { handleSlashCommand } = await import('../index.js');
+    const result = await handleSlashCommand('/buy slug 50 0.42 --yes');
+
+    expect(result?.pendingTrade).toBeUndefined();
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  test('a refused order reports the reason instead of going pending', async () => {
+    const post = setup({ tier: 'watch' });
+    const { handleSlashCommand } = await import('../index.js');
+    const result = await handleSlashCommand('/buy slug 50 0.42');
+
+    expect(result?.pendingTrade).toBeUndefined();
+    expect(result?.output).toContain('watch-only');
+    expect(post).not.toHaveBeenCalled();
+  });
+});
+
 describe('reducePosition', () => {
   beforeEach(() => {
     openPosition(db, {

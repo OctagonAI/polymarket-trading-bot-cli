@@ -629,7 +629,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
         tui.requestRender();
         return;
       } else {
-        trackEvent('trade_rejected', { action: pendingTrade.action, side: pendingTrade.side });
+        trackEvent('trade_rejected', { action: pendingTrade.action, side: pendingTrade.outcome });
         chatLog.addQuery(query);
         chatLog.resetToolGrouping();
         chatLog.finalizeAnswer('Order canceled.');
