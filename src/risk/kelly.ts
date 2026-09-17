@@ -29,6 +29,13 @@ export interface KellyResult {
   portfolioValue: number | null; // mark-to-market position value; null if unreadable
   liquidityAdjusted: boolean;
   skippedReason?: string; // if shares=0, explains why
+  /**
+   * Set when the size was computed from incomplete inputs and may be too large.
+   *
+   * Distinct from `skippedReason`, which explains a size of zero. This is a
+   * size that exists but should not be trusted.
+   */
+  sizingCaveat?: string;
 }
 
 /** Where `availableBankroll` came from — surfaced so output can explain itself. */
@@ -130,8 +137,9 @@ export async function fetchLiveBankroll(): Promise<LiveBankroll> {
   const limits: number[] = [];
   if (walletCash !== null) limits.push(walletCash);
   // Unknown exposure is netted as 0 rather than refusing to size: the wallet
-  // term usually binds anyway, and `positionsUnavailable` tells the caller the
-  // cap arm is provisional.
+  // term usually binds anyway. When it does not, the cap is applied in full and
+  // a user with open positions can size past their own limit — so that case is
+  // named in `sizingCaveat` rather than left to `positionsUnavailable` to imply.
   if (cap !== null) limits.push(cap - (openExposure ?? 0));
   const availableBankroll = limits.length > 0 ? Math.max(0, Math.min(...limits)) : 0;
 
@@ -221,6 +229,12 @@ export async function kellySize(params: KellySizeParams): Promise<KellyResult> {
   const yesEntry = executableProb ?? marketProb;
   const entryPrice = side === 'yes' ? yesEntry : 1 - yesEntry;
 
+  // The cap is a ceiling on total deployed capital, so it only means anything
+  // net of what is already deployed. With exposure unreadable the full cap is
+  // applied and someone already holding positions can size past their own
+  // limit — worth saying out loud, since the number still looks authoritative.
+  const capIsProvisional = bankroll.cap !== null && openExposure === null;
+
   const makeResult = (overrides: Partial<KellyResult> = {}): KellyResult => ({
     side,
     fraction: 0,
@@ -233,6 +247,13 @@ export async function kellySize(params: KellySizeParams): Promise<KellyResult> {
     cashBalance,
     portfolioValue,
     liquidityAdjusted: false,
+    ...(capIsProvisional
+      ? {
+          sizingCaveat:
+            'Open exposure could not be read, so the bankroll cap was applied in full. ' +
+            'If you already hold positions this size may exceed risk.bankroll_usdc.',
+        }
+      : {}),
     ...overrides,
   });
 

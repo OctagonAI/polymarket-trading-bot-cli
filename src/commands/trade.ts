@@ -166,6 +166,16 @@ export async function prepareTrade(
     ));
   }
   if (breakerStatus.active) warnings.push(`Circuit breaker overridden: ${breakerStatus.reason}`);
+  // Refusing to write a bad snapshot keeps the history honest but says nothing
+  // about how old the newest one is. A gated RPC leaves the breaker quoting a
+  // reading from before the outage, and that reading is what gates this order.
+  if (breakerStatus.staleSeconds !== undefined) {
+    const hours = Math.floor(breakerStatus.staleSeconds / 3600);
+    warnings.push(
+      `Risk reading is ${hours}h old, so the circuit breaker may be judging stale data. ` +
+        'Run `polymarket portfolio` to refresh it.',
+    );
+  }
 
   let market: PolymarketMarket;
   try {

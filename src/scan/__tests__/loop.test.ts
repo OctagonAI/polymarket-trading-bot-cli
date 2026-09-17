@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import type { Database } from 'bun:sqlite';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -9,6 +9,8 @@ import { AuditTrail } from '../../audit/trail.js';
 import { ScanLoop } from '../loop.js';
 import { upsertTheme } from '../../db/themes.js';
 import { getLatestSnapshot } from '../../db/risk.js';
+import { RiskSnapshotError } from '../../risk/circuit-breaker.js';
+import * as erc20 from '../../chain/erc20.js';
 import type { OctagonVariant } from '../types.js';
 
 function makeAudit(): { audit: AuditTrail; path: string } {
@@ -37,6 +39,7 @@ describe('ScanLoop', () => {
   let auditPath: string;
   let loop: ScanLoop;
   let originalFetch: typeof globalThis.fetch;
+  const spies: Array<{ mockRestore: () => void }> = [];
 
   beforeEach(() => {
     db = createDb(':memory:');
@@ -83,6 +86,13 @@ describe('ScanLoop', () => {
         }]);
       }
 
+      // Polygon RPC — the pUSD balance. Without this the read fails, equity is
+      // unknown, and a snapshot is refused outright rather than recorded as an
+      // account worth nothing. 1000 pUSD in base units.
+      if (urlStr.includes('drpc.org') || urlStr.includes('polygon')) {
+        return json({ jsonrpc: '2.0', id: 1, result: `0x${(1_000_000_000).toString(16).padStart(64, '0')}` });
+      }
+
       // Data API portfolio value + positions (USDC)
       if (urlStr.includes('data-api.polymarket.com/value')) {
         return json([{ user: '0x1', value: 1000 }]);
@@ -98,6 +108,7 @@ describe('ScanLoop', () => {
   });
 
   afterEach(() => {
+    for (const sp of spies.splice(0)) sp.mockRestore();
     globalThis.fetch = originalFetch;
     loop.stop();
     delete process.env.POLYMARKET_WALLET_ADDRESS;
@@ -125,30 +136,50 @@ describe('ScanLoop', () => {
 
     const snapshot = getLatestSnapshot(db);
     expect(snapshot).not.toBeNull();
-    // With a wallet address set, the Data API is read on every pass and its
-    // mocked values land in the snapshot — previously these columns were always
-    // 0 because the wallet path was switched off entirely.
+    // With a wallet address set, the Data API and the RPC are both read on every
+    // pass and their mocked values land in the snapshot — previously these
+    // columns were always 0 because the wallet path was switched off entirely.
     expect(snapshot!.portfolio_value).not.toBeNull();
     expect(snapshot!.open_exposure).not.toBeNull();
-    // No funded wallet and no RPC stub, so cash is unreadable — which must be
-    // recorded as unknown rather than as an account worth nothing.
-    expect(snapshot!.wallet_cash).toBeNull();
-    expect(snapshot!.equity).toBeNull();
-    // cash_balance is deliberately NOT asserted: with no readable wallet
-    // balance it falls back to the risk.bankroll_usdc setting, which is
-    // legitimately non-zero on a developer machine that has one configured.
+    // Both legs mocked, so equity is real. A pass that could not read the
+    // balance would record nothing at all — see the refusal test below.
+    expect(snapshot!.wallet_cash).toBe(1000);
+    expect(snapshot!.equity).not.toBeNull();
+    // cash_balance is deliberately NOT asserted: it falls back to the
+    // risk.bankroll_usdc setting, which is legitimately non-zero on a developer
+    // machine that has one configured.
   });
 
   test('drawdown stays 0 so the risk gate cannot trip on a phantom loss', async () => {
-    // Drawdown is measured on equity now, so closing a position is not a loss.
-    // Here the balance is unreadable (no funded wallet in tests), which records
-    // a null equity — and a null equity must report drawdown 0 rather than
-    // treating "unknown" as "wiped out". Guards the regression directly.
+    // Drawdown is measured on equity, so closing a position is not a loss: the
+    // value moves from one term to the other and equity is unchanged. A single
+    // pass against a steady balance must therefore show no drawdown at all.
     await loop.runOnce({ theme: 'test-theme' });
 
     const snapshot = getLatestSnapshot(db);
     expect(snapshot!.drawdown_current).toBe(0);
     expect(snapshot!.drawdown_max).toBe(0);
+  });
+
+  test('a pass that cannot read the balance records nothing and says so', async () => {
+    // A gated RPC is the case this guards: writing a row with drawdown 0 would
+    // report safety the next time `check()` ran. The pass fails instead, and it
+    // alerts on the way out — an unattended scanner that stops silently is the
+    // failure nobody reports.
+    const emitted: string[] = [];
+    const alerter = (loop as unknown as { alerter: { emit(a: { message: string }): Promise<void> } }).alerter;
+    const realEmit = alerter.emit.bind(alerter);
+    alerter.emit = async (a) => {
+      emitted.push(a.message);
+      await realEmit(a);
+    };
+    spies.push(
+      spyOn(erc20, 'readPusdBalance').mockImplementation(async () => null),
+    );
+
+    await expect(loop.runOnce({ theme: 'test-theme' })).rejects.toThrow(RiskSnapshotError);
+    expect(getLatestSnapshot(db)).toBeNull();
+    expect(emitted.join(' ')).toContain('scanning has stopped');
   });
 
   test('audit trail has SCAN_START and SCAN_COMPLETE', async () => {

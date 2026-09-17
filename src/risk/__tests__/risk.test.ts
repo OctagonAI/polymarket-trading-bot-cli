@@ -373,6 +373,38 @@ describe('Risk Gate', () => {
   });
 });
 
+describe('sizing from incomplete inputs', () => {
+  test('a cap applied without exposure says so', async () => {
+    // The cap is a ceiling on deployed capital, so it only means anything net
+    // of what is deployed. With exposure unreadable the whole cap is available
+    // and someone already holding positions can size past their own limit.
+    setMockBankroll(1000, 0, []); // cap of 1000, no wallet balance
+    installApiMock();
+    spies.push(
+      spyOn(polyPortfolio, 'fetchPositions').mockImplementation(async () => {
+        throw new Error('data api down');
+      }),
+    );
+
+    const result = await kellySize({ edge: 0.15, marketProb: 0.5, market: makeMarket() });
+    expect(result.openExposure).toBeNull();
+    expect(result.sizingCaveat).toContain('risk.bankroll_usdc');
+
+    restoreApiMock();
+  });
+
+  test('a readable exposure carries no caveat', async () => {
+    setMockBankroll(1000, 0, [{ current_value: 200 }]);
+    installApiMock();
+
+    const result = await kellySize({ edge: 0.15, marketProb: 0.5, market: makeMarket() });
+    expect(result.openExposure).toBe(200);
+    expect(result.sizingCaveat).toBeUndefined();
+
+    restoreApiMock();
+  });
+});
+
 describe('Circuit Breaker', () => {
   let db: Database;
 
@@ -423,6 +455,9 @@ describe('Circuit Breaker', () => {
 
   test('snapshot fetches live data and inserts', async () => {
     setMockBankroll(1000, 0, [{ current_value: 200 }]);
+    // A snapshot is refused outright when the balance cannot be read, so this
+    // has to supply one to reach the rest of the assertions.
+    mockWalletCash = 1000;
     installApiMock();
 
     const cb = new CircuitBreaker();

@@ -5,7 +5,7 @@ import { EdgeComputer } from './edge-computer.js';
 import { OctagonClient } from './octagon-client.js';
 import { PositionWatchdog } from './watchdog.js';
 import { Alerter, type AlertPayload, type AlertChannelDispatch } from './alerter.js';
-import { CircuitBreaker } from '../risk/circuit-breaker.js';
+import { CircuitBreaker, RiskSnapshotError } from '../risk/circuit-breaker.js';
 import type { OctagonInvoker, EdgeSnapshot } from './types.js';
 import type { RiskSnapshot } from '../db/risk.js';
 import type { AuditTrail } from '../audit/trail.js';
@@ -87,8 +87,32 @@ export class ScanLoop {
     // Step 5: Check open positions
     const watchdogAlerts = this.watchdog.check(this.db);
 
-    // Step 6: Take risk snapshot
-    const riskSnapshot = await this.circuitBreaker.snapshot(this.db);
+    // Step 6: Take risk snapshot.
+    //
+    // A refusal aborts the pass — a scan result carries a snapshot, and one
+    // taken from an unreadable balance would be a fabrication. It is alerted
+    // first: a gated RPC is the kind of failure nobody reports because nothing
+    // says it happened, and console.error on an unattended process says nothing.
+    let riskSnapshot;
+    try {
+      riskSnapshot = await this.circuitBreaker.snapshot(this.db);
+    } catch (err) {
+      if (err instanceof RiskSnapshotError && !opts.dryRun) {
+        await this.alerter
+          .emit({
+            ticker: '*',
+            alertType: 'CIRCUIT_BREAKER',
+            edge: 0,
+            message: `Risk snapshot failed, scanning has stopped: ${err.message}`,
+            channels: this.defaultChannels,
+          })
+          .catch(() => {
+            // The alert is the louder half of the report, not the whole of it;
+            // the throw below still surfaces the failure.
+          });
+      }
+      throw err;
+    }
 
     // Step 7: Collect and emit alerts
     // Edge alerts for high/very_high confidence

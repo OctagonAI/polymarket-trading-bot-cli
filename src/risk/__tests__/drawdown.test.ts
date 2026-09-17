@@ -4,9 +4,10 @@ import { createDb } from '../../db/index.js';
 import {
   insertRiskSnapshot,
   getEquityHistory,
+  getLatestSnapshot,
   getLatestSnapshotWithEquity,
 } from '../../db/risk.js';
-import { CircuitBreaker } from '../circuit-breaker.js';
+import { CircuitBreaker, RiskSnapshotError } from '../circuit-breaker.js';
 import * as kelly from '../kelly.js';
 import type { LiveBankroll } from '../kelly.js';
 
@@ -92,18 +93,20 @@ describe('equity-based drawdown', () => {
     expect(after.equity).toBe(1500);
   });
 
-  test('an unreadable balance records null equity and no drawdown', async () => {
+  test('an unreadable balance is refused rather than recorded', async () => {
     stubBankroll(bankroll(1000, 0));
-    await breaker.snapshot(db);
+    const good = await breaker.snapshot(db);
 
-    // RPC failed. This must not read as "equity fell to zero" — writing a 0
-    // here is precisely what the old code did with portfolio_value.
+    // The RPC failed. Writing a row here would carry drawdown 0 and daily P&L 0
+    // — and `check()` reads the newest row, so that row would report safety and
+    // clear a breaker a real reading had tripped.
     stubBankroll(bankroll(null, 0));
-    const after = await breaker.snapshot(db);
+    await expect(breaker.snapshot(db)).rejects.toThrow(RiskSnapshotError);
 
-    expect(after.equity).toBeNull();
-    expect(after.wallet_cash).toBeNull();
-    expect(after.drawdown_current).toBe(0);
+    // Nothing was written, so the last real measurement still stands.
+    const latest = getLatestSnapshot(db)!;
+    expect(latest.timestamp).toBe(good.timestamp);
+    expect(latest.equity).toBe(1000);
   });
 
   test('rows without equity are excluded from the high-water mark', async () => {
@@ -123,7 +126,7 @@ describe('equity-based drawdown', () => {
     expect(after.drawdown_current).toBe(0);
   });
 
-  test('drawdown_max carries forward across an unreadable snapshot', async () => {
+  test('a drawdown survives an unreadable read rather than being overwritten', async () => {
     stubBankroll(bankroll(1000, 0));
     await breaker.snapshot(db);
 
@@ -132,8 +135,9 @@ describe('equity-based drawdown', () => {
     expect(drop.drawdown_max).toBeCloseTo(0.3, 10);
 
     stubBankroll(bankroll(null, 0)); // balance unreadable
-    const blind = await breaker.snapshot(db);
-    expect(blind.drawdown_max).toBeCloseTo(0.3, 10);
+    await expect(breaker.snapshot(db)).rejects.toThrow(RiskSnapshotError);
+
+    expect(getLatestSnapshot(db)!.drawdown_max).toBeCloseTo(0.3, 10);
   });
 
   test('daily P&L is the equity delta, in USDC', async () => {

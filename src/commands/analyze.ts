@@ -543,6 +543,9 @@ export function formatAnalyzeHuman(data: AnalyzeData): string {
     if (data.kelly.skippedReason) {
       lines.push(`    ⚠ ${data.kelly.skippedReason}`);
     }
+    if (data.kelly.sizingCaveat) {
+      lines.push(`    ⚠ ${data.kelly.sizingCaveat}`);
+    }
   }
   lines.push('');
 

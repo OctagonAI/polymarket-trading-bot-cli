@@ -154,6 +154,12 @@ function setupFetchMock(originalFetch: typeof globalThis.fetch) {
       });
     }
 
+    // Polygon RPC — the pUSD balance. Without it equity is unknown and a risk
+    // snapshot is refused outright, which aborts the whole scan pass.
+    if (urlStr.includes('drpc.org') || urlStr.includes('polygon')) {
+      return json({ jsonrpc: '2.0', id: 1, result: `0x${(1_000_000_000).toString(16).padStart(64, '0')}` });
+    }
+
     // Data API portfolio (USDC)
     if (urlStr.includes('data-api.polymarket.com/value')) {
       return json([{ user: '0x1', value: 1000 }]);
