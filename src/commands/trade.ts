@@ -133,7 +133,9 @@ export async function handleTrade(
       return wrapError(
         action,
         'NOT_APPROVED',
-        'This wallet has not granted the on-chain approvals trading needs. Run: polymarket wallet approve',
+        'This wallet has not granted the on-chain approvals trading needs. Polymarket grants them ' +
+          'when you first trade on polymarket.com — do that once, then retry. ' +
+          'See the detail with: polymarket wallet approvals',
       );
     }
   } catch (err) {

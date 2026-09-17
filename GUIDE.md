@@ -110,8 +110,7 @@ autocomplete, and running it explains why.
 | `/status` | Setup check: connectivity, API keys | `/status` |
 | `/wallet` | Show your wallet: addresses, wallet type, mode | `/wallet` |
 | `/wallet import <key\|address>` | Import your polymarket.com wallet (key = trading, address = read-only) | `/wallet import 0x…` |
-| `/wallet approve --check` | Read all 11 approvals — free, no gas | `/wallet approve --check` |
-| `/wallet approve` | Grant the 7 trading needs (confirms, then costs POL) | `/wallet approve` |
+| `/wallet approvals` | Read all 11 approvals — free, no gas | `/wallet approvals` |
 | `/balance` | Free pUSD in your funding wallet | `/balance` |
 | `/positions` | Open positions with P&L | `/positions` |
 | `/orders` | Resting (open) orders | `/orders` |

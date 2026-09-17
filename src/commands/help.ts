@@ -60,15 +60,10 @@ ${p}wallet import <private-key>  Import your polymarket.com wallet (enables trad
 ${p}wallet import <address>      Read-only: balances and positions, no trading
 ${p}wallet address               Print the funding address only
 ${p}wallet show                  Addresses, wallet type, mode, key source
-${p}wallet approve --check       List all 11 approvals and their state (free)
-${p}wallet approve               Grant the 7 trading needs (on-chain, costs gas)
-${p}wallet approve --all         Also grant the 4 optional split/merge/redeem ones
+${p}wallet approvals             List all 11 approvals and their state (free)
 
 Flags:
   --force                           Replace an existing wallet
-  --check                           Report approval state without sending anything
-  --yes                             Skip the confirmation prompt (scripting)
-  --all                             Include approvals trading does not require
 
 There is no ${p}wallet create. A wallet made here would be a fresh account with
 no Polymarket history, and polymarket.com deposits only into the account it made
@@ -92,14 +87,14 @@ permissions, never to .env. Override it for one session with
 POLYMARKET_PRIVATE_KEY, which takes precedence over the saved file.
 
 Approvals
-  Trading needs 7 on-chain permissions. Four more exist, to the collateral
-  adapters, and are NOT needed to trade — they only matter if you split, merge
-  or redeem positions directly, so they are listed separately and left alone
-  unless you pass --all.
-  ${p}wallet approve --check reads them all for free. ${p}wallet approve grants
-  the missing required ones in one batched transaction, after showing the cost
-  and asking. Gas is paid in POL from the SIGNING wallet — send POL there, not
-  pUSD, and not to the funding wallet.`,
+  Trading needs 7 on-chain permissions. Polymarket grants them during
+  onboarding, so an account made on polymarket.com arrives ready — this CLI
+  reads them and never sends any. ${p}wallet approvals lists all 11 for free.
+  Four of the 11, to the collateral adapters, are NOT needed to trade: they
+  only matter if you split, merge or redeem positions directly, which this CLI
+  does not do, so they are listed separately.
+  If a required grant is missing, place one trade on polymarket.com and it will
+  prompt for it.`,
 
     portfolio: `**${p}portfolio** — Account state
 
@@ -520,7 +515,7 @@ Analysis:
 
 Account:
   wallet                        Create, import, or inspect your wallet
-  wallet approve --check        Check the on-chain trading approvals
+  wallet approvals              Check the on-chain trading approvals
   buy <slug> <shares> [price]   Buy shares (omit price for a market order)
   sell <slug> <shares> [price]  Sell shares you hold
   orders                        Your resting orders on the CLOB
@@ -603,7 +598,7 @@ Analysis:
 
 Account:
   /wallet                        Create, import, or inspect your wallet
-  /wallet approve --check        Check the on-chain trading approvals
+  /wallet approvals              Check the on-chain trading approvals
   /buy <slug> <shares> [price]   Buy shares (omit price for a market order)
   /sell <slug> <shares> [price]  Sell shares you hold
   /orders                        Your resting orders on the CLOB

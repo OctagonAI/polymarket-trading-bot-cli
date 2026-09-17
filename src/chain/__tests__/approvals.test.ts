@@ -1,13 +1,11 @@
 import { describe, test, expect, afterEach, spyOn } from 'bun:test';
-import { decodeFunctionData, erc20Abi, maxUint256, parseAbi, getAddress } from 'viem';
+import { getAddress } from 'viem';
 import * as rpc from '../rpc.js';
 import {
   APPROVAL_TARGETS,
-  CONDITIONAL_TOKENS,
   checkApprovals,
   pendingApprovals,
   readyToTrade,
-  buildApprovalBatch,
   type ApprovalStatus,
 } from '../approvals.js';
 import { PUSD_ADDRESS } from '../erc20.js';
@@ -100,7 +98,7 @@ describe('checkApprovals', () => {
 
   test('a failed read is an error, NOT an unapproved grant', async () => {
     // This distinction is the whole point: treating an unreachable RPC as
-    // "unapproved" would make `wallet approve` pay gas to re-grant permissions
+    // "unapproved" would send the user to re-grant permissions
     // that are already in place.
     spies.push(
       spyOn(rpc, 'ethCall').mockImplementation(async () => {
@@ -145,68 +143,5 @@ describe('pendingApprovals', () => {
   test('readyToTrade ignores optional grants', () => {
     expect(readyToTrade([row({ required: true, approved: true }), row({ required: false })])).toBe(true);
     expect(readyToTrade([row({ required: true, approved: false })])).toBe(false);
-  });
-});
-
-describe('buildApprovalBatch', () => {
-  const proxyAbi = parseAbi([
-    'struct ProxyCall { uint8 typeCode; address to; uint256 value; bytes data; }',
-    'function proxy(ProxyCall[] calls) payable returns (bytes[])',
-  ]);
-  const ctfAbi = parseAbi(['function setApprovalForAll(address operator, bool approved)']);
-
-  function decodeBatch(data: `0x${string}`) {
-    const { args } = decodeFunctionData({ abi: proxyAbi, data });
-    return args![0] as ReadonlyArray<{ typeCode: number; to: string; value: bigint; data: `0x${string}` }>;
-  }
-
-  test('one sub-call per pending grant, all plain CALLs with no value attached', async () => {
-    stubCalls(() => FALSE_WORD);
-    const pending = pendingApprovals(await checkApprovals(OWNER), true);
-    const calls = decodeBatch(buildApprovalBatch(pending));
-
-    expect(calls).toHaveLength(pending.length);
-    for (const c of calls) {
-      expect(c.typeCode).toBe(1);
-      expect(c.value).toBe(0n);
-    }
-  });
-
-  test('pUSD grants approve the spender for the maximum, on the pUSD contract', async () => {
-    stubCalls(() => FALSE_WORD);
-    const pending = pendingApprovals(await checkApprovals(OWNER), true);
-    const calls = decodeBatch(buildApprovalBatch(pending));
-
-    const collateralCalls = calls.filter((c) => c.to.toLowerCase() === PUSD_ADDRESS.toLowerCase());
-    expect(collateralCalls).toHaveLength(6);
-    for (const c of collateralCalls) {
-      const { functionName, args } = decodeFunctionData({ abi: erc20Abi, data: c.data });
-      expect(functionName).toBe('approve');
-      expect(args![1]).toBe(maxUint256);
-    }
-  });
-
-  test('CTF grants set operator rights on the Conditional Tokens contract', async () => {
-    stubCalls(() => FALSE_WORD);
-    const pending = pendingApprovals(await checkApprovals(OWNER), true);
-    const calls = decodeBatch(buildApprovalBatch(pending));
-
-    const ctfCalls = calls.filter((c) => c.to.toLowerCase() === CONDITIONAL_TOKENS.toLowerCase());
-    expect(ctfCalls).toHaveLength(5);
-    for (const c of ctfCalls) {
-      const { functionName, args } = decodeFunctionData({ abi: ctfAbi, data: c.data });
-      expect(functionName).toBe('setApprovalForAll');
-      expect(args![1]).toBe(true);
-    }
-  });
-
-  test('already-approved grants are not re-sent', async () => {
-    // Only the ERC-1155 side is missing.
-    stubCalls((to) => (to.toLowerCase() === PUSD_ADDRESS.toLowerCase() ? MAX_WORD : FALSE_WORD));
-    const pending = pendingApprovals(await checkApprovals(OWNER), true);
-    const calls = decodeBatch(buildApprovalBatch(pending));
-
-    expect(calls).toHaveLength(5);
-    expect(calls.every((c) => c.to.toLowerCase() === CONDITIONAL_TOKENS.toLowerCase())).toBe(true);
   });
 });

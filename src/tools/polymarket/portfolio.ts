@@ -10,7 +10,7 @@ import type { PolymarketBalance, PolymarketPosition } from './types.js';
 /**
  * Read-only portfolio access needs only an address — no signing.
  *
- * This is the *funding* (proxy) wallet, which for every Polymarket user is a
+ * This is the *funding* wallet, which for every Polymarket user is a
  * different address from the signing EOA. Querying the EOA returns an empty
  * account, so the distinction is not cosmetic.
  *

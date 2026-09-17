@@ -1,6 +1,6 @@
 /**
- * The allowances a Polymarket proxy wallet needs, and which of them are
- * actually required to trade.
+ * The allowances a Polymarket wallet needs, and which of them are actually
+ * required to trade.
  *
  * Six contracts, each needing permission to move your pUSD, and five of those
  * additionally needing operator rights over your outcome tokens (ERC-1155) so a
@@ -19,26 +19,14 @@
  * wallet that trades perfectly well is a false alarm, and acting on it costs
  * real gas for a capability the user may never use.
  *
- * Two properties worth stating because they are what make this safe to automate:
- *
- *  - Checking is free and read-only — eleven `eth_call`s, no signature, no gas.
- *    Nothing here sends anything unless `buildApprovalBatch` output is signed
- *    and submitted by the caller.
- *  - Approvals are granted BY THE PROXY, not by the signing EOA. They are
- *    therefore routed through the factory's `proxy()` entry point, where the
- *    sub-call's `msg.sender` is the proxy. Approving from the EOA would appear
- *    to succeed and leave trading just as broken.
+ * This module only reads: eleven `eth_call`s, no signature, no gas, nothing to
+ * sign. Granting is Polymarket's job — it happens during onboarding on
+ * polymarket.com, and a live deposit wallet arrives 7/7 without this CLI
+ * touching it.
  */
-import { encodeFunctionData, decodeFunctionResult, erc20Abi, getAddress, maxUint256, parseAbi } from 'viem';
+import { encodeFunctionData, decodeFunctionResult, erc20Abi, getAddress, parseAbi } from 'viem';
 import { ethCall } from './rpc.js';
 import { PUSD_ADDRESS, fromPusdUnits } from './erc20.js';
-
-/**
- * Relay target for `buildApprovalBatch`, which only works for a type-1 proxy.
- * The send path is being replaced by the SDK's own approval routing; the read
- * path below is wallet-type agnostic and stays.
- */
-export const PROXY_FACTORY = '0xaB45c5A4B0c941a2F231C04C3f49182e1A254052';
 
 export const CONDITIONAL_TOKENS = '0x4D97DCd97eC945f40cF65F87097ACe5EA0476045';
 
@@ -71,11 +59,6 @@ const ctfAbi = parseAbi([
   'function isApprovedForAll(address account, address operator) view returns (bool)',
 ]);
 
-const proxyAbi = parseAbi([
-  'struct ProxyCall { uint8 typeCode; address to; uint256 value; bytes data; }',
-  'function proxy(ProxyCall[] calls) payable returns (bytes[])',
-]);
-
 export type ApprovalKind = 'collateral' | 'ctf';
 
 export interface ApprovalStatus {
@@ -99,8 +82,8 @@ export interface ApprovalStatus {
  * false` — sending an approval that is already in place wastes gas, and
  * reporting "not approved" for an unreachable RPC would invite exactly that.
  */
-export async function checkApprovals(proxyAddress: string): Promise<ApprovalStatus[]> {
-  const owner = getAddress(proxyAddress);
+export async function checkApprovals(walletAddress: string): Promise<ApprovalStatus[]> {
+  const owner = getAddress(walletAddress);
   const checks: Array<() => Promise<ApprovalStatus>> = [];
 
   for (const t of APPROVAL_TARGETS) {
@@ -178,9 +161,8 @@ export async function checkApprovals(proxyAddress: string): Promise<ApprovalStat
  * failed.
  *
  * Optional ones are excluded unless `includeOptional` is set, so the default
- * `wallet approve` grants what trading needs and nothing more. Sending the
- * other four costs gas for split/merge/redeem, which most users never touch
- * directly.
+ * reports what trading needs and nothing more. The other four only matter for
+ * split/merge/redeem, which this CLI does not do.
  */
 export function pendingApprovals(
   statuses: ApprovalStatus[],
@@ -196,42 +178,4 @@ export function readyToTrade(statuses: ApprovalStatus[]): boolean {
   return statuses.filter((s) => s.required).every((s) => s.approved);
 }
 
-/**
- * Calldata for the factory that grants everything in `pending` in one call.
- *
- * Batched rather than sent one transaction at a time as `polymarket-cli` does.
- * One signature, one gas payment, and — the reason that matters — no way to end
- * up half-approved by interrupting it midway, which is a confusing state to
- * diagnose and leaves trading broken in a way that looks like a bug.
- *
- * `typeCode: 1` is a plain CALL. The factory deploys the proxy first if it does
- * not exist yet, so this doubles as the deployment transaction.
- */
-export function buildApprovalBatch(pending: ApprovalStatus[]): `0x${string}` {
-  const calls = pending.map((s) =>
-    s.kind === 'collateral'
-      ? {
-          typeCode: 1,
-          to: getAddress(PUSD_ADDRESS),
-          value: 0n,
-          data: encodeFunctionData({
-            abi: erc20Abi,
-            functionName: 'approve',
-            args: [getAddress(s.spender), maxUint256],
-          }),
-        }
-      : {
-          typeCode: 1,
-          to: getAddress(CONDITIONAL_TOKENS),
-          value: 0n,
-          data: encodeFunctionData({
-            abi: ctfAbi,
-            functionName: 'setApprovalForAll',
-            args: [getAddress(s.spender), true],
-          }),
-        },
-  );
-
-  return encodeFunctionData({ abi: proxyAbi, functionName: 'proxy', args: [calls] });
-}
 

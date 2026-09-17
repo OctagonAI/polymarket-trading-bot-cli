@@ -94,8 +94,9 @@ describe('tier resolution', () => {
     expect(id.address).toBe(SAVED);
   });
 
-  test('a legacy proxy wallet file still resolves, and says so', () => {
-    // Refusing to load it would brick an existing install over a migration.
+  test('an older account type resolves like any other', () => {
+    // Accounts made on polymarket.com before deposit wallets existed are
+    // proxies or Safes. Polymarket still reports them, so they still load.
     const id = resolveIdentity({}, fileWallet({ type: 'proxy', signer: SIGNER_A, privateKey: KEY_A }));
     expect(id.tier).toBe('trade');
     expect(id.walletType).toBe('proxy');

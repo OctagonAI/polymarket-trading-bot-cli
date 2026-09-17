@@ -10,7 +10,7 @@ import { loadWalletIdentity } from '../../wallet/identity.js';
 export const TRADING_UNAVAILABLE_MESSAGE =
   'Placing orders needs a wallet with a private key. Run `polymarket wallet import <private-key>` ' +
   'for a new one or `polymarket wallet import <private-key>` to bring your own, fund ' +
-  'it with pUSD, then `polymarket wallet approve`.';
+  'it with pUSD on polymarket.com first.';
 
 /**
  * Commands hidden until wallet/trading support lands.

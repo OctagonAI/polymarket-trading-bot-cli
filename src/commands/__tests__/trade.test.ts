@@ -101,7 +101,9 @@ describe('trade — guards before an order', () => {
     expect(post).not.toHaveBeenCalled();
   });
 
-  test('missing approvals name the command that fixes them', async () => {
+  test('missing approvals name where they actually get fixed', async () => {
+    // This CLI cannot grant them, so pointing at one of its own commands would
+    // send the user in a circle.
     const post = setup({
       statuses: [{ ...approved()[0]!, approved: false }],
     });
@@ -109,7 +111,7 @@ describe('trade — guards before an order', () => {
 
     expect(resp.ok).toBe(false);
     expect(resp.error?.code).toBe('NOT_APPROVED');
-    expect(resp.error?.message).toContain('wallet approve');
+    expect(resp.error?.message).toContain('polymarket.com');
     expect(post).not.toHaveBeenCalled();
   });
 

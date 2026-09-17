@@ -76,7 +76,7 @@ export class IntroComponent extends Container {
       ['/catalysts', 'upcoming --days N  Markets closing soon, grouped by week'],
       ['/correlate', '<t1> <t2> [...]  Pairwise correlation matrix'],
       ['/basket', 'build|backtest|size|candles|validate  Diversified basket tools'],
-      ['/wallet', 'show|create|import|approve  Manage your wallet'],
+      ['/wallet', 'show|import|approvals      Manage your wallet'],
       ['/portfolio', 'Overview, positions, value, status'],
       ['/analyze', '<ticker>  Full analysis: edge, research, Kelly sizing'],
       ['/watch', '<ticker>  Live price/orderbook feed'],

@@ -9,10 +9,9 @@ AI-powered Polymarket research CLI that finds edge across prediction markets.
 >
 > **Trading needs a wallet.** Create an account on [polymarket.com](https://polymarket.com),
 > fund it there, then `polymarket wallet import <private-key>`. Accounts made on
-> the site arrive already approved for trading; older ones may need
-> `polymarket wallet approve` once, and POL in the signing wallet for its gas.
-> Then `buy`, `sell`, `orders`, `cancel` and `portfolio` all work. Run `status`
-> to check your setup.
+> the site arrive already approved for trading — check with
+> `polymarket wallet approvals`. Then `buy`, `sell`, `orders`, `cancel` and
+> `portfolio` all work. Run `status` to check your setup.
 
 Runs deep fundamental research on every market — independent probability estimates, ranked price drivers, catalyst calendars — then computes edge as the spread between model price and the live order book. Signals are sized using half-Kelly and filtered through a 5-gate risk engine before a dollar is risked.
 
@@ -198,9 +197,8 @@ Type help for commands, or just ask a question.
 | `--active-only` | Drop non-active markets (defensive flag — open universe by default) |
 | `--series-prefix <prefix>` | Server-side series prefix match (e.g. `bitcoin` matches `bitcoin-above-…`) |
 | `--force` | Replace an existing wallet (`wallet import`); override the circuit breaker (`buy`, `sell`) |
-| `--check` | Report state without sending anything (`wallet approve`) |
-| `--yes` | Skip the confirmation prompt (`wallet approve`, `buy`, `sell`) |
-| `--all` | Include grants trading does not require (`wallet approve`); cancel every order (`cancel`) |
+| `--yes` | Skip the confirmation prompt (`buy`, `sell`) |
+| `--all` | Cancel every resting order (`cancel`) |
 
 ### Discovery & Portfolio (Octagon-powered)
 
@@ -486,26 +484,20 @@ Four further grants exist, to the two *collateral adapters*, and they are
 `mergePositions` and `redeemPositions` — the collateral path for building,
 combining and redeeming complete sets. CLOB orders never touch them: all twelve
 accounts sampled from the volume leaderboard hold the seven required grants, and
-only four hold these. `--check` lists them separately; `approve --all` grants
-them if you want that capability.
+only four hold these. They are listed separately and this CLI never needs them.
+
+**You do not grant these here.** Polymarket grants them during onboarding — a
+live deposit wallet was verified at 7/7 without this CLI ever touching it — and
+if one is ever missing, placing a trade on polymarket.com prompts for it. This
+command only reads:
 
 ```bash
-polymarket wallet approve --check   # read them — free, no gas, no signature
-polymarket wallet approve           # grant the missing ones
+polymarket wallet approvals   # free: no gas, no signature, no transaction
 ```
 
-`approve` grants only what trading requires. It shows what it will send and what
-it will cost, then asks. It never
-sends without an explicit yes; `--yes` skips the prompt for scripting, and is
-the only way to skip it. **Gas is paid in POL from the signing wallet** — send
-POL to that address, not to the funding wallet, and not pUSD. The command
-refuses before signing if there is not enough.
-
-Everything is granted in one batched transaction rather than eleven separate
-ones, so an interrupted run cannot leave you half-approved. Grants that are
-already in place are skipped, and a permission that could not be *read* is
-reported as unknown rather than re-sent — paying gas to re-grant something you
-already have is the failure mode that matters here.
+That is the *only* on-chain question this CLI asks. It signs no transactions at
+all: orders are EIP-712 messages that Polymarket settles, so you never need POL
+for gas.
 
 ### Bankroll
 

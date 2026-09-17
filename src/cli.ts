@@ -490,7 +490,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
         { value: 'show', label: 'show', description: 'Funding + signing address, wallet type, mode, key source' },
         { value: 'import', label: 'import', description: '<private-key|address>  Bring an existing wallet' },
         { value: 'address', label: 'address', description: 'Print the funding address only' },
-        { value: 'approve', label: 'approve', description: 'Grant trading approvals (--check to inspect first)' },
+        { value: 'approvals', label: 'approvals', description: 'Read the on-chain grants trading needs (free)' },
       ];
       if (!typed) return opts;
       return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
