@@ -319,10 +319,19 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
             limit: args.limit ?? 30,
           });
           if (drill.data.length > 0) {
+            // --active-only is deliberately absent from usesMarketFilters, so it
+            // reaches this branch and has to be honoured here exactly as the
+            // markets path below does. Filter AFTER the emptiness check: an
+            // event whose markets are all inactive should return an empty
+            // drill-down, not fall through to a literal slug search that would
+            // then match the event by title and print an event row.
+            const drillPage = args.activeOnly
+              ? { ...drill, data: drill.data.filter((m) => m.status === 'active' || m.status === 'open') }
+              : drill;
             if (json) {
-              console.log(JSON.stringify(wrapSuccess('search', drill)));
+              console.log(JSON.stringify(wrapSuccess('search', drillPage)));
             } else {
-              console.log(formatEventMarketsHuman(query, drill));
+              console.log(formatEventMarketsHuman(query, drillPage));
             }
             return;
           }
