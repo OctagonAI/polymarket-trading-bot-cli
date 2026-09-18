@@ -227,9 +227,9 @@ ${ctx === 'cli' ? `${p}` : 'polymarket '}clear-cache                Delete the l
 
 Use this when the local cache is corrupted or you want to start fresh.${ctx !== 'cli' ? '\nRun from terminal: polymarket clear-cache' : ''}`,
 
-    init: `**${p}init** — Re-run setup wizard
+    setup: `**${ctx === 'slash' ? '/setup' : `${p}init`}** — Re-run setup wizard
 
-${p}init                       Launch the TUI with the setup wizard open
+${ctx === 'slash' ? '/setup                     Open the setup wizard' : `${p}init                       Launch the TUI with the setup wizard open`}
                                Use this to configure or reconfigure API keys and preferences.`,
 
     help: `**${p}help** — Show help
