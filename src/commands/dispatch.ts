@@ -29,7 +29,7 @@ import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
 import { handleOrders, handleCancelOrders, formatOrdersHuman, formatCancelHuman } from './orders.js';
 import { handleTrade, formatTradeHuman } from './trade.js';
 import { searchOctagonMarkets, searchOctagonEvents, EVENT_SEARCH_TEXT_TIMEOUT_MS, getEventsWithEdge, addVenuePrefix } from '../scan/octagon-api.js';
-import { formatMarketSearchHuman, formatEventSearchHuman, formatMarketsWithEdgeHuman, formatEventMarketsHuman } from './search-remote.js';
+import { formatMarketSearchHuman, formatEventSearchHuman, formatMarketsWithEdgeHuman, formatEventMarketsHuman, formatIndexEventsHuman } from './search-remote.js';
 import { findTheme, parseThemeQuery } from '../scan/theme-registry.js';
 import { looksLikeSlug } from './similar.js';
 import { handleEvents, formatEventsHuman } from './events.js';
@@ -343,6 +343,26 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
         // though `search themes` advertises the syntax and both `scan` and the
         // TUI honour it.
         const { theme, subtheme } = parseThemeQuery(query);
+        // The events route rejects any q term under three characters, and hyphens
+        // become spaces before it is sent — so check each term the way the request
+        // will, and say so plainly rather than leaking a raw upstream 400.
+        if (theme && subtheme && !usesMarketFilters) {
+          const tooShort = subtheme
+            .replace(/-/g, ' ')
+            .split(/\s+/)
+            .filter(Boolean)
+            .find((t) => t.length < 3);
+          if (tooShort) {
+            const msg = `A subtheme must be at least 3 characters ('${tooShort}' is too short). Try: search ${theme.id}`;
+            if (json) {
+              console.log(JSON.stringify(wrapError('search', 'INVALID_ARGS', msg)));
+            } else {
+              console.error(msg);
+            }
+            process.exit(ExitCode.USER_ERROR);
+            return;
+          }
+        }
         if (theme && !usesMarketFilters) {
           // meta_category is case-sensitive and a closed set — it comes from
           // the registry, never from the raw query string. `q` is raw user
@@ -425,20 +445,22 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
         await ensureIndex();
       }
       const db = (await import('../db/index.js')).getDb();
-      const results = searchEventIndex(db, query, 30);
+      // Mirror the TUI: a theme narrows by category, and `theme:subtheme` searches
+      // the subtheme within it. Passing the raw string made `crypto:btc` a single
+      // keyword that matched nothing, since search_text never contains a colon.
+      const { theme: localTheme, subtheme: localSubtheme } = parseThemeQuery(query);
+      const results = localTheme
+        ? searchEventIndex(db, localSubtheme ?? '', 30, { categoryLabels: localTheme.tags })
+        : searchEventIndex(db, query, 30);
+      const localDescribe = localTheme
+        ? localSubtheme
+          ? `theme ${localTheme.id}:${localSubtheme}`
+          : `theme ${localTheme.id}`
+        : `"${query}"`;
       if (json) {
         console.log(JSON.stringify(wrapSuccess('search', { events: results })));
       } else {
-        if (results.length === 0) {
-          console.log(`No events found for "${query}".`);
-        } else {
-          console.log(`Found ${results.length} event(s) for "${query}":\n`);
-          for (const ev of results) {
-            const markets = ev.markets_json ? JSON.parse(ev.markets_json) : [];
-            const openMarkets = markets.filter((m: any) => m.status === 'open' || m.status === 'active');
-            console.log(`  ${ev.event_ticker}  ${ev.title}  (${openMarkets.length} market${openMarkets.length !== 1 ? 's' : ''})`);
-          }
-        }
+        console.log(formatIndexEventsHuman(localDescribe, results));
       }
       return;
     }
