@@ -16,7 +16,7 @@ const visibleWidth = (s: string) => stripVTControlCharacters(s).length;
  */
 function truncateVisible(s: string, max: number): string {
   if (visibleWidth(s) <= max) return s;
-  const token = /(\[[0-9;]*m)|([\s\S])/g;
+  const token = /(\u001b\[[0-9;]*m)|([\s\S])/g;
   let out = '';
   let seen = 0;
   let coloured = false;
@@ -31,7 +31,7 @@ function truncateVisible(s: string, max: number): string {
     out += m[2];
     seen++;
   }
-  return out + '…' + (coloured ? '[0m' : '');
+  return out + '…' + (coloured ? '\u001b[0m' : '');
 }
 
 /**
@@ -69,14 +69,25 @@ export function formatTable(headers: string[], rows: string[][], maxWidth?: numb
   const chrome = colWidths.length * 3 + 1;
   const budget = maxWidth ?? terminalBudget();
   const MIN_COL = 8;
+  // Eight is a comfort floor, not a hard one. Six columns bottom out at
+  // 6 * 8 + 19 = 67, so stopping there hands a 40-66 column terminal a
+  // table wider than its budget, which then wraps: the exact failure this
+  // shrinking exists to prevent. Take a second pass down to one column
+  // when the budget still demands it.
+  const HARD_MIN = 1;
+  let floor = MIN_COL;
   let total = colWidths.reduce((a, b) => a + b, 0) + chrome;
   while (total > budget) {
     let widest = 0;
     for (let i = 1; i < colWidths.length; i++) {
       if (colWidths[i] > colWidths[widest]) widest = i;
     }
-    if (colWidths[widest] <= MIN_COL) break;
-    colWidths[widest] = Math.max(MIN_COL, colWidths[widest] - (total - budget));
+    if (colWidths[widest] <= floor) {
+      if (floor === HARD_MIN) break;
+      floor = HARD_MIN;
+      continue;
+    }
+    colWidths[widest] = Math.max(floor, colWidths[widest] - (total - budget));
     total = colWidths.reduce((a, b) => a + b, 0) + chrome;
   }
 
