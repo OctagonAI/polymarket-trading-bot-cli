@@ -2,11 +2,12 @@
 
 A CLI + TUI for AI-assisted prediction market research and trading on **Polymarket**, built with TypeScript on Bun.
 
-> **Read-only today.** Order placement is not implemented, and `portfolio` is gated with it because every view it
-> offers needs a wallet that arrives with trading support. Some Octagon features (clustering, correlation, baskets,
-> series rollups) have no Polymarket route and are gated in `src/scan/octagon-capabilities.ts`; the gated set is
-> hidden from help, autocomplete and the intro screen through one shared predicate. Nothing user-facing should
-> reference another venue — that includes help text, tool descriptions and example identifiers.
+> **Trading is live.** `buy`, `sell`, `orders` and `portfolio` all work once a wallet is imported; they are gated
+> on wallet state through `isCommandAvailable` in `src/tools/polymarket/polymarket-trade.ts`, which is what hides
+> them from help, autocomplete and the intro screen. The Octagon features with no Polymarket route (clustering,
+> correlation, baskets, series rollups, the editorial themes registry) are not gated but **removed** — do not port
+> them back without a venue-generic endpoint to call. Nothing user-facing should reference another venue — that
+> includes help text, tool descriptions and example identifiers.
 
 ## Project Structure
 
@@ -22,7 +23,7 @@ A CLI + TUI for AI-assisted prediction market research and trading on **Polymark
   - Backtest: `src/backtest/`; Gateway (WhatsApp/Baileys): `src/gateway/`; Setup wizard: `src/setup/wizard.ts`
   - Also: `src/audit/`, `src/eval/`, `src/model/llm.ts`, `src/providers.ts`, `src/theme.ts`, `src/utils/`
 - On disk (all under `~/.polymarket-bot/`, via `src/utils/paths.ts`): `.env`, `settings.json`, `config.json`, `polymarket-bot.db`, `dlq.jsonl`
-- Scripts: `scripts/release.sh`, `scripts/test-commands*.ts`. No seed data ships; `themes import <path>` takes a user-supplied JSON file.
+- Scripts: `scripts/release.sh`, `scripts/test-commands*.ts`.
 
 ## Build, Test, and Development Commands
 
@@ -61,15 +62,17 @@ This is the single largest source of drift in the repo — see `CLAUDE.md`.
 ## Tools
 
 Registered in `src/tools/registry.ts`, conditionally by env var:
-`polymarket_search` (market research router), `polymarket_trade` (trade execution router, currently returns an unavailable error —
-see `TOOLS_REQUIRING_APPROVAL` in `src/agent/tool-executor.ts`), `octagon_report`,
+`polymarket_search` (market research router), `polymarket_trade` (trade execution router — it explains what to run
+rather than placing an order itself, so spending stays an explicit user act; see `TOOLS_REQUIRING_APPROVAL` in
+`src/agent/tool-executor.ts`), `octagon_report`,
 `portfolio_query`, `edge_query`, `risk_status`, `scan_markets`, `exchange_status`,
 `web_search` (Tavily), `web_fetch`.
 
-`portfolio_overview` and `portfolio_review` are **not registered** — both read the wallet, which is disabled until
-trading lands. Their descriptions stay in `src/tools/registry.ts` so re-enabling is a registration change. The
-agent policy in `src/agent/prompts.ts` must not name them: an unregistered tool in the policy makes the agent emit
-`Tool '...' not found` instead of the gated explanation. `portfolio_query` stays registered — it reads the local DB.
+`portfolio_overview` and `portfolio_review` are registered **only when a wallet address is configured**
+(`src/tools/registry.ts`) — with no wallet there is no account to read, so the agent is not offered them. The agent
+policy in `src/agent/prompts.ts` must not name them unconditionally: a tool in the policy that is not registered
+makes the agent emit `Tool '...' not found` instead of a useful explanation. `portfolio_query` stays registered
+unconditionally — it reads the local DB.
 
 ## Environment Variables
 
