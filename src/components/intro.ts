@@ -60,8 +60,8 @@ export class IntroComponent extends Container {
     this.addChild(new Text('AI-powered prediction market terminal.', 0, 0));
     this.addChild(new Spacer(1));
     const cmd = (label: string) => theme.muted(label.padEnd(11));
-    // Single list so the intro cannot drift from autocomplete; entries whose
-    // command is gated by octagon-capabilities are filtered out.
+    // Single list so the intro cannot drift from autocomplete; entries the
+    // configured wallet cannot run are filtered out below.
     const commandRows: Array<[string, string]> = [
       ['/search', 'Search events by theme, ticker, or free-text; /search edge for edge scan'],
       ['/similar', '<slug|"text">    Related markets (Octagon)'],
