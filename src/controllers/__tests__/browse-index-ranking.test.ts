@@ -12,6 +12,7 @@ interface Seed {
   tags?: string[];
   volume?: number;
   status?: string;
+  result?: string;
   closeTime?: string;
   series?: string;
 }
@@ -32,7 +33,7 @@ function seed(db: Database, rows: Seed[]): void {
           yes_sub_title: 'Yes',
           status: r.status ?? 'active',
           close_time: r.closeTime ?? '2099-01-01T00:00:00Z',
-          result: '',
+          result: r.result ?? '',
           volume: r.volume ?? 100,
         } as unknown as PolymarketMarket,
       ],
@@ -97,6 +98,19 @@ describe('selectIndexEventTickers', () => {
 
     // Both untradeable events out-volume the live one, so ranking alone would
     // put them first; the open-market filter is what keeps them out entirely.
+    expect(selectIndexEventTickers(db, '', ['Crypto'], 30)).toEqual(['live']);
+  });
+
+  test('a market that settled while still flagged active is not tradeable', () => {
+    // status alone does not mean tradeable: a market can settle upstream while
+    // the index still carries status 'active'. isMarketActive rejects it
+    // downstream, so letting it through here would spend a cap slot on an event
+    // that browse then drops, pushing an eligible event out of the list.
+    seed(db, [
+      { ticker: 'settled', title: 'crypto settled', category: 'Crypto', tags: ['Crypto'], volume: 99999, result: 'yes' },
+      { ticker: 'live', title: 'crypto live', category: 'Crypto', tags: ['Crypto'], volume: 1 },
+    ]);
+
     expect(selectIndexEventTickers(db, '', ['Crypto'], 30)).toEqual(['live']);
   });
 

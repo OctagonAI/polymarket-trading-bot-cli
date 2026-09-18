@@ -120,6 +120,7 @@ export function selectIndexEventTickers(
     Object.fromEntries(labels.flatMap((l, i) => [[`$cat${i}`, l], [`$tag${i}`, `%,${l},%`]]));
 
   const openMarket = `json_extract(value,'$.status') IN ('open','active')
+        AND COALESCE(json_extract(value,'$.result'), '') = ''
         AND (json_extract(value,'$.close_time') IS NULL OR json_extract(value,'$.close_time') > $now)`;
   const hasOpenMarket = `EXISTS (SELECT 1 FROM json_each(markets_json) WHERE ${openMarket})`;
   const rank = `ORDER BY (
