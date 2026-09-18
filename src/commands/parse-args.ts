@@ -58,7 +58,6 @@ export interface ParsedArgs {
   seriesTicker?: string;
   seriesPrefix?: string;
   sortBy?: string;
-  tickers?: string;
   query?: string;
   activeOnly: boolean;
   daysToClose?: number;    // ergonomic shortcut: close_before = now + N days
@@ -110,7 +109,6 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
   let seriesTicker: string | undefined;
   let seriesPrefix: string | undefined;
   let sortBy: string | undefined;
-  let tickers: string | undefined;
   let query: string | undefined;
   let activeOnly = false;
   let daysToClose: number | undefined;
@@ -295,9 +293,6 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
           parseErrors.push(`Invalid --sort-by value: "${val}" (expected one of ${Array.from(VALID_SORT_BY).join(', ')})`);
         }
       }
-    } else if (arg === '--tickers') {
-      const val = argv[++i];
-      if (val != null) { tickers = val; } else { parseErrors.push('--tickers requires a value (comma-separated list)'); }
     } else if (arg === '-q' || arg === '--query') {
       const val = argv[++i];
       if (val != null) { query = val; } else { parseErrors.push(`${arg} requires a value`); }
@@ -342,7 +337,7 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
     subcommand, positionalArgs, json, theme, ticker, interval, since, minConfidence, minEdge,
     live, refresh, report, dryRun, verbose, performance, resolved, unresolved, days, maxAge, category,
     limit, exportPath, backtestUniverse, backtestFees, minVolume, minPrice, maxPrice,
-    topK, closeBefore, seriesTicker, sortBy, tickers, query, activeOnly,
+    topK, closeBefore, seriesTicker, sortBy, query, activeOnly,
     seriesPrefix, daysToClose, market,
     force, yes, all,
     parseErrors,

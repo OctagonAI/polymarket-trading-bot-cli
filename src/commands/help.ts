@@ -104,16 +104,6 @@ Flags:
 ${p}analyze <market-slug>                  Full analysis: edge, drivers, catalysts, Kelly sizing
 ${p}analyze <market-slug> ${ctx === 'cli' ? '--' : ''}refresh        Force fresh Octagon report
 
-Batch mode (one Octagon round-trip instead of N):
-${p}analyze slug-a slug-b slug-c                 Edge readout across 2-100 tickers
-${p}analyze --tickers slug-a,slug-b,slug-c       Same, comma-separated
-${p}analyze slug-a slug-b slug-c --json          For pipelines / scripting
-
-The batch mode hits POST /markets/edge in one call and returns
-model_probability, market_probability, edge_pp, expected_return per ticker.
-Use single-ticker mode when you need the full deep-analysis pipeline
-(drivers, catalysts, Kelly sizing, risk gate).
-
 Position sizing needs a bankroll. With a wallet configured it uses your on-chain
 pUSD balance; ${p}config risk.bankroll_usdc <amount> caps it lower. With neither,
 analyze reports edge and catalysts but skips sizing.${ctx === 'cli' ? `

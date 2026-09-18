@@ -1,15 +1,12 @@
 /**
  * Typed wrappers over Octagon's prediction-markets API.
  *
- * Two namespaces live under https://api.octagonai.co/v1/predictions:
- *
- *  - Venue-generic routes (`/markets/search`, `/markets/similar`,
- *    `/markets/{venue}/{native_ticker}`) take a `venues` filter and serve
- *    Polymarket. These are what this CLI uses.
- *  - `/predictions/kalshi/*` routes (clusters, correlations, baskets, series
- *    rollups, markets-with-edge) have no venue-generic equivalent. They remain
- *    here, still Kalshi-named, and are gated off in octagon-capabilities.ts —
- *    calling one would return Kalshi markets under a Polymarket banner.
+ * Every route here is venue-generic (`/markets/search`, `/markets/similar`,
+ * `/markets/{venue}/{native_ticker}`), takes a `venues` filter and is scoped to
+ * Polymarket. The `/predictions/kalshi/*` namespace is deliberately not called:
+ * those routes have no venue-generic equivalent and answer with Kalshi data
+ * whatever you send them, so the commands that used them were removed rather
+ * than left to mislabel another venue's markets.
  *
  * The older /v1/prediction-markets/* prefix is deprecated; it still responds but
  * is Kalshi-shaped and ignores venue filters.
@@ -28,7 +25,6 @@ import { fetchAllOctagonEvents } from './octagon-events-api.js';
 import { fetchWithDeadline, safeText } from '../utils/http.js';
 
 const PREDICTIONS_BASE = 'https://api.octagonai.co/v1/predictions';
-const KALSHI_BASE = `${PREDICTIONS_BASE}/kalshi`;
 
 /** Octagon's venue filter value for every venue-generic call this CLI makes. */
 export const OCTAGON_VENUE = 'polymarket';
@@ -112,11 +108,6 @@ async function request<T>(
       return (await resp.json()) as T;
     },
   );
-}
-
-/** Kalshi-only routes. Reachable only via features gated off for Polymarket. */
-function kalshiApi<T>(method: 'GET' | 'POST', path: string, opts?: { params?: object; body?: unknown }): Promise<T> {
-  return request<T>(KALSHI_BASE, method, path, opts);
 }
 
 /** Venue-generic routes; every call is scoped to Polymarket. */
@@ -394,31 +385,4 @@ export async function getEventsWithEdge(params: MarketsWithEdgeParams = {}): Pro
 }
 
 // ─── Endpoints added in subsequent sessions ─────────────────────────────────
-
-export interface PerTickerEdgeRow {
-  input_ticker: string;
-  market_ticker: string | null;
-  event_ticker: string | null;
-  title: string | null;
-  series_category: string | null;
-  model_probability: number | null;   // 0-1 fraction per the new endpoint doc
-  market_probability: number | null;
-  edge_pp: number | null;
-  expected_return: number | null;
-  confidence_score: number | null;
-  total_volume: number | null;
-  total_open_interest: number | null;
-  status: 'scored' | 'unscored';
-  captured_at: string | null;
-}
-
-export interface PerTickerEdgeResponse {
-  run_id: string;
-  captured_at: string;
-  data: PerTickerEdgeRow[];
-}
-
-export function getMarketsEdge(body: { tickers: string[]; run_id?: string }): Promise<PerTickerEdgeResponse> {
-  return kalshiApi<PerTickerEdgeResponse>('POST', '/markets/edge', { body });
-}
 
