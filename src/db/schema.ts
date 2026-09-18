@@ -184,24 +184,12 @@ export function migrate(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_history_event
       ON octagon_history(event_ticker, captured_at);
 
-    CREATE TABLE IF NOT EXISTS editorial_themes (
-      name           TEXT PRIMARY KEY,
-      description    TEXT,
-      search_volume  INTEGER,
-      created_at     INTEGER NOT NULL,
-      updated_at     INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS editorial_theme_series (
-      theme_name     TEXT NOT NULL,
-      series_ticker  TEXT NOT NULL,
-      PRIMARY KEY (theme_name, series_ticker),
-      FOREIGN KEY (theme_name) REFERENCES editorial_themes(name) ON DELETE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_ets_series
-      ON editorial_theme_series(series_ticker);
   `);
+
+  // The editorial_themes / editorial_theme_series tables were dropped from this
+  // schema when the `themes` registry was removed. migrate() is additive, so an
+  // existing database keeps them as unreferenced orphans rather than losing the
+  // rows to a DROP — deliberate, since nothing here can hand that data back.
 
   // Schema migrations for columns added after initial release
   const edgeCols = db.query(`PRAGMA table_info(edge_history)`).all() as Array<{ name: string }>;

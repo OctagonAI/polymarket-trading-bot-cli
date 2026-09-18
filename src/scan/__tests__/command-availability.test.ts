@@ -7,15 +7,7 @@ import {
 } from '../../tools/polymarket/polymarket-trade.js';
 import { resetWalletIdentityCache } from '../../wallet/identity.js';
 import * as walletStore from '../../wallet/store.js';
-import {
-  DEFERRED_COMMANDS,
-  COMMAND_FEATURE,
-  isDeferredCommand,
-  octagonSupports,
-  octagonUnavailableMessage,
-} from '../octagon-capabilities.js';
 import { buildHelp } from '../../commands/help.js';
-
 
 /**
  * Run `fn` with no wallet visible.
@@ -35,44 +27,11 @@ function withNoWallet<T>(fn: () => T): T {
   }
 }
 
-describe('octagon capabilities', () => {
-  test('every deferred command maps to a feature', () => {
-    for (const cmd of DEFERRED_COMMANDS) {
-      expect(COMMAND_FEATURE[cmd]).toBeDefined();
-    }
-  });
-
-  test('every deferred command is deferred because Octagon has no Polymarket route', () => {
-    // Nothing stays gated for want of porting: the client now calls the
-    // venue-generic routes, so a false here means Octagon serves Kalshi only.
-    for (const cmd of DEFERRED_COMMANDS) {
-      expect(octagonSupports(COMMAND_FEATURE[cmd]!)).toBe(false);
-      expect(octagonUnavailableMessage(COMMAND_FEATURE[cmd]!, cmd)).toContain('not available for Polymarket');
-    }
-  });
-
-  test('the venue-generic features are live', () => {
-    for (const feature of ['market-search', 'similar-markets', 'events', 'reports', 'trader-trust'] as const) {
-      expect(octagonSupports(feature)).toBe(true);
-    }
-  });
-
-  test('isDeferredCommand only matches gated commands', () => {
-    expect(isDeferredCommand('clusters')).toBe(true);
-    expect(isDeferredCommand('series')).toBe(true);
-    // These run against Polymarket — natively or via Octagon — and must stay available
-    for (const live of ['search', 'analyze', 'watch', 'catalysts', 'themes', 'help',
-                        'report', 'trust', 'events', 'similar', 'status']) {
-      expect(isDeferredCommand(live)).toBe(false);
-      expect(isTradingCommand(live)).toBe(false);
-    }
-  });
-
-  test('portfolio is wallet-gated, not Octagon-gated', () => {
-    // It reads an account, so it needs an address — but not a key, and not
-    // anything Octagon provides.
+describe('command availability', () => {
+  test('portfolio is wallet-gated', () => {
+    // It reads an account, so it needs an address — but not a key.
     expect(isTradingCommand('portfolio')).toBe(true);
-    expect(isDeferredCommand('portfolio')).toBe(false);
+    expect(isCommandAvailable('search')).toBe(true);
   });
 
   test('availability follows wallet state rather than a fixed list', () => {
@@ -123,7 +82,7 @@ describe('octagon capabilities', () => {
   });
 });
 
-describe('help reflects the gate', () => {
+describe('help reflects the wallet gate', () => {
   const overview = () => {
     const r = buildHelp('cli');
     return 'text' in r ? r.text : '';
@@ -134,7 +93,7 @@ describe('help reflects the gate', () => {
       const text = overview();
       // With no wallet that is still every trading command, but now because the
       // wallet is absent rather than because a list says so.
-      for (const cmd of [...DEFERRED_COMMANDS, ...TRADING_COMMANDS]) {
+      for (const cmd of TRADING_COMMANDS) {
         expect(text).not.toMatch(new RegExp(`^\\s{2}${cmd}\\b`, 'm'));
       }
       // `wallet` is how you get out of that state, so it must always be listed.
@@ -151,16 +110,6 @@ describe('help reflects the gate', () => {
     }
   });
 
-  test('a gated topic returns only why it cannot run', () => {
-    const r = buildHelp('cli', 'clusters');
-    expect('text' in r).toBe(true);
-    if ('text' in r) {
-      expect(r.text.startsWith('`clusters` is not available')).toBe(true);
-      // No reference block: its syntax belongs to a venue this tool does not trade.
-      expect(r.text).not.toContain('Reference');
-    }
-  });
-
   test('no user-facing help text names another venue or its tickers', () => {
     const surfaces = ['cli', 'slash'] as const;
     for (const ctx of surfaces) {
@@ -169,7 +118,7 @@ describe('help reflects the gate', () => {
       expect(text).not.toMatch(/kalshi/i);
       expect(text).not.toMatch(/\bKX[A-Z0-9-]{2,}/);
     }
-    for (const cmd of [...DEFERRED_COMMANDS, ...TRADING_COMMANDS]) {
+    for (const cmd of [...TRADING_COMMANDS, 'search', 'similar', 'events', 'catalysts', 'trust', 'report']) {
       const r = buildHelp('cli', cmd);
       const text = 'text' in r ? r.text : r.error;
       expect(text).not.toMatch(/kalshi/i);

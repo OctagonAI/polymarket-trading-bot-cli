@@ -2,7 +2,6 @@ import { Container, Spacer, Text } from '@mariozechner/pi-tui';
 import packageJson from '../../package.json';
 import { theme } from '../theme.js';
 import { getModelDisplayName } from '../utils/model.js';
-import { isDeferredCommand } from '../scan/octagon-capabilities.js';
 import { isCommandAvailable } from '../tools/polymarket/polymarket-trade.js';
 
 const INTRO_WIDTH = 60;
@@ -66,16 +65,10 @@ export class IntroComponent extends Container {
     const commandRows: Array<[string, string]> = [
       ['/search', 'Search events by theme, ticker, or free-text; /search edge for edge scan'],
       ['/similar', '<slug|"text">    Related markets (Octagon)'],
-      ['/clusters', '[--ranked|--behavioral]  Browse thematic & behavioral clusters'],
-      ['/peers', '<ticker>  Markets in the same cluster'],
       ['/events', '[ticker]  Octagon events + outcome ladder'],
       ['/trust', '<event_ticker>  Octagon Trust Index (--verbose for per-contract)'],
       ['/report', '<event_ticker>  Full Octagon markdown report (--refresh for fresh)'],
-      ['/series', '[ticker]  Series rollup; /series candles <SERIES> for NAV'],
-      ['/themes', 'list|show|report|audit|overlap  Editorial narrative registry'],
       ['/catalysts', 'upcoming --days N  Markets closing soon, grouped by week'],
-      ['/correlate', '<t1> <t2> [...]  Pairwise correlation matrix'],
-      ['/basket', 'build|backtest|size|candles|validate  Diversified basket tools'],
       ['/wallet', 'show|import              Manage your wallet'],
       ['/portfolio', 'Overview, positions, value, status'],
       ['/analyze', '<ticker>  Full analysis: edge, research, Kelly sizing'],
@@ -89,7 +82,6 @@ export class IntroComponent extends Container {
     ];
     for (const [name, desc] of commandRows) {
       const bare = name.split(' ')[0]!.replace(/^\//, '');
-      if (isDeferredCommand(bare)) continue;
       // Gated on the configured wallet: no key, no order commands.
       if (!isCommandAvailable(bare)) continue;
       this.addChild(new Text(cmd(name) + desc, 0, 0));

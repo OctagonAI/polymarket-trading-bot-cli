@@ -10,8 +10,7 @@ function defaultArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
     live: false, refresh: false, report: false, dryRun: false,
     verbose: false, performance: false, resolved: false,
     unresolved: false,
-    behavioral: false, ranked: false, showCluster: false,
-    activeOnly: false, cells: false, autoProbs: false,
+    activeOnly: false,
     force: false,
     yes: false,
     all: false,
@@ -22,14 +21,9 @@ function defaultArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
 import { handleBacktest, formatBacktestHuman } from './backtest.js';
 import { handleAnalyze, formatAnalyzeHuman } from './analyze.js';
 import { buildHelp } from './help.js';
-import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 import { trackEvent } from '../utils/telemetry.js';
 import { parseArgs } from './parse-args.js';
 import { handleSimilar, formatSimilarHuman } from './similar.js';
-import { handleClusters, formatClustersHuman } from './clusters.js';
-import { handlePeers, formatPeersHuman } from './peers.js';
-import { handleCorrelate, formatCorrelationHuman } from './correlate.js';
-import { handleBasket, formatBasketHuman } from './basket.js';
 import { handleWallet, formatWalletHuman } from './wallet.js';
 import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
 import { handleOrders, handleCancelOrders, formatOrdersHuman, formatCancelHuman } from './orders.js';
@@ -37,9 +31,21 @@ import { prepareTrade, submitTrade, formatTradeHuman, type PreparedTrade } from 
 import { handleEvents, formatEventsHuman } from './events.js';
 import { handleTrust, formatTrustHuman } from './trust.js';
 import { handleReport, formatReportHuman } from './report.js';
-import { handleSeries, formatSeriesHuman } from './series.js';
-import { handleEditorialThemes, formatEditorialThemesHuman } from './editorial-themes.js';
 import { handleCatalysts, formatCatalystsHuman } from './catalysts.js';
+
+/**
+ * The `search themes` category listing, for the TUI.
+ *
+ * Exported because `/search themes` used to reach this by calling the `/themes`
+ * slash command, which routed to the editorial registry instead — a different
+ * feature that no longer exists. Calling the listing directly removes the
+ * indirection that made that possible.
+ */
+export async function renderThemesList(): Promise<string> {
+  const resp = await handleThemes(parseArgs(['search', 'themes']));
+  return resp.ok ? formatThemesHuman(resp.data) : (resp.error?.message ?? 'themes failed');
+}
+
 
 export interface CommandResult {
   output: string;
@@ -66,9 +72,9 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
   const parts = trimmed.slice(1).trim().split(/\s+/);
   const command = parts[0]?.toLowerCase();
   const args = parts.slice(1);
-  // Enrich Octagon-Kalshi commands with subview/mode flags so analytics can
-  // distinguish e.g. "basket build" vs "basket backtest", or thematic vs
-  // behavioral clusters. Outer command name is always tracked.
+  // Enrich commands with subview/mode flags so analytics can distinguish e.g.
+  // a ticker-anchored /similar from a query-anchored one. Outer command name is
+  // always tracked.
   const slashMeta: Record<string, string | boolean> = { command: command ?? '' };
   if (command === 'wallet') {
     const sub = args[0]?.toLowerCase();
@@ -77,33 +83,12 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
       slashMeta.subview = sub;
     }
   }
-  if (command === 'basket') {
-    const sub = args[0]?.toLowerCase();
-    if (sub === 'build' || sub === 'backtest' || sub === 'size' || sub === 'candles') {
-      slashMeta.subview = sub;
-    }
-    slashMeta.kelly_sizing = args.includes('--bankroll');
-  } else if (command === 'clusters') {
-    slashMeta.behavioral = args.includes('--behavioral');
-    slashMeta.ranked = args.includes('--ranked');
-  } else if (command === 'peers') {
-    slashMeta.behavioral = args.includes('--behavioral');
-    slashMeta.show_cluster = args.includes('--show-cluster');
-  } else if (command === 'similar') {
+  if (command === 'similar') {
     slashMeta.anchor = args.includes('-q') || args.includes('--query') ? 'query' : 'ticker';
   } else if (command === 'search') {
     slashMeta.remote = !!process.env.OCTAGON_API_KEY;
   }
   trackEvent('slash_command', slashMeta);
-
-  // Octagon-backed commands that cannot serve Polymarket yet. Gated here so the
-  // TUI reports the same thing the CLI does instead of rendering Kalshi rows.
-  if (command && isDeferredCommand(command)) {
-    const feature = COMMAND_FEATURE[command]!;
-    if (!octagonSupports(feature)) {
-      return { output: octagonUnavailableMessage(feature, `/${command}`) };
-    }
-  }
 
   switch (command) {
     case 'help': {
@@ -128,26 +113,6 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
       return handleTradeCommand('buy', args);
     case 'sell':
       return handleTradeCommand('sell', args);
-    // ─── /themes (editorial registry) ────────────────────────────────
-    // The bare /themes call now hits the editorial-themes registry. Legacy
-    // "Kalshi category labels" is still reachable via /search themes.
-    case 'themes': {
-      const parsed = parseArgs(['themes', ...args]);
-      const sub = parsed.positionalArgs[0]?.toLowerCase();
-      const isAsync = sub === 'report' || sub === 'audit';
-      if (!isAsync) {
-        const resp = await handleEditorialThemes(parsed);
-        return { output: resp.ok ? formatEditorialThemesHuman(resp.data) : (resp.error?.message ?? 'themes failed') };
-      }
-      return {
-        output: `Building themes ${sub} (this pulls the full Kalshi universe)...`,
-        asyncFollowUp: async () => {
-          const resp = await handleEditorialThemes(parsed);
-          return resp.ok ? formatEditorialThemesHuman(resp.data) : (resp.error?.message ?? 'themes failed');
-        },
-      };
-    }
-
     // ─── /analyze ────────────────────────────────────────────────────
     case 'analyze':
       return handleAnalyzeCommand(args);
@@ -207,36 +172,6 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
         },
       };
     }
-    case 'clusters': {
-      const parsed = parseArgs(['clusters', ...args]);
-      return {
-        output: 'Querying Octagon for clusters...',
-        asyncFollowUp: async () => {
-          const resp = await handleClusters(parsed);
-          return resp.ok ? formatClustersHuman(resp.data) : (resp.error?.message ?? 'clusters failed');
-        },
-      };
-    }
-    case 'peers': {
-      const parsed = parseArgs(['peers', ...args]);
-      return {
-        output: 'Querying Octagon for cluster peers...',
-        asyncFollowUp: async () => {
-          const resp = await handlePeers(parsed);
-          return resp.ok ? formatPeersHuman(resp.data) : (resp.error?.message ?? 'peers failed');
-        },
-      };
-    }
-    case 'correlate': {
-      const parsed = parseArgs(['correlate', ...args]);
-      return {
-        output: 'Computing correlation matrix...',
-        asyncFollowUp: async () => {
-          const resp = await handleCorrelate(parsed);
-          return resp.ok ? formatCorrelationHuman(resp.data) : (resp.error?.message ?? 'correlate failed');
-        },
-      };
-    }
     case 'orders': {
       // `cancel` is a verb on the orders resource, not a command of its own.
       if (args[0]?.toLowerCase() === 'cancel') {
@@ -266,17 +201,6 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
         asyncFollowUp: async () => {
           const resp = await handleWallet(parsed);
           return resp.ok ? formatWalletHuman(resp.data) : (resp.error?.message ?? 'wallet failed');
-        },
-      };
-    }
-    case 'basket': {
-      const parsed = parseArgs(['basket', ...args]);
-      const sub = parsed.positionalArgs[0] ?? '';
-      return {
-        output: `Running basket ${sub || '(no subcommand)'}...`,
-        asyncFollowUp: async () => {
-          const resp = await handleBasket(parsed);
-          return resp.ok ? formatBasketHuman(resp.data) : (resp.error?.message ?? 'basket failed');
         },
       };
     }
@@ -313,17 +237,6 @@ export async function handleSlashCommand(input: string): Promise<CommandResult |
         asyncFollowUp: async () => {
           const resp = await handleReport(parsed);
           return resp.ok ? formatReportHuman(resp.data) : (resp.error?.message ?? 'report failed');
-        },
-      };
-    }
-    case 'series': {
-      const parsed = parseArgs(['series', ...args]);
-      const sub = parsed.positionalArgs[0]?.toLowerCase();
-      return {
-        output: sub === 'candles' ? 'Building series NAV...' : 'Rolling up Kalshi series...',
-        asyncFollowUp: async () => {
-          const resp = await handleSeries(parsed);
-          return resp.ok ? formatSeriesHuman(resp.data) : (resp.error?.message ?? 'series failed');
         },
       };
     }
@@ -440,5 +353,4 @@ async function handleTradeCommand(action: 'buy' | 'sell', args: string[]): Promi
 async function handleReviewCommand(): Promise<CommandResult> {
   return { output: TRADING_UNAVAILABLE_MESSAGE };
 }
-
 

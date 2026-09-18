@@ -12,7 +12,6 @@ import { handleWatch } from './watch.js';
 import { handleBacktest, formatBacktestHuman } from './backtest.js';
 import { commandUnavailableReason } from '../tools/polymarket/polymarket-trade.js';
 import { buildHelp } from './help.js';
-import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 import { ensureIndex, forceRefreshIndex } from '../tools/polymarket/search-index.js';
 import { searchEventIndex } from '../db/event-index.js';
 import { scanEdges, formatEdgeScanHuman } from './search-edge.js';
@@ -20,10 +19,6 @@ import { scanEdges, formatEdgeScanHuman } from './search-edge.js';
 import { ExitCode, exitCodeFromError } from '../utils/errors.js';
 import { trackEvent } from '../utils/telemetry.js';
 import { handleSimilar, formatSimilarHuman } from './similar.js';
-import { handleClusters, formatClustersHuman } from './clusters.js';
-import { handlePeers, formatPeersHuman } from './peers.js';
-import { handleCorrelate, formatCorrelationHuman } from './correlate.js';
-import { handleBasket, formatBasketHuman } from './basket.js';
 import { handleWallet, formatWalletHuman } from './wallet.js';
 import { handlePortfolio, formatPortfolioHuman } from './portfolio.js';
 import { handleOrders, handleCancelOrders, formatOrdersHuman, formatCancelHuman } from './orders.js';
@@ -35,8 +30,6 @@ import { looksLikeSlug } from './similar.js';
 import { handleEvents, formatEventsHuman } from './events.js';
 import { handleTrust, formatTrustHuman } from './trust.js';
 import { handleReport, formatReportHuman } from './report.js';
-import { handleSeries, formatSeriesHuman } from './series.js';
-import { handleEditorialThemes, formatEditorialThemesHuman } from './editorial-themes.js';
 import { handleCatalysts, formatCatalystsHuman } from './catalysts.js';
 
 // ─── Alias resolution ────────────────────────────────────────────────────────
@@ -57,10 +50,6 @@ function resolveAlias(subcommand: Subcommand, positionalArgs: string[]): Resolve
     case 'status':
       return { canonical: 'portfolio', subview: 'status' };
 
-    // `themes` is now the editorial-themes registry (curated narrative buckets).
-    // Legacy "polymarket search themes" (Kalshi category labels) is still reachable
-    // via `search themes`.
-
     // wallet sub-routing (import/address/show/approve) — telemetry granularity.
     // The sub-verb is recorded; no address or key ever reaches telemetry.
     case 'wallet': {
@@ -79,15 +68,6 @@ function resolveAlias(subcommand: Subcommand, positionalArgs: string[]): Resolve
       return { canonical: 'orders', ...(sub ? { subview: 'detail' } : {}) };
     }
 
-    // basket sub-routing (build/backtest/size/candles) — exposed for telemetry granularity
-    case 'basket': {
-      const sub = positionalArgs[0]?.toLowerCase();
-      if (sub === 'build' || sub === 'backtest' || sub === 'size' || sub === 'candles') {
-        return { canonical: 'basket', subview: sub };
-      }
-      return { canonical: 'basket' };
-    }
-
     default:
       return { canonical: subcommand };
   }
@@ -95,14 +75,8 @@ function resolveAlias(subcommand: Subcommand, positionalArgs: string[]): Resolve
 
 function modeFlagsFor(canonical: Subcommand, args: ParsedArgs): Record<string, string | boolean> {
   switch (canonical) {
-    case 'clusters':
-      return { behavioral: args.behavioral, ranked: args.ranked };
-    case 'peers':
-      return { behavioral: args.behavioral, show_cluster: args.showCluster };
     case 'similar':
       return { anchor: args.ticker ? 'ticker' : args.query ? 'query' : 'positional' };
-    case 'basket':
-      return { kelly_sizing: args.bankroll !== undefined };
     case 'search':
       return { remote: !!process.env.OCTAGON_API_KEY };
     default:
@@ -198,22 +172,6 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       return;
     }
 
-    // ─── Octagon-backed commands that cannot serve Polymarket yet ─────
-    // Gated rather than left to return Kalshi rows under a Polymarket banner.
-    if (isDeferredCommand(resolved.canonical)) {
-      const feature = COMMAND_FEATURE[resolved.canonical]!;
-      if (!octagonSupports(feature)) {
-        const msg = octagonUnavailableMessage(feature, resolved.canonical);
-        if (json) {
-          console.log(JSON.stringify(wrapError(resolved.canonical, 'NOT_AVAILABLE', msg)));
-        } else {
-          console.error(msg);
-        }
-        process.exit(ExitCode.USER_ERROR);
-        return;
-      }
-    }
-
     // ─── search ────────────────────────────────────────────────────────
     if (resolved.canonical === 'search') {
       const sub = resolved.subview ?? args.positionalArgs[0];
@@ -270,25 +228,7 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       }
       const query = args.positionalArgs.join(' ');
 
-      // Octagon server-side search is skipped until the client is repointed:
-      // its Kalshi-scoped route returns Kalshi markets regardless of the query.
-      // The local Gamma-backed index below is venue-correct.
-      if (process.env.OCTAGON_API_KEY && octagonSupports('market-search')) {
-        // --aggregate-by series → route to series rollup
-        if (args.aggregateBy === 'series') {
-          const { handleSeries, formatSeriesHuman } = await import('./series.js');
-          const seriesArgs = { ...args, positionalArgs: query ? ['search', query] : ['list'] };
-          const resp = await handleSeries(seriesArgs);
-          if (json) {
-            console.log(JSON.stringify(resp));
-          } else if (resp.ok) {
-            console.log(formatSeriesHuman(resp.data));
-          } else {
-            console.error(resp.error?.message ?? 'series rollup failed');
-          }
-          process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
-          return;
-        }
+      if (process.env.OCTAGON_API_KEY) {
         // Route by what the user actually typed.
         //
         // Market-level filters only exist on /markets/search, so a query using
@@ -509,7 +449,6 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       return;
     }
 
-
     // Full account view. Only `status` had a block before, so this path was
     // unreachable from the CLI even once a wallet existed.
     if (resolved.canonical === 'portfolio') {
@@ -588,48 +527,6 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       return;
     }
 
-    // ─── clusters (Octagon thematic & behavioral) ──────────────────────
-    if (resolved.canonical === 'clusters') {
-      const resp = await handleClusters(args);
-      if (json) {
-        console.log(JSON.stringify(resp));
-      } else if (resp.ok) {
-        console.log(formatClustersHuman(resp.data));
-      } else {
-        console.error(resp.error?.message ?? 'clusters failed');
-      }
-      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
-      return;
-    }
-
-    // ─── peers (Octagon cluster peers) ─────────────────────────────────
-    if (resolved.canonical === 'peers') {
-      const resp = await handlePeers(args);
-      if (json) {
-        console.log(JSON.stringify(resp));
-      } else if (resp.ok) {
-        console.log(formatPeersHuman(resp.data));
-      } else {
-        console.error(resp.error?.message ?? 'peers failed');
-      }
-      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
-      return;
-    }
-
-    // ─── correlate (Octagon correlation matrix) ────────────────────────
-    if (resolved.canonical === 'correlate') {
-      const resp = await handleCorrelate(args);
-      if (json) {
-        console.log(JSON.stringify(resp));
-      } else if (resp.ok) {
-        console.log(formatCorrelationHuman(resp.data));
-      } else {
-        console.error(resp.error?.message ?? 'correlate failed');
-      }
-      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
-      return;
-    }
-
     // ─── catalysts (upcoming market closes grouped by week) ────────────
     if (resolved.canonical === 'catalysts') {
       const resp = await handleCatalysts(args);
@@ -639,34 +536,6 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
         console.log(formatCatalystsHuman(resp.data));
       } else {
         console.error(resp.error?.message ?? 'catalysts failed');
-      }
-      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
-      return;
-    }
-
-    // ─── themes (editorial narrative registry) ─────────────────────────
-    if (resolved.canonical === 'themes') {
-      const resp = await handleEditorialThemes(args);
-      if (json) {
-        console.log(JSON.stringify(resp));
-      } else if (resp.ok) {
-        console.log(formatEditorialThemesHuman(resp.data));
-      } else {
-        console.error(resp.error?.message ?? 'themes failed');
-      }
-      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
-      return;
-    }
-
-    // ─── series (Kalshi series rollup) ─────────────────────────────────
-    if (resolved.canonical === 'series') {
-      const resp = await handleSeries(args);
-      if (json) {
-        console.log(JSON.stringify(resp));
-      } else if (resp.ok) {
-        console.log(formatSeriesHuman(resp.data));
-      } else {
-        console.error(resp.error?.message ?? 'series failed');
       }
       process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
       return;
@@ -714,7 +583,6 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       return;
     }
 
-    // ─── basket (build, backtest, size, candles) ───────────────────────
     if (resolved.canonical === 'wallet') {
       const resp = await handleWallet(args);
       if (json) {
@@ -723,19 +591,6 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
         console.log(formatWalletHuman(resp.data));
       } else {
         console.error(resp.error?.message ?? 'wallet failed');
-      }
-      process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
-      return;
-    }
-
-    if (resolved.canonical === 'basket') {
-      const resp = await handleBasket(args);
-      if (json) {
-        console.log(JSON.stringify(resp));
-      } else if (resp.ok) {
-        console.log(formatBasketHuman(resp.data));
-      } else {
-        console.error(resp.error?.message ?? 'basket failed');
       }
       process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
       return;
@@ -774,7 +629,6 @@ export async function dispatch(args: ParsedArgs): Promise<void> {
       process.exit(resp.ok ? ExitCode.SUCCESS : ExitCode.USER_ERROR);
       return;
     }
-
 
     // ─── help ──────────────────────────────────────────────────────────
     if (subcommand === 'help') {

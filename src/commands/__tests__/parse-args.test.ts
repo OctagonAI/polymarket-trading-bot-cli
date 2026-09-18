@@ -15,28 +15,9 @@ describe('parseArgs — integer-only flag validation', () => {
     expect(r.topK).toBe(25);
   });
 
-  test('--window-days rejects decimal', () => {
-    const r = parseArgs(['correlate', 'KX-A', 'KX-B', '--window-days', '30.5']);
-    expect(r.parseErrors.length).toBe(1);
-    expect(r.parseErrors[0]).toContain('Invalid --window-days value');
-  });
-
-  test('-n rejects decimal', () => {
-    const r = parseArgs(['basket', 'build', '-n', '5.5']);
-    expect(r.parseErrors.length).toBe(1);
-    expect(r.parseErrors[0]).toContain('Invalid -n value');
-  });
-
-  test('--max-per-cluster rejects decimal', () => {
-    const r = parseArgs(['basket', 'build', '--max-per-cluster', '2.5']);
-    expect(r.parseErrors.length).toBe(1);
-    expect(r.parseErrors[0]).toContain('Invalid --max-per-cluster value');
-  });
-
   test('integer flags reject zero and negatives', () => {
     expect(parseArgs(['similar', '--top-k', '0']).parseErrors.length).toBe(1);
     expect(parseArgs(['similar', '--top-k', '-5']).parseErrors.length).toBe(1);
-    expect(parseArgs(['correlate', 'A', 'B', '--window-days', '-1']).parseErrors.length).toBe(1);
   });
 });
 
