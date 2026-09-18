@@ -248,8 +248,12 @@ export function pruneStaleEvents(db: Database, staleBefore: number): number {
       doomed.push(r.event_ticker);
       continue;
     }
+    // No length guard: normalizeGammaEvent turns missing market data into [],
+    // clearAndPopulateIndex stores that, and nothing hydrates such a row later —
+    // so an event with zero markets is dead weight and should go the same way as
+    // one whose markets have all stopped trading.
     const markets = parseMarketsJsonSafe(r.markets_json);
-    if (markets.length > 0 && !markets.some(tradeable)) {
+    if (!markets.some(tradeable)) {
       doomed.push(r.event_ticker);
     }
   }
