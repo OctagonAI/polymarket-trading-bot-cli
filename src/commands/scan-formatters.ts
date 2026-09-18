@@ -7,23 +7,103 @@ function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
 
-export function formatTable(headers: string[], rows: string[][]): string {
-  // Measure visible width so ANSI-colored cells don't skew the columns.
-  const width = (s: string) => stripVTControlCharacters(s).length;
-  const colWidths = headers.map((h, i) =>
-    Math.max(width(h), ...rows.map((r) => width(r[i] ?? '')))
+/** Visible width, ignoring ANSI colouring. */
+const visibleWidth = (s: string) => stripVTControlCharacters(s).length;
+
+/**
+ * Truncate to `max` visible columns, passing ANSI escapes through untouched so
+ * a colour code is never sliced in half.
+ */
+function truncateVisible(s: string, max: number): string {
+  if (visibleWidth(s) <= max) return s;
+  const token = /(\u001b\[[0-9;]*m)|([\s\S])/g;
+  let out = '';
+  let seen = 0;
+  let coloured = false;
+  let m: RegExpExecArray | null;
+  while ((m = token.exec(s)) !== null) {
+    if (m[1]) {
+      out += m[1];
+      coloured = true;
+      continue;
+    }
+    if (seen >= max - 1) break;
+    out += m[2];
+    seen++;
+  }
+  return out + '…' + (coloured ? '\u001b[0m' : '');
+}
+
+/**
+ * Width budget for a table. Only interactive output is constrained: piped
+ * output, `--json` and tests must stay byte-identical to what they printed
+ * before this became width-aware.
+ */
+function terminalBudget(): number {
+  if (!process.stdout.isTTY) return Infinity;
+  return Math.max(40, process.stdout.columns || 80);
+}
+
+/**
+ * Render a bordered table.
+ *
+ * Cells are whitespace-normalised first: some upstream titles carry embedded
+ * newlines, which would otherwise split a row across lines and break every
+ * border below it.
+ *
+ * When the natural table is wider than the terminal, the widest text columns
+ * shrink until it fits — wrapping mangles the borders far worse than an
+ * ellipsis does.
+ */
+export function formatTable(headers: string[], rows: string[][], maxWidth?: number): string {
+  const clean = (s: string) => s.replace(/\s+/g, ' ').trim();
+  const heads = headers.map(clean);
+  const cells = rows.map((r) => heads.map((_, i) => clean(r[i] ?? '')));
+
+  const colWidths = heads.map((h, i) =>
+    Math.max(visibleWidth(h), ...cells.map((r) => visibleWidth(r[i] ?? '')))
   );
 
-  const pad = (s: string, w: number) => s + ' '.repeat(w - width(s));
+  // Each column costs its content plus two padding spaces and a border; one
+  // extra border closes the row.
+  const chrome = colWidths.length * 3 + 1;
+  const budget = maxWidth ?? terminalBudget();
+  const MIN_COL = 8;
+  // Eight is a comfort floor, not a hard one. Six columns bottom out at
+  // 6 * 8 + 19 = 67, so stopping there hands a 40-66 column terminal a
+  // table wider than its budget, which then wraps: the exact failure this
+  // shrinking exists to prevent. Take a second pass down to one column
+  // when the budget still demands it.
+  const HARD_MIN = 1;
+  let floor = MIN_COL;
+  let total = colWidths.reduce((a, b) => a + b, 0) + chrome;
+  while (total > budget) {
+    let widest = 0;
+    for (let i = 1; i < colWidths.length; i++) {
+      if (colWidths[i] > colWidths[widest]) widest = i;
+    }
+    if (colWidths[widest] <= floor) {
+      if (floor === HARD_MIN) break;
+      floor = HARD_MIN;
+      continue;
+    }
+    colWidths[widest] = Math.max(floor, colWidths[widest] - (total - budget));
+    total = colWidths.reduce((a, b) => a + b, 0) + chrome;
+  }
+
+  const fit = (s: string, w: number) => {
+    const t = truncateVisible(s, w);
+    return t + ' '.repeat(Math.max(0, w - visibleWidth(t)));
+  };
   const sep = '─';
 
   const topBorder = '┌' + colWidths.map((w) => sep.repeat(w + 2)).join('┬') + '┐';
-  const headerRow = '│' + headers.map((h, i) => ` ${pad(h, colWidths[i])} `).join('│') + '│';
+  const headerRow = '│' + heads.map((h, i) => ` ${fit(h, colWidths[i])} `).join('│') + '│';
   const midBorder = '├' + colWidths.map((w) => sep.repeat(w + 2)).join('┼') + '┤';
   const bottomBorder = '└' + colWidths.map((w) => sep.repeat(w + 2)).join('┴') + '┘';
 
-  const dataRows = rows.map(
-    (row) => '│' + colWidths.map((w, i) => ` ${pad(row[i] ?? '', w)} `).join('│') + '│'
+  const dataRows = cells.map(
+    (row) => '│' + colWidths.map((w, i) => ` ${fit(row[i] ?? '', w)} `).join('│') + '│'
   );
 
   return [topBorder, headerRow, midBorder, ...dataRows, bottomBorder].join('\n');

@@ -16,6 +16,8 @@ export interface IndexedEvent {
 /**
  * Search the local event index using keyword matching.
  * All keywords must match against title, event_ticker, series_ticker, or category.
+ * Pass `categoryLabels` to AND a category constraint on top, which is how a
+ * theme (or `theme:subtheme`) narrows results; labels alone are a valid query.
  * Returns up to `limit` results.
  *
  * By default, only events with at least one active (open/active status, not past
@@ -26,18 +28,32 @@ export function searchEventIndex(
   db: Database,
   query: string,
   limit = 50,
-  options: { includeExpired?: boolean } = {},
+  options: { includeExpired?: boolean; categoryLabels?: string[] } = {},
 ): IndexedEvent[] {
-  const { includeExpired = false } = options;
+  const { includeExpired = false, categoryLabels } = options;
   const keywords = query
     .toLowerCase()
     .split(/\s+/)
     .filter((k) => k.length > 0);
 
-  if (keywords.length === 0) return [];
+  const labels = (categoryLabels ?? []).filter((l) => l.length > 0);
+
+  // A bare theme supplies labels and no keyword, so either half alone is a
+  // valid query; only having neither is meaningless.
+  if (keywords.length === 0 && labels.length === 0) return [];
 
   // Build WHERE clause: each keyword must match somewhere in the searchable fields
   const conditions = keywords.map((_, i) => `(search_text LIKE $kw${i})`);
+
+  // A label matches the whole category or a whole comma-wrapped tag, so
+  // "Crypto" cannot hit "Crypto Prices". Same predicate the TUI's browse query
+  // uses, which is what lets `theme:subtheme` behave identically on both.
+  if (labels.length > 0) {
+    const catConds = labels.map(
+      (_, i) => `(category = $cat${i} OR ',' || COALESCE(tags,'') || ',' LIKE $tag${i})`,
+    );
+    conditions.push(`(${catConds.join(' OR ')})`);
+  }
   const whereClause = conditions.join(' AND ');
 
   const now = new Date().toISOString();
@@ -45,15 +61,22 @@ export function searchEventIndex(
   keywords.forEach((kw, i) => {
     params[`$kw${i}`] = `%${kw}%`;
   });
+  labels.forEach((label, i) => {
+    params[`$cat${i}`] = label;
+    params[`$tag${i}`] = `%,${label},%`;
+  });
+
+  // One SQL definition of tradeable, used by both the filter and the ranking
+  // below so the two cannot drift. Mirrors isActiveMarketRecord: a market that
+  // settled while still flagged active is not tradeable, however recent it is.
+  const tradeableMarket = `json_extract(value, '$.status') IN ('open','active')
+          AND COALESCE(json_extract(value, '$.result'), '') = ''
+          AND (json_extract(value, '$.close_time') IS NULL OR json_extract(value, '$.close_time') > $now)`;
 
   // Require at least one active market unless caller opts in to expired events.
   const activeMarketsClause = includeExpired
     ? ''
-    : `AND EXISTS (
-        SELECT 1 FROM json_each(markets_json)
-        WHERE json_extract(value, '$.status') IN ('open','active')
-          AND (json_extract(value, '$.close_time') IS NULL OR json_extract(value, '$.close_time') > $now)
-      )`;
+    : `AND EXISTS (SELECT 1 FROM json_each(markets_json) WHERE ${tradeableMarket})`;
 
   // Use a CTE to compute search_text, filter expired markets, and rank by open-market volume descending
   const fullSql = `
@@ -72,8 +95,7 @@ export function searchEventIndex(
     FROM matched
     ORDER BY (
       SELECT coalesce(sum(
-        CASE WHEN json_extract(value, '$.status') IN ('open','active')
-              AND (json_extract(value, '$.close_time') IS NULL OR json_extract(value, '$.close_time') > $now)
+        CASE WHEN ${tradeableMarket}
              THEN json_extract(value, '$.volume')
              ELSE 0
         END
@@ -100,6 +122,10 @@ export function searchEventIndex(
 function isActiveMarketRecord(record: Record<string, unknown>, nowIso: string): boolean {
   const status = record.status;
   if (status !== 'open' && status !== 'active') return false;
+  // A market can settle while still flagged active, so status alone does not
+  // mean tradeable.
+  const result = record.result;
+  if (typeof result === 'string' && result !== '') return false;
   const closeTime = record.close_time;
   if (closeTime != null && typeof closeTime === 'string' && closeTime <= nowIso) return false;
   return true;
@@ -144,6 +170,120 @@ function filterActiveMarketsJson(markets_json: string | null, nowIso: string): s
 /**
  * Clear and repopulate the event index in a single transaction.
  */
+export interface IndexEventInput {
+  event_ticker: string;
+  series_ticker?: string;
+  title: string;
+  category?: string;
+  strike_date?: string;
+  sub_title?: string;
+  tags?: string[];
+  markets?: PolymarketMarket[];
+}
+
+/** The fields the index keeps per market. */
+function toCompactMarkets(markets: PolymarketMarket[] | undefined): Array<Record<string, unknown>> | undefined {
+  // Prices here are decimal 0-1. Keep token_ids so the book is reachable from
+  // an index hit without a round-trip to Gamma.
+  return markets?.map((m) => ({
+    ticker: m.ticker,
+    condition_id: m.condition_id,
+    token_ids: m.token_ids,
+    title: m.title,
+    yes_sub_title: m.yes_sub_title,
+    yes_bid: m.yes_bid,
+    yes_ask: m.yes_ask,
+    no_bid: m.no_bid,
+    no_ask: m.no_ask,
+    last_price: m.last_price,
+    volume: m.volume ?? 0,
+    volume_24h: m.volume_24h ?? 0,
+    close_time: m.close_time,
+    status: m.status,
+    result: m.result,
+  }));
+}
+
+/**
+ * Insert or update a batch of events, leaving every other row alone.
+ *
+ * Lets a rebuild stream in page by page instead of buffering the whole universe
+ * and replacing the table in one shot, so the index stays queryable throughout.
+ * `tags` is carried through here (unlike the Kalshi CLI, Gamma nests tags on the
+ * event itself, so there is no separate pass to preserve them from).
+ */
+export function upsertIndexEvents(db: Database, events: IndexEventInput[]): number {
+  if (events.length === 0) return 0;
+  const now = Date.now();
+  // OR REPLACE because Gamma pages with limit/offset over a volume-ordered set:
+  // rows shift between requests, so the same event can arrive on two pages.
+  const insert = db.prepare(`
+    INSERT OR REPLACE INTO event_index (event_ticker, series_ticker, title, category, strike_date, sub_title, tags, markets_json, indexed_at)
+    VALUES ($event_ticker, $series_ticker, $title, $category, $strike_date, $sub_title, $tags, $markets_json, $indexed_at)
+  `);
+
+  db.transaction(() => {
+    for (const event of events) {
+      const compactMarkets = toCompactMarkets(event.markets);
+      insert.run({
+        $event_ticker: event.event_ticker,
+        $series_ticker: event.series_ticker ?? null,
+        $title: event.title,
+        $category: event.category ?? null,
+        $strike_date: event.strike_date ?? null,
+        $sub_title: event.sub_title ?? null,
+        $tags: event.tags?.length ? event.tags.join(',') : null,
+        $markets_json: compactMarkets ? JSON.stringify(compactMarkets) : null,
+        $indexed_at: now,
+      });
+    }
+  })();
+  return events.length;
+}
+
+/**
+ * Drop events with no tradeable market left, and any row not seen since
+ * `staleBefore`.
+ *
+ * The second half removes events that have left the open universe: one Gamma no
+ * longer returns stops having its `indexed_at` advanced, while every live row's
+ * moves forward. A closed-market check alone misses those whose markets still
+ * look active.
+ *
+ * It is only sound when the caller's walk was COMPLETE — on a truncated walk
+ * "not seen" means "not reached", and sweeping would delete live events. Pass
+ * `staleBefore = 0` to skip this half and prune on tradeability alone.
+ */
+export function pruneStaleEvents(db: Database, staleBefore: number): number {
+  const nowIso = new Date().toISOString();
+  const rows = db
+    .query('SELECT event_ticker, markets_json, indexed_at FROM event_index')
+    .all() as Array<{ event_ticker: string; markets_json: string | null; indexed_at: number }>;
+
+  const doomed: string[] = [];
+  for (const r of rows) {
+    if (r.indexed_at < staleBefore) {
+      doomed.push(r.event_ticker);
+      continue;
+    }
+    // No length guard: normalizeGammaEvent turns missing market data into [],
+    // clearAndPopulateIndex stores that, and nothing hydrates such a row later —
+    // so an event with zero markets is dead weight and should go the same way as
+    // one whose markets have all stopped trading.
+    const markets = parseMarketsJsonSafe(r.markets_json);
+    if (!markets.some((m) => isActiveMarketRecord(m, nowIso))) {
+      doomed.push(r.event_ticker);
+    }
+  }
+  if (doomed.length === 0) return 0;
+
+  const del = db.prepare('DELETE FROM event_index WHERE event_ticker = ?');
+  db.transaction(() => {
+    for (const ticker of doomed) del.run(ticker);
+  })();
+  return doomed.length;
+}
+
 export function clearAndPopulateIndex(
   db: Database,
   events: Array<{

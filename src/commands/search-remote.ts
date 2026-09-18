@@ -103,6 +103,113 @@ export function formatEventSearchHuman(
   return lines.join('\n');
 }
 
+/**
+ * The contract's own identity: the market slug minus its event prefix.
+ *
+ * Both ids are normalised to their bare form first — `event_ticker` arrives
+ * namespaced (`polymarket__<slug>`) while `native_ticker` is already bare.
+ */
+export function contractOf(marketTicker: string, eventTicker: string): string {
+  const market = stripVenuePrefix(marketTicker);
+  const prefix = `${stripVenuePrefix(eventTicker)}-`;
+  return market.startsWith(prefix) ? market.slice(prefix.length) : market;
+}
+
+/**
+ * Pick the column that actually distinguishes rows within this event.
+ *
+ * Polymarket and Kalshi are mirror images: here `yes_subtitle` is "Yes" on ~70%
+ * of markets and the outcome lives in `title` ("Lara Trump"), while a Kalshi
+ * strike ladder shares one title and differs by subtitle. Choosing by which
+ * field varies handles both without a venue switch.
+ */
+function labelColumn(rows: OctagonMarketRow[]): { header: string; pick: (m: OctagonMarketRow) => string } {
+  const subOf = (m: OctagonMarketRow) => m.yes_subtitle ?? m.subtitle ?? '';
+  const distinctSubs = new Set(rows.map(subOf)).size;
+  const distinctTitles = new Set(rows.map((m) => m.title ?? '')).size;
+  if (distinctSubs > 1 && distinctSubs >= distinctTitles) {
+    return { header: 'Strike', pick: (m) => subOf(m) || '-' };
+  }
+  return { header: 'Outcome', pick: (m) => m.title ?? '-' };
+}
+
+/** One event's markets, reached by drilling into an event slug. */
+export function formatEventMarketsHuman(eventTicker: string, page: PagedResult<OctagonMarketRow>): string {
+  const lines: string[] = [];
+  const bare = stripVenuePrefix(eventTicker);
+  const more = page.has_more ? ' (more available)' : '';
+  lines.push(`Markets in ${bare} — ${page.data.length} shown${more}`);
+  lines.push('');
+
+  if (page.data.length === 0) {
+    lines.push(`No markets found for ${bare}.`);
+    return lines.join('\n');
+  }
+
+  const { header, pick } = labelColumn(page.data);
+  const sorted = [...page.data].sort((a, b) =>
+    contractOf(a.native_ticker ?? a.market_ticker, eventTicker).localeCompare(
+      contractOf(b.native_ticker ?? b.market_ticker, eventTicker),
+      undefined,
+      { numeric: true },
+    ),
+  );
+
+  const rows: string[][] = sorted.map((m) => [
+    truncate(contractOf(m.native_ticker ?? m.market_ticker, eventTicker), 40),
+    truncate(pick(m), 40),
+    fmtMoney(m.last_price ?? m.yes_ask),
+    fmtVol(m.volume_24h),
+    fmtCloseDate(m.close_time),
+  ]);
+  lines.push(formatTable(['Contract', header, 'Last', '24h Vol', 'Closes'], rows));
+  return lines.join('\n');
+}
+
+/**
+ * Events read from the local index, used when there is no Octagon key.
+ *
+ * Deliberately the same table shape as formatEventSearchHuman so both paths read
+ * alike. The columns differ only where the index cannot supply the same data: it
+ * has no per-event last price, but it does know how many markets are still open.
+ * The header names the source, because the local index is a different (smaller,
+ * possibly staler) universe than the API.
+ */
+export function formatIndexEventsHuman(
+  describe: string,
+  events: Array<{ event_ticker: string; title: string; category: string | null; markets_json: string | null }>,
+): string {
+  const lines: string[] = [];
+  lines.push(`Events matching ${describe} — ${events.length} shown (local index)`);
+  lines.push('');
+
+  if (events.length === 0) {
+    lines.push(`No events found for ${describe}.`);
+    return lines.join('\n');
+  }
+
+  const rows: string[][] = events.map((ev) => {
+    let markets: Array<Record<string, unknown>> = [];
+    try {
+      const parsed: unknown = ev.markets_json ? JSON.parse(ev.markets_json) : [];
+      if (Array.isArray(parsed)) markets = parsed as Array<Record<string, unknown>>;
+    } catch {
+      // A malformed row should cost its market count, not the whole table.
+    }
+    const open = markets.filter((m) => m.status === 'open' || m.status === 'active');
+    const volume = open.reduce((sum, m) => sum + (Number(m.volume_24h) || 0), 0);
+    return [
+      truncate(stripVenuePrefix(ev.event_ticker), 46),
+      truncate(ev.title ?? '-', 44),
+      String(open.length),
+      fmtVol(volume),
+      ev.category ?? '-',
+    ];
+  });
+  lines.push(formatTable(['Slug', 'Event', 'Mkts', '24h Vol', 'Category'], rows));
+  return lines.join('\n');
+}
+
 export function formatMarketsWithEdgeHuman(data: MarketsWithEdgeResponse, minEdgePp: number): string {
   const lines: string[] = [];
   // Guard against invalid date strings — new Date('garbage').toISOString() throws RangeError.

@@ -67,6 +67,13 @@ export function isMarketActive(m: MarketRow): boolean {
 export interface BrowseMarketRow {
   ticker: string;
   title: string;
+  /**
+   * The per-contract label. On Polymarket this is usually "Yes" — the outcome
+   * lives in `title` instead — so the renderer shows whichever of the two
+   * actually varies within the event. Kept symmetrical with the Kalshi CLI,
+   * where the venues are mirror images of each other.
+   */
+  label: string | null;
   marketProb: number | null;
   modelProb: number | null;
   edge: number | null;
@@ -85,6 +92,77 @@ export type BrowseAppState = 'idle' | 'loading' | 'event_list' | 'market_list' |
 
 /** Rows shown in the browse list, applied after filtering and sorting. */
 const BROWSE_EVENT_CAP = 30;
+
+/**
+ * The index query behind a browse: pick up to `limit` event tickers matching a
+ * search term, a set of category labels, or both.
+ *
+ * Ranking and capping both happen in SQL. Sorting the rows afterwards can only
+ * reorder whatever LIMIT already happened to pick, so ordering by volume here is
+ * what makes the cap keep the busiest events instead of an arbitrary slice of
+ * the index. Requiring one open market likewise stops untradeable events from
+ * consuming cap slots they would only be dropped from later. Same open-market
+ * predicate and volume ordering searchEventIndex gives the CLI.
+ */
+export function selectIndexEventTickers(
+  db: ReturnType<typeof getDb>,
+  searchTerm: string,
+  categoryLabels: string[] | null,
+  limit: number,
+): string[] {
+  // `category` holds tags[0], often a narrow label ("Bitcoin"), so matching it
+  // alone drops most of a category. Also match the label as a whole tag,
+  // comma-wrapped so "Crypto" does not hit "Crypto Prices". Mirrors
+  // ThemeResolver.resolveCategory.
+  const catClause = (labels: string[]) =>
+    '(' + labels.map((_, i) => `(category = $cat${i} OR ',' || COALESCE(tags,'') || ',' LIKE $tag${i})`).join(' OR ') + ')';
+  const catParams = (labels: string[]) =>
+    Object.fromEntries(labels.flatMap((l, i) => [[`$cat${i}`, l], [`$tag${i}`, `%,${l},%`]]));
+
+  const openMarket = `json_extract(value,'$.status') IN ('open','active')
+        AND COALESCE(json_extract(value,'$.result'), '') = ''
+        AND (json_extract(value,'$.close_time') IS NULL OR json_extract(value,'$.close_time') > $now)`;
+  const hasOpenMarket = `EXISTS (SELECT 1 FROM json_each(markets_json) WHERE ${openMarket})`;
+  const rank = `ORDER BY (
+      SELECT coalesce(sum(CASE WHEN ${openMarket} THEN json_extract(value,'$.volume') ELSE 0 END), 0)
+      FROM json_each(markets_json)
+    ) DESC`;
+  const termClause =
+    `(LOWER(title) LIKE $term OR LOWER(event_ticker) LIKE $term OR LOWER(COALESCE(sub_title,'')) LIKE $term OR LOWER(COALESCE(series_ticker,'')) LIKE $term OR LOWER(COALESCE(tags,'')) LIKE $term)`;
+  const base = { $now: new Date().toISOString(), $limit: limit };
+
+  let rows: Array<{ event_ticker: string }> = [];
+  if (categoryLabels?.length && !searchTerm) {
+    rows = db.query(
+      `SELECT DISTINCT event_ticker FROM event_index
+       WHERE ${catClause(categoryLabels)} AND ${hasOpenMarket}
+       ${rank} LIMIT $limit`,
+    ).all({ ...base, ...catParams(categoryLabels) }) as Array<{ event_ticker: string }>;
+  } else if (categoryLabels?.length) {
+    rows = db.query(
+      `SELECT DISTINCT event_ticker FROM event_index
+       WHERE ${catClause(categoryLabels)} AND ${hasOpenMarket} AND ${termClause}
+       ${rank} LIMIT $limit`,
+    ).all({ ...base, ...catParams(categoryLabels), $term: `%${searchTerm.toLowerCase()}%` }) as Array<{ event_ticker: string }>;
+  } else {
+    const normalizedTerm = searchTerm.trim().toUpperCase();
+    if (/^[A-Z0-9]+$/.test(normalizedTerm)) {
+      rows = db.query(
+        `SELECT event_ticker FROM event_index
+         WHERE series_ticker = $ticker AND ${hasOpenMarket}
+         ${rank} LIMIT $limit`,
+      ).all({ ...base, $ticker: normalizedTerm }) as Array<{ event_ticker: string }>;
+    }
+    if (rows.length === 0) {
+      rows = db.query(
+        `SELECT event_ticker FROM event_index
+         WHERE ${hasOpenMarket} AND ${termClause}
+         ${rank} LIMIT $limit`,
+      ).all({ ...base, $term: `%${searchTerm.toLowerCase()}%` }) as Array<{ event_ticker: string }>;
+    }
+  }
+  return rows.map((r) => r.event_ticker);
+}
 
 export interface BrowseState {
   appState: BrowseAppState;
@@ -534,8 +612,8 @@ export class BrowseController {
       if (token !== undefined && token !== this.loadToken) return;
 
       this.progressMessageValue = null;
-      // Cap AFTER filtering and sorting, so the rows shown are the top N
-      // tradeable events rather than an arbitrary slice of the index.
+      // SQL already ranked and capped the match set; this slice is a floor
+      // under kalshiEventsToRows, which only ever drops rows.
       this.eventsValue = this.kalshiEventsToRows(kalshiEvents, db).slice(0, BROWSE_EVENT_CAP);
       this.appStateValue = 'event_list';
       this.emitChange();
@@ -585,6 +663,9 @@ export class BrowseController {
     return {
       ticker: m.ticker,
       title: m.title ?? m.subtitle ?? m.ticker,
+      // The index persists yes_sub_title but not subtitle, so that is the one
+      // that actually arrives here for index-sourced markets.
+      label: m.yes_sub_title ?? m.subtitle ?? null,
       marketProb,
       modelProb,
       edge,
@@ -787,47 +868,9 @@ export class BrowseController {
   ): Promise<PolymarketEvent[]> {
     try {
       await ensureIndex();
-      let rows: any[] = [];
-      // `category` holds tags[0], often a narrow label ("Bitcoin"), so matching
-      // it alone drops most of a category. Also match the label as a whole tag,
-      // comma-wrapped so "Crypto" does not hit "Crypto Prices". Mirrors
-      // ThemeResolver.resolveCategory.
-      const catClause = (labels: string[]) =>
-        '(' + labels.map(() => `(category = ? OR ',' || COALESCE(tags,'') || ',' LIKE ?)`).join(' OR ') + ')';
-      const catParams = (labels: string[]) => labels.flatMap((l) => [l, `%,${l},%`]);
-
-      if (categoryLabels?.length && !searchTerm) {
-        rows = db.query(
-          `SELECT DISTINCT event_ticker FROM event_index WHERE ${catClause(categoryLabels)} LIMIT 30`,
-        ).all(...catParams(categoryLabels));
-      } else if (categoryLabels?.length) {
-        const term = `%${searchTerm.toLowerCase()}%`;
-        rows = db.query(
-          `SELECT DISTINCT event_ticker FROM event_index
-           WHERE ${catClause(categoryLabels)} AND (LOWER(title) LIKE ? OR LOWER(event_ticker) LIKE ? OR LOWER(COALESCE(sub_title,'')) LIKE ? OR LOWER(COALESCE(series_ticker,'')) LIKE ? OR LOWER(COALESCE(tags,'')) LIKE ?)
-           LIMIT 30`,
-        ).all(...catParams(categoryLabels), term, term, term, term, term);
-      } else {
-        const normalizedTerm = searchTerm.trim().toUpperCase();
-        const isTicker = /^[A-Z0-9]+$/.test(normalizedTerm);
-        if (isTicker) {
-          rows = db.query(
-            `SELECT event_ticker FROM event_index WHERE series_ticker = ? LIMIT 30`,
-          ).all(normalizedTerm);
-        }
-        if (!rows || rows.length === 0) {
-          const term = `%${searchTerm.toLowerCase()}%`;
-          rows = db.query(
-            `SELECT event_ticker FROM event_index
-             WHERE LOWER(title) LIKE ? OR LOWER(event_ticker) LIKE ? OR LOWER(COALESCE(sub_title,'')) LIKE ? OR LOWER(COALESCE(series_ticker,'')) LIKE ? OR LOWER(COALESCE(tags,'')) LIKE ?
-             LIMIT 30`,
-          ).all(term, term, term, term, term);
-        }
-      }
-      if (rows.length === 0) return [];
-
+      const tickers = selectIndexEventTickers(db, searchTerm, categoryLabels, BROWSE_EVENT_CAP);
+      if (tickers.length === 0) return [];
       // Read events with nested markets directly from the index — no API calls
-      const tickers = rows.map((r: any) => r.event_ticker as string);
       return getEventsFromIndex(db, tickers);
     } catch {
       return [];
