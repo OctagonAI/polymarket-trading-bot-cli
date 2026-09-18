@@ -132,8 +132,6 @@ Type help for commands, or just ask a question.
     Rule clarity         95  ● Clear
 ```
 
-<sub>`buy` and `portfolio` appear in the command table below but are not enabled yet — see the port status note at the top.</sub>
-
 ## Commands
 
 | Command | Description |
@@ -146,11 +144,7 @@ Type help for commands, or just ask a question.
 | `trust <event-slug>` | Octagon Trust Index — overall score, how Integrity and Trade quality add up, and the trust profile. `--verbose` adds per-contract market quality |
 | `trust <event-slug> --market <market-slug>` | Single-market Trader Trust detail card (use `--verbose` for evidence) |
 | `report <event-slug>` | Full Octagon markdown report for an event (accepts event slug, market slug, or URL). `--refresh` forces a fresh pull. |
-| `themes` (registry) | Editorial narrative buckets — list/show/import/create/delete/add-series |
-| `themes report` | 25-theme dashboard with SEO + liquidity |
-| `themes audit` | Flag dead themes (high SEO + zero volume) |
-| `themes overlap` | Cross-theme dedupe report |
-| `wallet [show\|create\|import]` | Create, import, or inspect your Polymarket wallet |
+| `wallet [show\|import]` | Import or inspect your Polymarket wallet |
 | `analyze <ticker>` | Deep analysis: edge, drivers, Kelly sizing |
 | `watch <ticker>` | Live price and orderbook feed |
 | `watch --theme <theme>` | Continuous theme scan |
@@ -192,7 +186,6 @@ Type help for commands, or just ask a question.
 | `--series <slug>` | Filter to a series (search, similar) |
 | `--sort-by <key>` | Sort key for search edge: edge_pp \| expected_return \| total_volume \| model_probability |
 | `-q "text"` | Free-text query for similar |
-| `--aggregate-by series` | Roll up search results to the series level |
 | `--active-only` | Drop non-active markets (defensive flag — open universe by default) |
 | `--series-prefix <prefix>` | Server-side series prefix match (e.g. `bitcoin` matches `bitcoin-above-…`) |
 | `--force` | Replace an existing wallet (`wallet import`); override the circuit breaker (`buy`, `sell`) |
@@ -215,39 +208,9 @@ polymarket similar will-bitcoin-reach-110000-by-december-31-2026 --top-k 25
 polymarket similar -q "bitcoin" --category crypto
 ```
 
-### Editorial Theme Dashboard
-
-`themes` is a local registry of editorial narrative buckets (e.g. "AI Race Milestones", "Iran Escalation") that maps to lists of event slugs with optional monthly search-volume annotations. These are *narratives* you curate. No seed file ships yet — build the registry with `themes create` / `themes add-series`, or import your own JSON.
+### Events & Catalysts
 
 ```bash
-# Seed from the included starter dataset (25 themes, 173 series mappings)
-polymarket themes import
-
-# Browse the registry
-polymarket themes list
-polymarket themes show "Iran Escalation"
-
-# THE dashboard view: 25-theme grid with SEO + liquidity
-polymarket themes report
-
-# Flag dead themes (high SEO + zero active inventory)
-polymarket themes audit
-#   → Epstein / Celebrity Trials   STALE         4.3M searches, 0 active markets
-#   → RFK Jr Changes Health        NO_INVENTORY  422k searches, 0 active markets
-#   → AI Race Milestones           TRADEABLE     138M searches, 28 active mkts
-#   → Bitcoin Breakout             TRADEABLE     29k searches, 270 active mkts
-
-# Cross-theme dedupe (when a series belongs to multiple themes)
-polymarket themes overlap
-#   → us-iran-nuclear-agreement   Iran Escalation · Nuclear Renaissance
-#   → fed-decision-in-september   Fed Cuts Aggressively · Housing / Mortgage Crisis
-
-# Build/manage your own themes (no Polymarket seed file ships yet — themes are
-# yours to define; `themes import <path>` loads your own JSON)
-polymarket themes create "My Macro Hedge" --label "..." --tickers us-recession-2027,cpi-above-3-2027
-polymarket themes add-series "My Macro Hedge" fed-decision-in-september,unemployment-above-5
-polymarket themes set-search-volume "My Macro Hedge" 50000
-
 # Event ↔ outcome ladder
 polymarket events --category Politics --limit 10       # top political events by volume
 polymarket events fed-decision-in-september-762        # outcome probabilities + per-contract edge
@@ -536,7 +499,7 @@ polymarket config risk.kelly_multiplier 0.3    # Set a value
 
 ## Architecture
 
-The CLI talks to two external services: the Polymarket exchange API (market data; order placement and portfolio reads are not enabled yet) and the Octagon research API (AI probability estimates, price drivers). Results are cached in a local SQLite database to minimize API calls and credit usage.
+The CLI talks to two external services: the Polymarket exchange API (market data, order placement and portfolio reads) and the Octagon research API (AI probability estimates, price drivers). Results are cached in a local SQLite database to minimize API calls and credit usage.
 
 ### LLM Providers
 

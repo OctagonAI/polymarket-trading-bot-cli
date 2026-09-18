@@ -112,22 +112,19 @@ Quick commands that bypass the AI agent and call the exchange or Octagon API dir
 | `/orders cancel <id>` | Cancel a resting order (`--all` for every one) | `/orders cancel 0xb726a9d0` |
 | `/markets [series]` | Browse markets, optionally filter by series slug | `/markets bitcoin` |
 | `/market <market-slug>` | Market detail + top-of-book orderbook | `/market bitcoin-above-95k-by-april-30` |
-| `/search <query>` | Full-text market search (Octagon when key set) | `/search "bitcoin price" --min-volume 10000` |
+| `/search <query>` | Find events by theme or keyword | `/search "bitcoin price" --min-volume 10000` |
+| `/search <theme>:<subtheme>` | Narrow a theme to one subcategory | `/search crypto:btc` |
+| `/search <event-slug>` | Drill into one event's markets | `/search fed-decision-in-september-762` |
+| `/search themes` | List theme and subcategory labels | `/search themes` |
 | `/search edge` | Edge ranking from Octagon's latest run | `/search edge --min-edge 5 --sort-by total_volume` |
 | `/similar <slug\|"text">` | Related markets (event → series → category) | `/similar will-bitcoin-reach-110000-by-december-31-2026 --top-k 20` |
 | `/events` / `/events <event-slug>` | Octagon events + outcome ladder | `/events fed-decision-in-september-762` |
 | `/catalysts upcoming` | Markets closing soon, grouped by week | `/catalysts upcoming --days 14` |
-| `/themes` (registry) | Editorial narrative buckets | `/themes show "Iran Escalation"` |
-| `/themes report` | 25-theme dashboard with SEO + liquidity | `/themes report` |
-| `/themes audit` | Flag dead themes (high SEO + zero volume) | `/themes audit` |
-| `/themes overlap` | Cross-theme dedupe report | `/themes overlap` |
 | `/buy <market-slug> <shares> [price]` | Buy shares (price 0-1; omit for a market order) | `/buy bitcoin-above-95k-by-april-30 5 0.56` |
 | `/sell <market-slug> <shares\|max> [price]` | Sell shares you hold (`max` = the whole position) | `/sell bitcoin-above-95k-by-april-30 max` |
 
-**Trading is not available yet.** These commands return an explanation instead of
-placing an order; Polymarket orders need EIP-712 wallet signing and on-chain
-USDC/CTF allowances. When they land, `/buy` and `/sell` will show a confirmation
-prompt before executing.
+**Orders need a wallet.** `/buy` and `/sell` show a confirmation prompt before
+executing; import a wallet with `/wallet import <private-key>` first.
 
 **Price format:** Prices are decimal USDC in [0, 1]. `0.56` = $0.56 per share = 56% implied probability. Omit the price on `/buy` or `/sell` for a market order.
 
@@ -135,13 +132,21 @@ prompt before executing.
 
 ## Discovery & Portfolio (Octagon-powered)
 
-With `OCTAGON_API_KEY` set, the bot routes searches through Octagon's typed endpoints. This unlocks related-market lookups, thematic and behavioral clustering, pairwise correlation matrices, and one-call diversified basket construction. Without a key the bot falls back to the local SQLite index for `/search` and `/search edge`; the other commands require the key.
+With `OCTAGON_API_KEY` set, the bot routes searches through Octagon's typed endpoints. This unlocks related-market lookups, event-level rollups and per-market trust scores. Without a key the bot falls back to the local SQLite index for `/search` and `/search edge`; the other commands require the key.
 
 ### `/search` and `/search edge`
 
 ```bash
 # Server-side full-text + structured filter
 polymarket search "bitcoin price" --category crypto --min-volume 10000 --limit 20
+
+# Browse by theme, or narrow one to a subcategory
+polymarket search crypto
+polymarket search crypto:btc
+polymarket search themes                 # the theme and subcategory labels
+
+# Drill into a single event's markets
+polymarket search fed-decision-in-september-762
 
 # Edge ranking from Octagon's latest events run
 polymarket search edge --min-edge 5 --limit 10 --sort-by total_volume
@@ -171,58 +176,6 @@ Ordering depends on the anchor:
 The `distance` field in `--json` output is `row_number() / 1000`. It restates row
 order and nothing else: it is not a similarity metric and is not comparable
 across responses, so a cutoff like `distance < 0.2` just means "the first 199 rows".
-
-### Editorial Themes — narrative registry
-
-Editorial themes are user-curated narrative buckets (e.g. "AI Race Milestones", "Iran Escalation") that map to lists of event slugs. These are *narratives* you define.
-
-No seed file ships yet, so the registry starts empty — build it up with `themes create` and `themes add-series`, or import your own JSON.
-
-```bash
-polymarket themes list
-polymarket themes import ~/my-themes.json
-
-# Drill into one
-polymarket themes show "Iran Escalation"
-#  Description    Hormuz traffic, US-Iran nuclear deal, oil & gas price ladders
-#  Search volume  1.1M/month
-#  Series         3 mapped
-#  strait-of-hormuz-traffic-returns-to-normal-by-december-31, us-iran-nuclear-agreement, ...
-
-# Identify dead themes (high SEO but no inventory)
-polymarket themes audit
-#   Status keys:
-#     STALE         — high SEO, all series exist but 0 active markets
-#     NO_INVENTORY  — high SEO, no series mapped at all
-#     THIN          — active markets but <$1000/day volume
-#     TRADEABLE     — ready to act on
-
-# Cross-theme dedupe — same series in two themes
-polymarket themes overlap
-#   us-iran-nuclear-agreement    Iran Escalation · Nuclear Renaissance
-#   fed-decision-in-september    Fed Cuts Aggressively · Housing / Mortgage Crisis
-```
-
-#### Build your own themes
-
-```bash
-polymarket themes create "My Macro Hedge" --label "Recession + inflation tail" --tickers us-recession-2027,cpi-above-3-in-2027
-polymarket themes add-series "My Macro Hedge" fed-decision-in-september,unemployment-above-5-in-2027
-polymarket themes set-search-volume "My Macro Hedge" 50000
-polymarket themes export ~/my-themes.json    # version-control or share
-polymarket themes import ~/my-themes.json    # restore on another machine
-polymarket themes delete "My Macro Hedge"
-```
-
-#### Compose with baskets
-
-```bash
-# Backtest the entire theme as an equal-weight NAV (top market per series)
-polymarket basket backtest --theme "Iran Escalation" --timeframe 3m
-
-# OHLC bars for theme momentum
-polymarket basket candles --theme "Fed Cuts Aggressively" --timeframe 1y --json
-```
 
 ### Events — outcome ladders
 
@@ -339,7 +292,6 @@ The primary research tool. Takes your natural language query and automatically r
 | Tool | Purpose | Key Parameters |
 |---|---|---|
 | `get_exchange_status` | Is the exchange open/trading? | *(none)* |
-| `get_exchange_schedule` | Trading hours and maintenance windows | *(none)* |
 
 ### polymarket_trade (Trade Execution Router)
 

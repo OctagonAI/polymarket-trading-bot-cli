@@ -32,11 +32,10 @@ import {
 } from './components/index.js';
 import { editorTheme, theme } from './theme.js';
 import { confirmKeyAction } from './components/confirm-key.js';
-import { handleSlashCommand, executePendingTrade } from './commands/index.js';
+import { handleSlashCommand, executePendingTrade, renderThemesList } from './commands/index.js';
 import type { CommandResult } from './commands/index.js';
 import { formatResponse } from './utils/markdown-table.js';
 import { ensureIndex, onIndexProgress, getRefreshPromise } from './tools/polymarket/search-index.js';
-import { isDeferredCommand } from './scan/octagon-capabilities.js';
 import { allThemeIds } from './scan/theme-registry.js';
 import { isCommandAvailable } from './tools/polymarket/polymarket-trade.js';
 import { SetupWizardController } from './setup/wizard.js';
@@ -419,16 +418,10 @@ export async function runCli(options?: { forceSetup?: boolean }) {
     const topics = [
       { value: 'search', label: 'search', description: 'Discovery commands' },
       { value: 'similar', label: 'similar', description: 'Related markets (Octagon)' },
-      { value: 'clusters', label: 'clusters', description: 'Browse thematic & behavioral clusters' },
-      { value: 'peers', label: 'peers', description: 'Cluster peers for a ticker' },
-      { value: 'correlate', label: 'correlate', description: 'Pairwise correlation matrix' },
-      { value: 'basket', label: 'basket', description: 'Build / backtest / size baskets' },
       { value: 'events', label: 'events', description: 'Octagon events (event ↔ outcome ladder)' },
       { value: 'trust', label: 'trust', description: 'Octagon Trust Index for an event' },
       { value: 'report', label: 'report', description: 'Full Octagon markdown report for an event' },
-      { value: 'series', label: 'series', description: 'Series rollup / NAV' },
       { value: 'catalysts', label: 'catalysts', description: 'Upcoming market closes by week' },
-      { value: 'themes', label: 'themes', description: 'Editorial narrative registry + dashboard' },
       { value: 'wallet', label: 'wallet', description: 'Wallet setup: create, import, inspect' },
       { value: 'portfolio', label: 'portfolio', description: 'Account state' },
       { value: 'analyze', label: 'analyze', description: 'Market analysis' },
@@ -470,7 +463,6 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       const lower = typed.toLowerCase();
       return opts.filter(o => o.value.toLowerCase().includes(lower));
     }},
-    // Octagon Kalshi search/clusters/basket
     { name: 'similar', description: 'Related markets by slug or keyword query', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
       const opts = [
         { value: '<market-slug>', label: '<market-slug>', description: 'Anchor by market slug' },
@@ -482,54 +474,15 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       if (!typed) return opts;
       return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
     }},
-    { name: 'clusters', description: 'Browse thematic & behavioral clusters', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
-      const opts = [
-        { value: '--label fed', label: '--label fed', description: 'Filter by label substring' },
-        { value: '--behavioral', label: '--behavioral', description: 'Behavioral clusters (30-day return vectors)' },
-        { value: '--ranked', label: '--ranked', description: 'Rank clusters by historical basket return' },
-        { value: '--ranked --timeframe 1y --min-return 0.20', label: '--ranked --timeframe 1y --min-return 0.20', description: 'Top-return baskets, 1y window' },
-        { value: '<cluster_id>', label: '<cluster_id>', description: 'List markets in a specific cluster' },
-      ];
-      if (!typed) return opts;
-      return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
-    }},
-    { name: 'peers', description: 'Find markets in the same cluster as a ticker', getArgumentCompletions: usageHint('<market-slug> [--behavioral] [--limit N] [--show-cluster]', 'e.g. will-btc-hit-100k --limit 20') },
-    { name: 'correlate', description: 'Pairwise correlation matrix (2-100 tickers)', getArgumentCompletions: usageHint('<slug1> <slug2> [...] [--window-days N]', 'e.g. slug-a slug-b slug-c --window-days 90') },
     { name: 'events', description: 'Octagon events — outcome ladder per event', getArgumentCompletions: usageHint('<event-slug> | --category Politics | --min-volume 10000', 'e.g. fed-decision-in-september-762 to drill in') },
     { name: 'trust', description: 'Octagon Trust Index for an event', getArgumentCompletions: usageHint('<event-slug> [--market <market-slug>] [--verbose]', 'e.g. epl-2027-champion --market will-arsenal-win-the-2026-27-english-premier-league-championship') },
     { name: 'report', description: 'Print the full Octagon markdown report for an event', getArgumentCompletions: usageHint('<event-slug | market-slug | polymarket url> [--refresh]', 'e.g. fed-decision-in-september-762 --refresh') },
-    { name: 'series', description: 'Series rollup (24h vol, market count)', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
-      const opts = [
-        { value: '<series-slug>', label: '<series-slug>', description: 'Drill into one series' },
-        { value: 'search <query>', label: 'search <query>', description: 'Keyword search rolled up by series' },
-        { value: 'candles <series_ticker> --timeframe 3m', label: 'candles <SERIES>', description: 'Series NAV basket' },
-        { value: '--min-volume 10000', label: '--min-volume 10000', description: 'Liquidity floor' },
-        { value: '--category Crypto', label: '--category Crypto', description: 'Filter by category' },
-      ];
-      if (!typed) return opts;
-      return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
-    }},
     { name: 'catalysts', description: 'Upcoming market closes grouped by week', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
       const opts = [
         { value: 'upcoming', label: 'upcoming', description: 'Next 30 days (default)' },
         { value: 'upcoming --days 7', label: '--days 7', description: 'Next week' },
         { value: 'upcoming --days 14 --min-volume 5000', label: '--days 14 --min-volume 5000', description: 'Two weeks, liquid only' },
         { value: 'upcoming --category Politics', label: '--category Politics', description: 'By category' },
-      ];
-      if (!typed) return opts;
-      return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
-    }},
-    { name: 'themes', description: 'Editorial themes registry: import, report, audit, overlap', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
-      const opts = [
-        { value: 'list', label: 'list', description: 'List registered themes' },
-        { value: 'import', label: 'import', description: 'Load themes from a JSON file' },
-        { value: 'report', label: 'report', description: '25-theme dashboard with SEO + liquidity' },
-        { value: 'audit', label: 'audit', description: 'Flag STALE/NO_INVENTORY/THIN themes' },
-        { value: 'overlap', label: 'overlap', description: 'Cross-theme dedupe' },
-        { value: 'show <name>', label: 'show <name>', description: 'Drill into one theme' },
-        { value: 'create <name> --tickers KX-A,KX-B', label: 'create', description: 'Add a new theme' },
-        { value: 'add-series <name> KX-A,KX-B', label: 'add-series', description: 'Map series to a theme' },
-        { value: 'export themes.json', label: 'export', description: 'Save registry to JSON' },
       ];
       if (!typed) return opts;
       return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
@@ -550,31 +503,14 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       if (!typed) return opts;
       return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
     }},
-    { name: 'basket', description: 'Build, backtest, or size diversified baskets', getArgumentCompletions: (typed: string): AutocompleteItem[] | null => {
-      const opts = [
-        { value: 'build', label: 'build', description: 'Diversified basket builder (cluster + correlation caps)' },
-        { value: 'backtest', label: 'backtest', description: 'NAV + Sharpe/MaxDD/WinRate over basket history' },
-        { value: 'size', label: 'size', description: 'Fractional Kelly sizing for picked legs' },
-        { value: 'candles', label: 'candles', description: 'OHLC bars for a weighted basket NAV' },
-        { value: 'validate', label: 'validate', description: 'Sanity-check a proposed basket (corr, clusters, calendar)' },
-        { value: 'build --category crypto --min-volume 10000 -n 8 --max-per-cluster 2 --max-corr 0.6', label: 'build crypto basket', description: 'Build 8-leg crypto basket' },
-        { value: 'backtest --tickers KX-A,KX-B --timeframe 1y', label: 'backtest 1y', description: 'Backtest a basket over 1y' },
-        { value: 'backtest --theme "Iran Escalation" --timeframe 3m', label: 'backtest --theme', description: 'Backtest an editorial theme NAV' },
-        { value: 'candles --theme "Fed Cuts Aggressively" --timeframe 1y', label: 'candles --theme', description: 'NAV candles for a theme' },
-        { value: 'validate --theme "Iran Escalation" --bankroll 1000', label: 'validate --theme', description: 'Sanity-check theme basket' },
-        { value: 'size --auto-probs --theme "AI Race Milestones" --bankroll 1000 --kelly 0.25', label: 'size --auto-probs', description: 'Auto-fetch model edges + Kelly-size' },
-      ];
-      if (!typed) return opts;
-      return opts.filter(o => o.value.toLowerCase().includes(typed.toLowerCase()));
-    }},
     // Utility
     { name: 'help', description: 'Show help (/help <command> for details)', getArgumentCompletions: helpTopicCompletions },
     { name: 'model', description: 'Change LLM model/provider', getArgumentCompletions: usageHint('<provider:model>', 'e.g. anthropic:sonnet') },
     { name: 'setup', description: 'Re-run the setup wizard to configure API keys' },
     { name: 'quit', description: 'Quit CLI session' },
-    // Commands gated by octagon-capabilities are hidden from autocomplete but
-    // still reachable by typing, where they explain why they are unavailable.
-  ].filter((c) => !isDeferredCommand(c.name) && isCommandAvailable(c.name));
+    // Wallet-gated commands are hidden from autocomplete but still reachable by
+    // typing, where they explain why they are unavailable.
+  ].filter((c) => isCommandAvailable(c.name));
   editor.setAutocompleteProvider(new CombinedAutocompleteProvider(slashCommands));
 
   tui.addChild(root);
@@ -646,18 +582,15 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       }
       // /search themes → inline themes list (no browse flow)
       if (themeArg === 'themes') {
-        // Handled as slash command in handleSlashCommand via 'themes' case
         chatLog.addQuery(query);
         chatLog.resetToolGrouping();
         try {
           workingIndicator.setState({ status: 'thinking' });
           tui.requestRender();
-          const cmdResult = await handleSlashCommand('/themes');
+          const output = await renderThemesList();
           workingIndicator.setState({ status: 'idle' });
-          if (cmdResult) {
-            chatLog.finalizeAnswer(formatResponse(cmdResult.output));
-            tui.requestRender();
-          }
+          chatLog.finalizeAnswer(formatResponse(output));
+          tui.requestRender();
         } catch (err) {
           workingIndicator.setState({ status: 'idle' });
           chatLog.finalizeAnswer(`Error: ${err instanceof Error ? err.message : String(err)}`);

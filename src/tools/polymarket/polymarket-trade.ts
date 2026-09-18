@@ -22,8 +22,8 @@ export const TRADING_UNAVAILABLE_MESSAGE =
  * Nothing here is gated on a missing feature any more: placement shipped, and
  * these are gated purely on what the configured wallet can do.
  *
- * Kept separate from octagon-capabilities.ts: those commands are gated by what
- * Octagon can answer, these by what this CLI can do.
+ * This is now the only command gate in the CLI. The Octagon capability gate it
+ * used to sit beside was removed with the commands it gated.
  */
 export const TRADING_COMMANDS = ['buy', 'sell', 'orders', 'portfolio'] as const;
 

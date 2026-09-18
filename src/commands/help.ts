@@ -1,5 +1,4 @@
 // ─── Shared help content for both TUI slash commands and CLI batch mode ─────
-import { isDeferredCommand, COMMAND_FEATURE, octagonSupports, octagonUnavailableMessage } from '../scan/octagon-capabilities.js';
 import { THEMES } from '../scan/theme-registry.js';
 import { isCommandAvailable, commandUnavailableReason } from '../tools/polymarket/polymarket-trade.js';
 
@@ -36,7 +35,6 @@ Search flags (server-side path):
   --days-to-close <n>   Shortcut: only markets closing in the next N days
   --limit <n>           Page size (default 30)
   --sort-by <key>       volume_24h | close_time | last_price (server-side sort)
-  --aggregate-by series Roll up results by series (calls series rollup)
   --active-only         Drop non-active markets (defensive; the live universe is active by default)
 
 Results are events by default — markets live inside an event, so pass an event
@@ -105,16 +103,6 @@ Flags:
 
 ${p}analyze <market-slug>                  Full analysis: edge, drivers, catalysts, Kelly sizing
 ${p}analyze <market-slug> ${ctx === 'cli' ? '--' : ''}refresh        Force fresh Octagon report
-
-Batch mode (one Octagon round-trip instead of N):
-${p}analyze slug-a slug-b slug-c                 Edge readout across 2-100 tickers
-${p}analyze --tickers slug-a,slug-b,slug-c       Same, comma-separated
-${p}analyze slug-a slug-b slug-c --json          For pipelines / scripting
-
-The batch mode hits POST /markets/edge in one call and returns
-model_probability, market_probability, edge_pp, expected_return per ticker.
-Use single-ticker mode when you need the full deep-analysis pipeline
-(drivers, catalysts, Kelly sizing, risk gate).
 
 Position sizing needs a bankroll. With a wallet configured it uses your on-chain
 pUSD balance; ${p}config risk.bankroll_usdc <amount> caps it lower. With neither,
@@ -239,9 +227,9 @@ ${ctx === 'cli' ? `${p}` : 'polymarket '}clear-cache                Delete the l
 
 Use this when the local cache is corrupted or you want to start fresh.${ctx !== 'cli' ? '\nRun from terminal: polymarket clear-cache' : ''}`,
 
-    init: `**${p}init** — Re-run setup wizard
+    setup: `**${ctx === 'slash' ? '/setup' : `${p}init`}** — Re-run setup wizard
 
-${p}init                       Launch the TUI with the setup wizard open
+${ctx === 'slash' ? '/setup                     Open the setup wizard' : `${p}init                       Launch the TUI with the setup wizard open`}
                                Use this to configure or reconfigure API keys and preferences.`,
 
     help: `**${p}help** — Show help
@@ -302,9 +290,6 @@ This is not semantic search: it will not match "Bitcoin pierce six figures" to
 The API returns a \`distance\` field in --json output. Ignore it — it is
 row_number()/1000, so it only restates row order and is not comparable
 between responses.`,
-
-
-
 
     report: `**${p}report** — Print the full Octagon markdown report for an event
 
@@ -382,7 +367,6 @@ Each event is a multi-market question (e.g. "Who will Trump nominate as Fed Chai
 with one binary sub-market per outcome (Kevin Warsh, Judy Shelton, ...).
 Octagon supplies a model_probability per outcome so you can rank contracts by edge.`,
 
-
     catalysts: `**${p}catalysts** — Upcoming market closes grouped by week
 
 ${p}catalysts upcoming                       Next 30 days
@@ -400,45 +384,17 @@ Flags:
 Use for catalyst-calendar planning: see which weeks have major
 resolutions cluster up so you can position before catalyst risk.`,
 
-    themes: `**${p}themes** — Editorial narrative registry (curated theme buckets)
-
-${p}themes                                List registered editorial themes
-${p}themes import <path>                  Import themes from a JSON file
-${p}                                      (no Polymarket seed file ships yet)
-${p}themes export <path>                  Export current registry
-${p}themes show "Iran Escalation"         Drill into one theme
-${p}themes create "My Theme" --tickers slug-a,slug-b --label "..." [--min-volume N]
-${p}themes delete "My Theme"
-${p}themes add-series "My Theme" bitcoin-daily,ethereum-daily
-${p}themes remove-series "My Theme" bitcoin-daily
-${p}themes set-search-volume "My Theme" 100000
-${p}themes report                         Dashboard: 25-theme grid with SEO + liquidity
-${p}themes audit                          Flag dead themes (high SEO + zero volume)
-${p}themes overlap                        Cross-theme dedupe report
-
-Editorial themes are narrative buckets you curate (e.g. "AI Race Milestones",
-"Iran Escalation") — distinct from Octagon's ML clusters. Each theme maps to a
-list of series and an optional monthly search-volume estimate.
-
-Flags:
-  --label <desc>        Set description on create
-  --min-volume <n>      Set search_volume on create (poorly named — improve later)
-  --tickers <csv>       Comma-separated series on create
-  --json                JSON output
-
-Legacy: ${p}search themes still lists category labels (the pre-registry view).`,
-
   };
 }
 
 /**
- * Drop command lines for anything currently gated (Octagon-backed commands the
- * Polymarket client cannot serve, plus order placement), then drop any section
- * heading left with nothing under it. Keeps the overview honest without having
- * to hand-maintain a second copy of the command list.
+ * Drop command lines for anything the current wallet cannot run (order
+ * placement and the portfolio views), then drop any section heading left with
+ * nothing under it. Keeps the overview honest without having to hand-maintain a
+ * second copy of the command list.
  */
 function stripGatedLines(text: string): string {
-  const gated = (name: string) => isDeferredCommand(name) || !isCommandAvailable(name);
+  const gated = (name: string) => !isCommandAvailable(name);
 
   const kept = text.split('\n').filter((line) => {
     const m = line.match(/^\s{2}\/?([a-z-]+)/);
@@ -472,21 +428,12 @@ Quick start:
 Discovery:
   search [theme|ticker|query]   Find markets (Octagon when key set, else local)
   search --sort-by volume_24h   Top-N by liquidity
-  search --aggregate-by series  Roll up results to series level
-  search themes                 (Legacy) Category labels
+  search themes                 List theme and subcategory labels
   search edge [--min-edge N]    Edge ranking (Octagon when key set, else local)
   similar <market-slug>         Related markets (same event → series → category)
   similar -q "free text"        Keyword search ranked by relevance
-  clusters [--label X]          Browse thematic clusters
-  clusters <id>                 List markets in a cluster
-  clusters --behavioral         Behavioral clusters (30-day return vectors)
-  clusters --ranked             Rank clusters by historical basket return
-  peers <ticker>                Find markets in the same cluster
   events                        Octagon events (event ↔ outcome ladder)
   events <event-slug>         Drill into one event's outcome probabilities
-  series                        Series rollup with 24h vol, market count
-  series <SERIES>               Sub-markets in one series
-  series candles <SERIES>       Series NAV (basket of top sub-markets)
   catalysts upcoming --days 30  Markets closing soon, grouped by week
   trust <event-slug>          Trader Trust scorecard (table across markets)
   trust <event-slug> --market <slug>  Single-market trust detail card
@@ -494,22 +441,6 @@ Discovery:
   watch <market-slug>           Live price/orderbook feed
   watch --theme <theme>         Continuous theme scan (Ctrl+C to stop)
   watch --refresh               Force index rebuild before watching
-
-Editorial themes (narrative registry):
-  themes                        List registered editorial themes
-  themes import <path>          Seed from a JSON file (no Polymarket seed ships yet)
-  themes show <name>            Drill into one theme
-  themes report                 25-theme dashboard with SEO + liquidity
-  themes audit                  Flag dead themes (high SEO + zero volume)
-  themes overlap                Cross-theme dedupe report
-  themes create/delete/add-series/remove-series/set-search-volume/export
-
-Portfolio construction:
-  correlate <t1> <t2> [...]     Pairwise Pearson correlation matrix
-  basket build [filters] -n N   Diversified basket with cluster + correlation caps
-  basket backtest --tickers ... NAV summary with Sharpe, max DD, win rate
-  basket size --bankroll $ --probs ...   Fractional Kelly sizing for picked legs
-  basket candles --tickers ...  OHLC bars for a weighted basket NAV
 
 Analysis & Trading:
   analyze <market-slug>         Full report: edge, drivers, Kelly sizing
@@ -558,21 +489,12 @@ Quick start:
 Discovery:
   /search [theme|ticker|query]   Find markets (Octagon when key set, else local)
   /search --sort-by volume_24h   Top-N by liquidity
-  /search --aggregate-by series  Roll up results to series level
-  /search themes                 (Legacy) Category labels
+  /search themes                 List theme and subcategory labels
   /search edge [--min-edge N]    Edge ranking (Octagon when key set, else local)
   /similar <market-slug>         Related markets (same event → series → category)
   /similar -q "free text"        Keyword search ranked by relevance
-  /clusters [--label X]          Browse thematic clusters
-  /clusters <id>                 List markets in a cluster
-  /clusters --behavioral         Behavioral clusters (30-day return vectors)
-  /clusters --ranked             Rank clusters by historical basket return
-  /peers <ticker>                Find markets in the same cluster
   /events                        Octagon events (event ↔ outcome ladder)
   /events <event-slug>         Drill into one event's outcome probabilities
-  /series                        Series rollup with 24h vol, market count
-  /series <SERIES>               Sub-markets in one series
-  /series candles <SERIES>       Series NAV (basket of top sub-markets)
   /catalysts upcoming --days 30  Markets closing soon, grouped by week
   /trust <event-slug>          Trader Trust scorecard (table across markets)
   /trust <event-slug> --market <slug>  Single-market trust detail card
@@ -580,22 +502,6 @@ Discovery:
   /watch <ticker>                Live price/orderbook feed
   /watch --theme <theme>         Continuous theme scan (Esc to stop)
   /watch --refresh               Force index rebuild before watching
-
-Editorial themes (narrative registry):
-  /themes                        List registered editorial themes
-  /themes import <path>          Seed from a JSON file (no Polymarket seed ships yet)
-  /themes show <name>            Drill into one theme
-  /themes report                 25-theme dashboard with SEO + liquidity
-  /themes audit                  Flag dead themes (high SEO + zero volume)
-  /themes overlap                Cross-theme dedupe report
-  /themes create/delete/add-series/remove-series/set-search-volume/export
-
-Portfolio construction:
-  /correlate <t1> <t2> [...]     Pairwise Pearson correlation matrix
-  /basket build [filters] -n N   Diversified basket with cluster + correlation caps
-  /basket backtest --tickers ... NAV summary with Sharpe, max DD, win rate
-  /basket size --bankroll $ --probs ...   Fractional Kelly sizing for picked legs
-  /basket candles --tickers ...  OHLC bars for a weighted basket NAV
 
 Analysis:
   /backtest                      Model accuracy scorecard + live edge scanner
@@ -634,14 +540,6 @@ Tips:
 export function buildHelp(ctx: HelpContext, topic?: string): { text: string } | { error: string } {
   const topics = buildTopics(ctx);
 
-  // Gated commands are answered before the topics map, and return only the
-  // reason they cannot run. Their reference docs were deleted rather than shown
-  // "for when it lands": that syntax belongs to a venue this tool does not
-  // trade, and a Polymarket user should never be handed identifiers that cannot
-  // resolve here. Restore them, rewritten for Polymarket, if the commands return.
-  if (topic && isDeferredCommand(topic) && !octagonSupports(COMMAND_FEATURE[topic]!)) {
-    return { text: octagonUnavailableMessage(COMMAND_FEATURE[topic]!, topic) };
-  }
   const unavailable = topic ? commandUnavailableReason(topic) : null;
   if (topic && unavailable) {
     const body = topics[topic];

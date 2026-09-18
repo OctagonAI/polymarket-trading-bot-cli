@@ -1,15 +1,52 @@
 /**
- * `catalysts upcoming [--days N]` — list active Kalshi markets sorted by
- * close_time within the next N days. Group by week so the user can scan an
- * event-calendar view.
+ * `catalysts upcoming [--days N]` — list active markets sorted by close_time
+ * within the next N days. Group by week so the user can scan an event-calendar
+ * view.
  *
- * Pure composition over /kalshi/markets — no new endpoint needed.
+ * Pure composition over the market search endpoint — no new endpoint needed.
  */
 import { wrapSuccess, wrapError } from './json.js';
 import type { CLIResponse } from './json.js';
 import type { ParsedArgs } from './parse-args.js';
-import { fetchUniverse } from './series.js';
+import { searchOctagonMarkets, type KalshiMarketRow } from '../scan/octagon-api.js';
 import { formatTable } from './scan-formatters.js';
+
+const UNIVERSE_PAGE_LIMIT = 200;
+const MAX_PAGES = 25; // safety cap; universe is small
+
+/**
+ * Walk the open market universe, one page at a time.
+ *
+ * Moved here from the series command, which was this function's original home
+ * and its only other caller.
+ */
+async function fetchUniverse(opts: {
+  q?: string;
+  category?: string;
+  series_ticker?: string;
+  min_volume_24h?: number;
+  close_before?: string;
+  maxMarkets?: number;
+}): Promise<KalshiMarketRow[]> {
+  const all: KalshiMarketRow[] = [];
+  let cursor: string | undefined;
+  const cap = opts.maxMarkets ?? 5000;
+  for (let i = 0; i < MAX_PAGES; i++) {
+    const page = await searchOctagonMarkets({
+      q: opts.q,
+      category: opts.category,
+      series_ticker: opts.series_ticker,
+      min_volume_24h: opts.min_volume_24h,
+      close_before: opts.close_before,
+      limit: UNIVERSE_PAGE_LIMIT,
+      cursor,
+    });
+    all.push(...page.data);
+    if (all.length >= cap || !page.has_more || !page.next_cursor) break;
+    cursor = page.next_cursor;
+  }
+  return all;
+}
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
