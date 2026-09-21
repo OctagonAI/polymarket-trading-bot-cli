@@ -532,7 +532,7 @@ export class BrowseController {
   private async loadEvents(theme: string, token?: number): Promise<void> {
     try {
       const db = getDb();
-      let kalshiEvents: PolymarketEvent[];
+      let events: PolymarketEvent[];
 
       const indexAge = getIndexAge(db);
       const indexEmpty = indexAge === Infinity;
@@ -544,19 +544,19 @@ export class BrowseController {
 
       if (theme === 'top50') {
         // Try local index first (instant if populated)
-        kalshiEvents = indexEmpty ? [] : getTopEventsByVolume(db, 30);
+        events = indexEmpty ? [] : getTopEventsByVolume(db, 30);
 
         // Fallback to API if index is empty (first run)
-        if (kalshiEvents.length === 0) {
+        if (events.length === 0) {
           this.progressMessageValue = 'Fetching top markets...';
           this.emitChange();
-          kalshiEvents = await fetchEvents({
+          events = await fetchEvents({
             closed: false,
             limit: 100,
             order: 'volume24hr',
             ascending: false,
           });
-          kalshiEvents = kalshiEvents.slice(0, 30);
+          events = events.slice(0, 30);
         }
       } else if (indexEmpty) {
         // Non-top50 theme but index is empty — must wait for index
@@ -585,24 +585,24 @@ export class BrowseController {
 
         // Now query the index
         if (themeTags(theme)) {
-          kalshiEvents = await this.searchIndex(db, '', themeTags(theme));
+          events = await this.searchIndex(db, '', themeTags(theme));
         } else {
           const searchTerm = theme.includes(':') ? theme.split(':').slice(1).join(':') : theme;
           const labels = theme.includes(':') ? themeTags(theme.split(':')[0] ?? '') : null;
-          kalshiEvents = await this.searchIndex(db, searchTerm, labels);
+          events = await this.searchIndex(db, searchTerm, labels);
         }
       } else if (themeTags(theme)) {
         // Pure category (e.g. "elections") — read from local index
-        kalshiEvents = await this.searchIndex(db, '', themeTags(theme));
+        events = await this.searchIndex(db, '', themeTags(theme));
       } else {
         // Subcategory (e.g. "politics:iran") or free-text search (e.g. "iran")
         const searchTerm = theme.includes(':') ? theme.split(':').slice(1).join(':') : theme;
         const labels = theme.includes(':') ? themeTags(theme.split(':')[0] ?? '') : null;
-        kalshiEvents = await this.searchIndex(db, searchTerm, labels);
+        events = await this.searchIndex(db, searchTerm, labels);
       }
 
       // Sort all events by total market volume (most active first)
-      kalshiEvents.sort((a, b) => {
+      events.sort((a, b) => {
         const volA = (a.markets ?? []).reduce((sum: number, m: any) => sum + (parseFloat(m.volume) || parseFloat(m.volume_fp) || 0), 0);
         const volB = (b.markets ?? []).reduce((sum: number, m: any) => sum + (parseFloat(m.volume) || parseFloat(m.volume_fp) || 0), 0);
         return volB - volA;
@@ -613,8 +613,8 @@ export class BrowseController {
 
       this.progressMessageValue = null;
       // SQL already ranked and capped the match set; this slice is a floor
-      // under kalshiEventsToRows, which only ever drops rows.
-      this.eventsValue = this.kalshiEventsToRows(kalshiEvents, db).slice(0, BROWSE_EVENT_CAP);
+      // under eventsToRows, which only ever drops rows.
+      this.eventsValue = this.eventsToRows(events, db).slice(0, BROWSE_EVENT_CAP);
       this.appStateValue = 'event_list';
       this.emitChange();
 
@@ -628,8 +628,8 @@ export class BrowseController {
     }
   }
 
-  /** Convert Kalshi events (with nested markets) to BrowseEventRows */
-  private kalshiEventsToRows(events: PolymarketEvent[], db: ReturnType<typeof getDb>): BrowseEventRow[] {
+  /** Convert events (with nested markets) to BrowseEventRows */
+  private eventsToRows(events: PolymarketEvent[], db: ReturnType<typeof getDb>): BrowseEventRow[] {
     const rows: BrowseEventRow[] = [];
     for (const ev of events) {
       const markets = (ev.markets ?? []).filter((m) => isMarketActive(m));
@@ -934,7 +934,7 @@ export class BrowseController {
     // Try prefetch DB first to avoid an Octagon API call
     try {
       const db = getDb();
-      // Look up by event_ticker prefix (ticker may be a market ticker like KXBTC-26-B95000)
+      // Look up by event_ticker prefix (ticker may be a market slug rather than an event slug)
       // Try exact match first, then find by event prefix
       const row = db.query(
         `SELECT outcome_probabilities_json FROM octagon_reports

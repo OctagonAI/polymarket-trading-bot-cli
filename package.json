@@ -1,6 +1,6 @@
 {
   "name": "polymarket-trading-bot-cli",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Polymarket Trading Bot CLI - AI-powered prediction market terminal.",
   "license": "MIT",
   "author": "Octagon AI, Inc.",

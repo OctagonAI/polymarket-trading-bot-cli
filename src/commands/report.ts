@@ -113,7 +113,7 @@ export async function handleReport(args: ParsedArgs): Promise<CLIResponse<Report
     return wrapError(
       'report',
       'MISSING_TICKER',
-      'Usage: report <event_ticker | market_ticker | series_ticker | kalshi_url> [--refresh]',
+      'Usage: report <event-slug | market_ticker | series_ticker | polymarket_url> [--refresh]',
     );
   }
   const input = normalizeMarketInput(rawInput);

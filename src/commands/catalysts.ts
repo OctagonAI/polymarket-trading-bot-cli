@@ -8,7 +8,7 @@
 import { wrapSuccess, wrapError } from './json.js';
 import type { CLIResponse } from './json.js';
 import type { ParsedArgs } from './parse-args.js';
-import { searchOctagonMarkets, type KalshiMarketRow } from '../scan/octagon-api.js';
+import { searchOctagonMarkets, type OctagonMarketRow } from '../scan/octagon-api.js';
 import { formatTable } from './scan-formatters.js';
 
 const UNIVERSE_PAGE_LIMIT = 200;
@@ -27,8 +27,8 @@ async function fetchUniverse(opts: {
   min_volume_24h?: number;
   close_before?: string;
   maxMarkets?: number;
-}): Promise<KalshiMarketRow[]> {
-  const all: KalshiMarketRow[] = [];
+}): Promise<OctagonMarketRow[]> {
+  const all: OctagonMarketRow[] = [];
   let cursor: string | undefined;
   const cap = opts.maxMarkets ?? 5000;
   for (let i = 0; i < MAX_PAGES; i++) {
