@@ -422,7 +422,7 @@ export async function runCli(options?: { forceSetup?: boolean }) {
       { value: 'trust', label: 'trust', description: 'Octagon Trust Index for an event' },
       { value: 'report', label: 'report', description: 'Full Octagon markdown report for an event' },
       { value: 'catalysts', label: 'catalysts', description: 'Upcoming market closes by week' },
-      { value: 'wallet', label: 'wallet', description: 'Wallet setup: create, import, inspect' },
+      { value: 'wallet', label: 'wallet', description: 'Wallet setup: import, inspect' },
       { value: 'portfolio', label: 'portfolio', description: 'Account state' },
       { value: 'analyze', label: 'analyze', description: 'Market analysis' },
       { value: 'watch', label: 'watch', description: 'Live monitoring' },

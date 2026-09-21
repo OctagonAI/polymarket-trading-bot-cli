@@ -62,10 +62,6 @@ ${p}wallet show                  Addresses, wallet type, mode, key source
 Flags:
   --force                           Replace an existing wallet
 
-There is no ${p}wallet create. A wallet made here would be a fresh account with
-no Polymarket history, and polymarket.com deposits only into the account it made
-for you — so the way in is to import the key for the account you already have.
-
 A Polymarket account has two addresses:
   Signing wallet   the keypair that signs orders. Holds nothing.
   Funding wallet   a contract it controls. Holds your pUSD. Deposit here.

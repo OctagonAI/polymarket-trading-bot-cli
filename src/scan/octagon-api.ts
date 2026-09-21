@@ -147,9 +147,6 @@ export interface OctagonMarketRow {
   distance?: number | null;
 }
 
-/** @deprecated Kalshi-era name kept as an alias while callers migrate. */
-export type KalshiMarketRow = OctagonMarketRow;
-
 export interface PagedResult<T> {
   data: T[];
   next_cursor: string | null;

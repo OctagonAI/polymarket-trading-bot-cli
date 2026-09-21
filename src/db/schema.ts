@@ -255,12 +255,4 @@ export function migrate(db: Database): void {
   if (!snapshotCols.some((c) => c.name === 'equity')) {
     db.exec(`ALTER TABLE risk_snapshots ADD COLUMN equity REAL`);
   }
-
-  // Venue rename: the column held the raw Kalshi order response. Nothing writes
-  // it yet (logTrade has no production caller), so this is a free rename rather
-  // than a data migration.
-  const tradeCols = db.query(`PRAGMA table_info(trades)`).all() as Array<{ name: string }>;
-  if (tradeCols.some((c) => c.name === 'kalshi_response') && !tradeCols.some((c) => c.name === 'raw_response')) {
-    db.exec(`ALTER TABLE trades RENAME COLUMN kalshi_response TO raw_response`);
-  }
 }
