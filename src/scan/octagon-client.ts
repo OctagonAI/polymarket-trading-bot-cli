@@ -365,7 +365,8 @@ export class OctagonClient {
     // not the one for the market we're analyzing.
     let modelProb: number | null = null;
     let marketProb: number | null = null;
-    const outcomeJson = (source as Record<string, unknown>).outcome_probabilities_json;
+    // The Reports API returns the pinned version's rows at the top level; older envelopes put them on versions[0].
+    const outcomeJson = parsed.outcome_probabilities_json ?? (source as Record<string, unknown>).outcome_probabilities_json;
     if (outcomeJson != null) {
       try {
         const outcomes = typeof outcomeJson === 'string'
