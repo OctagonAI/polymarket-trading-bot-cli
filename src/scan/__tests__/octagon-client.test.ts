@@ -284,6 +284,20 @@ describe('OctagonClient', () => {
       expect(report.contractSnapshot).toBe(JSON.parse(json).outcome_probabilities_json);
     });
 
+    test('a matched 50% outcome with no event-level value is a hit, not a cache miss', () => {
+      const client = new OctagonClient(makeInvoker(''), db, audit);
+      const json = JSON.stringify({
+        versions: [{ run_id: 'r1' }],
+        outcome_probabilities_json: JSON.stringify([
+          { market_ticker: 'KXPRESNOMR-28-JDV', model_probability: 50, market_probability: 48 },
+        ]),
+      });
+
+      const report = client.parseReport(json, 'KXPRESNOMR-28-JDV', 'KXPRESNOMR-28', 'cache');
+      expect(report.modelProb).toBeCloseTo(0.5, 4);
+      expect(report.cacheMiss).toBe(false);
+    });
+
     test('handles outcome_probabilities_json as array (not string) with case-insensitive ticker match', () => {
       const client = new OctagonClient(makeInvoker(''), db, audit);
       const json = JSON.stringify({
