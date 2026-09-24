@@ -113,10 +113,14 @@ function extractTextFromResponse(data: unknown): string {
 interface ReportResponse {
   event_ticker: string;
   venue: string;
+  /** The pinned version's event name. */
+  name: string | null;
   requested_url: string | null;
   versions: unknown[];
   markdown_report: string | null;
   run_id: string | null;
+  /** The pinned version's per-outcome rows, as a JSON string. */
+  outcome_probabilities_json: string | null;
 }
 
 /**

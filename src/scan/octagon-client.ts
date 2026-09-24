@@ -214,14 +214,11 @@ export class OctagonClient {
           report = { ...defaults, cacheMiss: true };
           return report;
         }
-        // Check if model probability was actually provided (event-level)
-        const source = (versions?.[0] ?? parsed) as Record<string, unknown>;
-        hasExplicitModelProb = (source.modelProb ?? source.model_prob ?? source.model_probability) != null;
-        report = this.mapJsonToReport(parsed, defaults);
-        // Per-market probability from outcome_probabilities_json also counts as explicit
-        if (report.modelProb !== defaults.modelProb) {
-          hasExplicitModelProb = true;
-        }
+        // Explicitness comes from the mapper: an event-level value OR a per-outcome
+        // match counts, including an explicit 50% that equals the default.
+        const { modelProbExplicit, ...mapped } = this.mapJsonToReport(parsed, defaults);
+        hasExplicitModelProb = modelProbExplicit;
+        report = mapped;
       } else {
         report = this.extractFromMarkdown(raw, defaults);
       }
@@ -354,7 +351,7 @@ export class OctagonClient {
 
   // --- Private helpers ---
 
-  private mapJsonToReport(parsed: Record<string, unknown>, defaults: OctagonReport): OctagonReport {
+  private mapJsonToReport(parsed: Record<string, unknown>, defaults: OctagonReport): OctagonReport & { modelProbExplicit: boolean } {
     // Handle nested cache response: { versions: [{ model_probability, market_probability, ... }] }
     const versions = parsed.versions as Array<Record<string, unknown>> | undefined;
     const source = versions?.[0] ?? parsed;
@@ -365,7 +362,8 @@ export class OctagonClient {
     // not the one for the market we're analyzing.
     let modelProb: number | null = null;
     let marketProb: number | null = null;
-    const outcomeJson = (source as Record<string, unknown>).outcome_probabilities_json;
+    // The Reports API returns the pinned version's rows at the top level; older envelopes put them on versions[0].
+    const outcomeJson = parsed.outcome_probabilities_json ?? (source as Record<string, unknown>).outcome_probabilities_json;
     if (outcomeJson != null) {
       try {
         const outcomes = typeof outcomeJson === 'string'
@@ -385,11 +383,14 @@ export class OctagonClient {
     // Fall back to event-level values (correct for single-outcome markets).
     // Uses toProbFromJson which always divides by 100, unlike toProb which uses a
     // > 1 heuristic that fails for sub-1% values (e.g. 0.9% stays as 0.9 → 90%).
+    const outcomeExplicit = modelProb !== null;
+    const eventExplicit = (source.modelProb ?? source.model_prob ?? source.model_probability) != null;
     modelProb = modelProb ?? this.toProbFromJson(source.modelProb ?? source.model_prob ?? source.model_probability) ?? defaults.modelProb;
     marketProb = marketProb ?? this.toProbFromJson(source.marketProb ?? source.market_prob ?? source.market_probability) ?? defaults.marketProb;
 
     return {
       ...defaults,
+      modelProbExplicit: outcomeExplicit || eventExplicit,
       modelProb,
       marketProb,
       mispricingSignal: this.toSignal(source.mispricingSignal ?? source.mispricing_signal) ?? this.inferSignal(
@@ -410,7 +411,12 @@ export class OctagonClient {
       catalysts: this.parseCatalysts(source.catalysts) ?? defaults.catalysts,
       sources: this.parseSources(source.sources) ?? defaults.sources,
       resolutionHistory: String(source.resolutionHistory ?? source.resolution_history ?? defaults.resolutionHistory),
-      contractSnapshot: String(source.contractSnapshot ?? source.contract_snapshot ?? source.outcome_probabilities_json ?? defaults.contractSnapshot),
+      // The outcome rows as found above (top-level first, then versions[0]), kept as JSON text.
+      contractSnapshot: String(
+        source.contractSnapshot ?? source.contract_snapshot
+          ?? (outcomeJson == null || typeof outcomeJson === 'string' ? outcomeJson : JSON.stringify(outcomeJson))
+          ?? defaults.contractSnapshot
+      ),
     };
   }
 
