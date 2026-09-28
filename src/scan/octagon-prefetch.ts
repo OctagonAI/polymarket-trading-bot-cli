@@ -126,13 +126,14 @@ export function persistEvent(db: Database, event: OctagonEventEntry): boolean {
   //     a single row keyed by the event ticker, as before.
   const outcomes = Array.isArray(event.outcome_probabilities) ? event.outcome_probabilities : [];
   const perOutcomeRows = outcomes.length > 0
-    ? outcomes
-        .filter((o) => o && o.market_ticker && typeof o.model_probability === 'number' && typeof o.market_probability === 'number')
-        .map((o) => ({
-          ticker: o.market_ticker,
-          model_prob: o.model_probability / 100,
-          market_prob: o.market_probability / 100,
-        }))
+    ? outcomes.flatMap((o) =>
+        o && o.market_ticker && typeof o.model_probability === 'number' && typeof o.market_probability === 'number'
+          ? [{
+              ticker: o.market_ticker,
+              model_prob: o.model_probability / 100,
+              market_prob: o.market_probability / 100,
+            }]
+          : [])
     : [{ ticker: event.event_ticker, model_prob: modelProb, market_prob: marketProb }];
 
   for (const row of perOutcomeRows) {

@@ -68,8 +68,9 @@ export interface OctagonEventEntry {
   outcome_probabilities?: Array<{
     market_ticker: string;
     outcome_name?: string;
-    model_probability: number;
-    market_probability: number;
+    /** Null for a sub-market the model has not priced (and, for market, one with no quote). */
+    model_probability: number | null;
+    market_probability: number | null;
     volume?: number | null;
     volume_24h?: number | null;
   }> | null;

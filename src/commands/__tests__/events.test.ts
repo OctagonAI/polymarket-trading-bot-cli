@@ -52,4 +52,25 @@ describe('Events command', () => {
     expect(resp.data.data[0].event_ticker).toBe('us-election-winner');
     expect(resp.data.data[1].event_ticker).toBe('btc-100k-2026');
   });
+
+  test('event detail renders sub-markets the model has not priced', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const event = {
+      event_ticker: 'mlb-wsh-det-2026-09-23', name: 'Nationals vs. Tigers', series_category: 'Sports',
+      model_probability: 33.5, market_probability: 39, edge_pp: -5.5, confidence_score: 5,
+      total_volume: 100, total_open_interest: 0, close_time: '2026-09-30T17:10:00Z', key_takeaway: null,
+      outcome_probabilities: [
+        { market_ticker: 'mlb-wsh-det-2026-09-23', outcome_name: 'Washington Nationals', model_probability: 33.5, market_probability: 39 },
+        { market_ticker: 'mlb-wsh-det-2026-09-23-f5-total-2pt5', outcome_name: '1st 5 Innings O/U 2.5', model_probability: null, market_probability: 0 },
+        { market_ticker: 'mlb-wsh-det-2026-09-23-f5-total-3pt5', outcome_name: '1st 5 Innings O/U 3.5', model_probability: null, market_probability: null },
+      ],
+    } as unknown as import('../../scan/octagon-events-api.js').OctagonEventEntry;
+
+    const out = formatEventsHuman({ kind: 'detail', event });
+    expect(out).toContain('-5.5pp');
+    // The unpriced rows are listed, with no model value and no edge.
+    expect(out).toContain('mlb-wsh-det-2026-09-23-f5-total-2pt5');
+    expect(out).toContain('mlb-wsh-det-2026-09-23-f5-total-3pt5');
+    expect(out).not.toContain('NaN');
+  });
 });

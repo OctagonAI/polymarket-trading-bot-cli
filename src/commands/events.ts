@@ -125,14 +125,19 @@ function formatEventDetail(e: OctagonEventEntry): string {
   if (outcomes.length > 0) {
     lines.push('');
     lines.push('Sub-markets (outcome probabilities):');
-    const rows: string[][] = outcomes.map((o) => [
-      o.market_ticker,
-      truncate(o.outcome_name ?? '-', 35),
-      `${o.model_probability.toFixed(1)}%`,
-      `${o.market_probability.toFixed(1)}%`,
-      `${(o.model_probability - o.market_probability) >= 0 ? '+' : ''}${(o.model_probability - o.market_probability).toFixed(1)}pp`,
-      fmtVol(o.volume_24h ?? o.volume),
-    ]);
+    const rows: string[][] = outcomes.map((o) => {
+      const edge = o.model_probability != null && o.market_probability != null
+        ? o.model_probability - o.market_probability
+        : null;
+      return [
+        o.market_ticker,
+        truncate(o.outcome_name ?? '-', 35),
+        o.model_probability != null ? `${o.model_probability.toFixed(1)}%` : '-',
+        o.market_probability != null ? `${o.market_probability.toFixed(1)}%` : '-',
+        edge != null ? `${edge >= 0 ? '+' : ''}${edge.toFixed(1)}pp` : '-',
+        fmtVol(o.volume_24h ?? o.volume),
+      ];
+    });
     lines.push(formatTable(
       ['Market', 'Outcome', 'Model', 'Market', 'Edge', '24h Vol'],
       rows,
