@@ -169,10 +169,12 @@ export function fetchOctagonEventDirect(eventTicker: string): Promise<OctagonEve
  * Look up a single event by its Polymarket URL slug. Returns null on 404.
  *
  * This is the lookup most CLI input hits: users paste polymarket.com URLs or
- * slugs, which are frequently not the event_ticker.
+ * slugs, which are frequently not the event_ticker. `/events/{ref}` resolves
+ * either a ticker or a slug and returns the full event; `/events/slug/{ref}`
+ * returns only the event's identity.
  */
 export function fetchOctagonEventBySlug(slug: string): Promise<OctagonEventEntry | null> {
-  return eventsApi<OctagonEventEntry>(`/events/slug/${encodeURIComponent(slug)}`);
+  return eventsApi<OctagonEventEntry>(`/events/${encodeURIComponent(slug)}`);
 }
 
 /**
