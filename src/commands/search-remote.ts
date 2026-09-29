@@ -4,6 +4,7 @@
  * OCTAGON_API_KEY is set; the legacy local-SQLite paths remain as fallback.
  */
 import { formatTable } from './scan-formatters.js';
+import { contractLabels } from '../utils/contract-labels.js';
 import {
   stripVenuePrefix,
   type OctagonMarketRow,
@@ -104,18 +105,6 @@ export function formatEventSearchHuman(
 }
 
 /**
- * The contract's own identity: the market slug minus its event prefix.
- *
- * Both ids are normalised to their bare form first — `event_ticker` arrives
- * namespaced (`polymarket__<slug>`) while `native_ticker` is already bare.
- */
-export function contractOf(marketTicker: string, eventTicker: string): string {
-  const market = stripVenuePrefix(marketTicker);
-  const prefix = `${stripVenuePrefix(eventTicker)}-`;
-  return market.startsWith(prefix) ? market.slice(prefix.length) : market;
-}
-
-/**
  * Pick the column that actually distinguishes rows within this event.
  *
  * Polymarket and Kalshi are mirror images: here `yes_subtitle` is "Yes" on ~70%
@@ -147,16 +136,14 @@ export function formatEventMarketsHuman(eventTicker: string, page: PagedResult<O
   }
 
   const { header, pick } = labelColumn(page.data);
-  const sorted = [...page.data].sort((a, b) =>
-    contractOf(a.native_ticker ?? a.market_ticker, eventTicker).localeCompare(
-      contractOf(b.native_ticker ?? b.market_ticker, eventTicker),
-      undefined,
-      { numeric: true },
-    ),
-  );
+  // `event_ticker` arrives namespaced (`polymarket__<slug>`); `native_ticker` is already bare.
+  const labels = contractLabels(page.data.map((m) => m.native_ticker ?? stripVenuePrefix(m.market_ticker)), bare);
+  const sorted = page.data
+    .map((m, i) => ({ m, contract: labels[i] }))
+    .sort((a, b) => a.contract.localeCompare(b.contract, undefined, { numeric: true }));
 
-  const rows: string[][] = sorted.map((m) => [
-    truncate(contractOf(m.native_ticker ?? m.market_ticker, eventTicker), 40),
+  const rows: string[][] = sorted.map(({ m, contract }) => [
+    truncate(contract, 40),
     truncate(pick(m), 40),
     fmtMoney(m.last_price ?? m.yes_ask),
     fmtVol(m.volume_24h),

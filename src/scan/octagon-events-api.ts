@@ -30,8 +30,7 @@ export const OCTAGON_VENUE = 'polymarket';
  *
  * Almost everything is nullable: the list endpoint returns only the summary
  * columns, leaving key_takeaway/richtext/trader_trust_json null. Fetch the
- * detail endpoint (fetchOctagonEventDirect / fetchOctagonEventBySlug) when you
- * need the report body.
+ * detail endpoint (fetchOctagonEventDirect) when you need the report body.
  */
 export interface OctagonEventEntry {
   history_id: number;
@@ -69,8 +68,9 @@ export interface OctagonEventEntry {
   outcome_probabilities?: Array<{
     market_ticker: string;
     outcome_name?: string;
-    model_probability: number;
-    market_probability: number;
+    /** Null for a sub-market the model has not priced (and, for market, one with no quote). */
+    model_probability: number | null;
+    market_probability: number | null;
     volume?: number | null;
     volume_24h?: number | null;
   }> | null;
@@ -158,21 +158,14 @@ export async function fetchOctagonEventsPage(opts?: {
 }
 
 /**
- * Look up a single event by its Octagon ticker. Returns null on 404.
+ * Look up a single event by its Octagon ticker or its Polymarket URL slug. Returns null on 404.
  * Cheaper than `fetchOctagonEventByTicker`, which scans paginated pages.
- */
-export function fetchOctagonEventDirect(eventTicker: string): Promise<OctagonEventEntry | null> {
-  return eventsApi<OctagonEventEntry>(`/events/${encodeURIComponent(eventTicker)}`);
-}
-
-/**
- * Look up a single event by its Polymarket URL slug. Returns null on 404.
  *
- * This is the lookup most CLI input hits: users paste polymarket.com URLs or
- * slugs, which are frequently not the event_ticker.
+ * `/events/{ref}` resolves either key in one query and returns the full event;
+ * `/events/slug/{ref}` returns only the event's identity.
  */
-export function fetchOctagonEventBySlug(slug: string): Promise<OctagonEventEntry | null> {
-  return eventsApi<OctagonEventEntry>(`/events/slug/${encodeURIComponent(slug)}`);
+export function fetchOctagonEventDirect(ref: string): Promise<OctagonEventEntry | null> {
+  return eventsApi<OctagonEventEntry>(`/events/${encodeURIComponent(ref)}`);
 }
 
 /**
@@ -191,12 +184,11 @@ export function normalizeEventKey(input: string): string {
 
 /**
  * Resolve user input that may be either an Octagon event ticker or a Polymarket
- * slug. Tries the slug route first — it is the form users actually have — then
- * falls back to the ticker route.
+ * slug (users mostly paste polymarket.com URLs or slugs, which are frequently not
+ * the event_ticker). One request: `/events/{ref}` resolves either.
  */
 export async function resolveOctagonEvent(input: string): Promise<OctagonEventEntry | null> {
-  const key = normalizeEventKey(input);
-  return (await fetchOctagonEventBySlug(key)) ?? (await fetchOctagonEventDirect(key));
+  return fetchOctagonEventDirect(normalizeEventKey(input));
 }
 
 /**
