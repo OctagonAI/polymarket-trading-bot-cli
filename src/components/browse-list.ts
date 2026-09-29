@@ -2,6 +2,7 @@ import { Container, Text, type SelectItem } from '@mariozechner/pi-tui';
 import { VimSelectList } from './select-list.js';
 import { selectListTheme, theme } from '../theme.js';
 import type { BrowseEventRow, BrowseMarketRow } from '../controllers/browse.js';
+import { contractLabels } from '../utils/contract-labels.js';
 
 function pad(s: string, len: number): string {
   return s.length > len ? s.slice(0, len - 1) + '…' : s.padEnd(len);
@@ -10,18 +11,6 @@ function pad(s: string, len: number): string {
 function fmtPct(val: number | null): string {
   if (val === null) return '--';
   return `${(val * 100).toFixed(1)}%`;
-}
-
-/**
- * A contract's own identity: the market slug minus its event prefix.
- *
- * Polymarket market slugs average 57 characters against a 20-wide column, so
- * every row used to render as the same truncated prefix — all 371 markets of
- * `nfl-den-kc-2026-09-15` showed as `nfl-den-kc-2026-09-`.
- */
-function contractOf(marketTicker: string, eventTicker: string): string {
-  const prefix = `${eventTicker}-`;
-  return marketTicker.startsWith(prefix) ? marketTicker.slice(prefix.length) : marketTicker;
 }
 
 /**
@@ -38,8 +27,9 @@ function buildMarketItems(events: BrowseEventRow[]): SelectItem[] {
   const items: SelectItem[] = [];
   for (const ev of events) {
     const labelsVary = new Set(ev.markets.map((m) => m.label ?? '')).size > 1;
-    for (const m of ev.markets) {
-      const ticker = pad(contractOf(m.ticker, ev.eventTicker), 24);
+    const contracts = contractLabels(ev.markets.map((m) => m.ticker), ev.eventTicker);
+    for (const [i, m] of ev.markets.entries()) {
+      const ticker = pad(contracts[i], 24);
       const title = pad(describeMarket(m, labelsVary), 44);
       const mktPct = pad(fmtPct(m.marketProb), 7);
       const isPending = ev.pending === true;

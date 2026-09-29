@@ -7,6 +7,7 @@ import {
   type OctagonEventEntry,
 } from '../scan/octagon-events-api.js';
 import { formatTable } from './scan-formatters.js';
+import { contractLabels } from '../utils/contract-labels.js';
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
@@ -125,12 +126,13 @@ function formatEventDetail(e: OctagonEventEntry): string {
   if (outcomes.length > 0) {
     lines.push('');
     lines.push('Sub-markets (outcome probabilities):');
-    const rows: string[][] = outcomes.map((o) => {
+    const contracts = contractLabels(outcomes.map((o) => o.market_ticker), e.event_ticker);
+    const rows: string[][] = outcomes.map((o, i) => {
       const edge = o.model_probability != null && o.market_probability != null
         ? o.model_probability - o.market_probability
         : null;
       return [
-        o.market_ticker,
+        truncate(contracts[i], 40),
         truncate(o.outcome_name ?? '-', 35),
         o.model_probability != null ? `${o.model_probability.toFixed(1)}%` : '-',
         o.market_probability != null ? `${o.market_probability.toFixed(1)}%` : '-',

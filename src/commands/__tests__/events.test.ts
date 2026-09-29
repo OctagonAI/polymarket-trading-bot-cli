@@ -68,9 +68,11 @@ describe('Events command', () => {
 
     const out = formatEventsHuman({ kind: 'detail', event });
     expect(out).toContain('-5.5pp');
-    // The unpriced rows are listed, with no model value and no edge.
-    expect(out).toContain('mlb-wsh-det-2026-09-23-f5-total-2pt5');
-    expect(out).toContain('mlb-wsh-det-2026-09-23-f5-total-3pt5');
+    // The unpriced rows are listed, with no model value and no edge — labelled by
+    // the words that differ from their siblings, not the full shared slug.
+    expect(out).toMatch(/│ 2pt5 +│ 1st 5 Innings O\/U 2\.5 +│ - +│ 0\.0% +│ - +│/);
+    expect(out).toMatch(/│ 3pt5 +│ 1st 5 Innings O\/U 3\.5 +│ - +│ - +│ - +│/);
+    expect(out).not.toContain('f5-total');
     expect(out).not.toContain('NaN');
   });
 });
