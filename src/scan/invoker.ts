@@ -2,23 +2,23 @@ import { lookupMarket } from '../tools/polymarket/markets.js';
 import { fetchWithDeadline, isAbortError, safeText } from '../utils/http.js';
 import { fetchEventBySlug } from '../tools/polymarket/events.js';
 import { logger } from '../utils/logger.js';
+import { generateReportAndWait } from './octagon-reports-api.js';
 import type { OctagonInvoker, OctagonVariant } from './types.js';
 
 /**
- * Octagon report access, split across two surfaces for a deliberate reason:
+ * Octagon report access by variant:
  *
- *  - Reading a cached report  → GET /v1/predictions/reports/polymarket/{slug}
+ *  - 'cache'   → GET /v1/predictions/reports/polymarket/{slug}?version=latest
  *    A plain HTTP read. No agent inference, no credits, and it returns the
  *    `versions[]` list so callers can tell "never generated" from "stale".
  *
- *  - Generating a fresh one   → POST /v1/responses (prediction-markets agent)
- *    The REST route for generation (POST /predictions/reports/...) is async: it
- *    returns 202 + a run_id and the caller must poll for completion, which can
- *    take several minutes. The agent holds the connection open until the report
- *    exists, so it stays a single awaited call here. Both write to the same
- *    report store, so a generate-then-read round trip is consistent.
+ *  - 'refresh' → POST /v1/predictions/reports/polymarket/{slug}, then poll the
+ *    run until it completes (octagon-reports-api.ts). Replaces the deprecated
+ *    `octagon-prediction-markets-agent:refresh` model.
  *
- * Both are keyed by the Polymarket EVENT SLUG (the polymarket.com/event/<slug>
+ *  - 'default' → POST /v1/responses with the bare prediction-markets agent.
+ *
+ * Reports are keyed by the Polymarket EVENT SLUG (the polymarket.com/event/<slug>
  * segment). Note this is not always Octagon's `event_ticker` — see the header of
  * octagon-events-api.ts.
  */
@@ -124,11 +124,21 @@ interface ReportResponse {
 }
 
 /**
- * GET the newest cached report for an event.
- *
- * Returns the raw JSON string OctagonClient.parseReport consumes. The response
- * is re-shaped with a `latest_report` alias because the agent nests the markdown
- * one level deeper, and the parser reads that path; an empty `versions` array is
+ * Re-shape a Reports API response into the JSON string OctagonClient.parseReport
+ * consumes: a `latest_report` alias is added because the agent nests the markdown
+ * one level deeper, and the parser reads that path.
+ */
+function toParserEnvelope(data: ReportResponse): string {
+  return JSON.stringify({
+    ...data,
+    latest_report: data.markdown_report
+      ? { markdown_report: data.markdown_report, run_id: data.run_id }
+      : undefined,
+  });
+}
+
+/**
+ * GET the newest cached report for an event. An empty `versions` array is
  * passed through untouched so the parser can flag a cache miss.
  */
 async function fetchCachedReport(slug: string): Promise<string> {
@@ -150,27 +160,30 @@ async function fetchCachedReport(slug: string): Promise<string> {
         throw new Error(`Octagon reports API ${resp.status} (GET ${VENUE}/${slug}): ${body.slice(0, 200)}`);
       }
 
-      const data = (await resp.json()) as ReportResponse;
-      return JSON.stringify({
-        ...data,
-        latest_report: data.markdown_report
-          ? { markdown_report: data.markdown_report, run_id: data.run_id }
-          : undefined,
-      });
+      return toParserEnvelope((await resp.json()) as ReportResponse);
     },
   );
 }
 
 /**
- * Generate a fresh report via the prediction-markets agent, which blocks until
- * the run completes. Retries the gateway errors a long-running run tends to hit.
+ * Generate a fresh report through the Reports API: trigger a run, poll it to
+ * completion, and return the envelope pinned to that run.
  */
-async function generateReport(slug: string, variant: OctagonVariant): Promise<string> {
+async function refreshReport(slug: string): Promise<string> {
+  const { envelope } = await generateReportAndWait(slug, {
+    onProgress: (msg) => logger.info(`[octagon] ${msg}`),
+  });
+  return toParserEnvelope(envelope);
+}
+
+/**
+ * Ask the prediction-markets agent about an event; it blocks until the answer
+ * is ready. Retries the gateway errors a long-running run tends to hit.
+ */
+async function askAgent(slug: string): Promise<string> {
   const apiKey = requireApiKey();
   const baseUrl = octagonBaseUrl();
-  const model = variant === 'default'
-    ? 'octagon-prediction-markets-agent'
-    : `octagon-prediction-markets-agent:${variant}`;
+  const model = 'octagon-prediction-markets-agent';
 
   // The agent accepts an event slug or a full polymarket.com URL.
   const timeoutMs = 600_000;
@@ -231,8 +244,7 @@ async function generateReport(slug: string, variant: OctagonVariant): Promise<st
       if (isAbortError(err)) {
         const secs = Math.round(timeoutMs / 1000);
         throw new Error(
-          `Octagon API timed out after ${secs}s. The ${variant} report is taking longer than expected. ` +
-          `Try again later or use cached data (omit --refresh).`
+          `Octagon API timed out after ${secs}s. The agent is taking longer than expected. Try again later.`
         );
       }
       throw err;
@@ -248,12 +260,15 @@ async function generateReport(slug: string, variant: OctagonVariant): Promise<st
 
 /**
  * Fetch an Octagon report for a Polymarket market, event slug or event URL.
- * `cache` reads the stored report; any other variant generates a fresh one.
+ * `cache` reads the stored report, `refresh` generates a fresh one, and
+ * `default` asks the agent.
  */
 export async function callOctagon(input: string, variant: OctagonVariant): Promise<string> {
   requireApiKey();
   const slug = await resolveEventSlug(input);
-  return variant === 'cache' ? fetchCachedReport(slug) : generateReport(slug, variant);
+  if (variant === 'cache') return fetchCachedReport(slug);
+  if (variant === 'refresh') return refreshReport(slug);
+  return askAgent(slug);
 }
 
 /**
