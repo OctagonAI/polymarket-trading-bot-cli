@@ -111,13 +111,13 @@ Type help for commands, or just ask a question.
 
 > trust fed-decision-in-september-762
 
-  Trust Index — fed-decision-in-september-762 · Fed Decision in September?
+  Trust Index — fed-decision-in-september-762
 
   ██████████████████░░░░░░░░░░░░   59  ● Caution
 
   HOW IT ADDS UP
-  Integrity       80% of score   54  ● Caution
-  Trade quality   20% of score   76  ● Good
+  Integrity                     54  ● Caution
+  Trade quality                 76  ● Good
   ──────────────────────────────────────────────
   = Trust score                  59  ● Caution
 

@@ -7,6 +7,7 @@
  *
  *   GET  /predictions/reports/polymarket/{slug}            versions (free)
  *   GET  /predictions/reports/polymarket/{slug}?version=…  + markdown body
+ *   GET  /predictions/reports/polymarket/{slug}/trust      Trust Index scorecard
  *   GET  /predictions/reports/status/{run_id}              run status (free)
  *   POST /predictions/reports/polymarket/{slug}            fresh run (3 credits, 202)
  *
@@ -67,6 +68,138 @@ export interface ReportGenerationAccepted {
   event_ticker: string;
   venue: 'kalshi' | 'polymarket';
 }
+
+// ─── Trust Index (GET /predictions/reports/{venue}/{event}/trust) ───────────
+// Every score is an integer in [0, 100], higher is better; null means unscored.
+
+export type TrustLabel = 'Strong' | 'Good' | 'Caution' | 'High Risk' | 'Avoid';
+export type IntegrityPillarKey = 'manipulation_resistance' | 'information_fairness' | 'settlement_reliability';
+
+export interface TrustEvidence {
+  text: string;
+  window?: string | null;
+}
+
+/** One integrity pillar. Always all three, in a fixed order. */
+export interface TrustPillar {
+  key: IntegrityPillarKey;
+  name: string;
+  score: number | null;
+  label: TrustLabel | null;
+  basis: 'measured' | 'structural_prior' | null;
+  summary: string | null;
+  factors: string[];
+}
+
+/** One trade-quality row. Always all three; one without a reading has null score and label. */
+export interface TrustComponent {
+  key: 'liquidity' | 'move_quality' | 'rule_clarity';
+  name: string;
+  score: number | null;
+  label: string | null;
+}
+
+/** One integrity detector's reading; returned only with expand=integrity. */
+export interface TrustScreen {
+  key: string;
+  state: 'run' | 'not_applicable' | 'awaiting_data';
+  score: number | null;
+  label: string | null;
+  confidence: string | null;
+  drivers: string[];
+  evidence: TrustEvidence[];
+  warning?: string | null;
+}
+
+export interface TrustMarketScore {
+  score: number | null;
+  label: string | null;
+  confidence: string | null;
+  not_applicable: boolean;
+  drivers: string[];
+  evidence: TrustEvidence[];
+  warning?: string | null;
+  checks?: Record<string, string> | null;
+}
+
+/** Per-market card; returned only with expand=trade_quality. */
+export interface TrustMarket {
+  market_ticker: string;
+  title: string | null;
+  is_primary: boolean;
+  last_trade_cents: number | null;
+  scores: {
+    market_quality: TrustMarketScore | null;
+    liquidity: TrustMarketScore | null;
+    move_quality: TrustMarketScore | null;
+    resolution_clarity: TrustMarketScore | null;
+  };
+}
+
+export interface TrustCap {
+  key: IntegrityPillarKey | 'market_quality' | 'severe_activity_flag';
+  name: string;
+  floor: number | null;
+  ceiling: number | null;
+}
+
+/** A pillar under its safety floor whose cap lowered nothing: the score was already under it. */
+export interface TrustFloorBreach {
+  key: IntegrityPillarKey;
+  floor: number;
+  score: number;
+}
+
+export interface TrustIndex {
+  score: number;
+  label: TrustLabel;
+  computed_at: string;
+  version: string;
+  caps: TrustCap[];
+  uncapped_score?: number | null;
+  floors_breached: TrustFloorBreach[];
+  profile: {
+    integrity: {
+      key: 'integrity';
+      name: string;
+      score: number | null;
+      label: TrustLabel | null;
+      risk: { score: number; label: string } | null;
+      breakdown: TrustPillar[];
+      screen_counts: { run: number; not_applicable: number; awaiting_data: number } | null;
+      screens?: TrustScreen[] | null;
+      structure_classes?: string[] | null;
+    };
+    trade_quality: {
+      key: 'trade_quality';
+      name: string;
+      score: number | null;
+      label: TrustLabel | null;
+      basis: 'measured' | 'structural_prior' | null;
+      summary: string | null;
+      factors: string[];
+      breakdown: TrustComponent[];
+      markets?: TrustMarket[] | null;
+      /** Markets left out of the trade-quality read, by reason. */
+      exclusions?: {
+        total: number;
+        terminal_lifecycle: number;
+        below_volume_floor: number;
+        no_ticker: number;
+      } | null;
+    };
+  };
+}
+
+export interface TrustIndexResponse {
+  event_ticker: string;
+  venue: 'kalshi' | 'polymarket';
+  run_id: string;
+  trust_index: TrustIndex;
+}
+
+/** Axes the trust endpoint can return in depth. */
+export type TrustExpand = 'integrity' | 'trade_quality';
 
 export class OctagonReportsApiError extends Error {
   constructor(
@@ -161,6 +294,22 @@ export async function fetchReportVersions(
   return requestJson<ReportVersionsResponse>(
     'GET',
     `/predictions/reports/polymarket/${encodeURIComponent(slug)}${qs}`,
+    { retry: true },
+  );
+}
+
+/**
+ * The Trust Index scorecard of the latest report version. 404s carry a code
+ * naming what is missing: report_not_found or trust_index_not_found.
+ */
+export async function fetchTrustIndex(
+  slug: string,
+  opts?: { expand?: TrustExpand[] },
+): Promise<TrustIndexResponse> {
+  const qs = opts?.expand?.length ? `?expand=${opts.expand.join(',')}` : '';
+  return requestJson<TrustIndexResponse>(
+    'GET',
+    `/predictions/reports/polymarket/${encodeURIComponent(slug)}/trust${qs}`,
     { retry: true },
   );
 }
