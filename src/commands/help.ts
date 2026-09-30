@@ -339,11 +339,11 @@ Flags:
   --json              JSON envelope output
 
 Notes:
-  - When trader_trust_json is null (older reports), prints "no trust scorecard for
-    this event yet" — not an error.
+  - When the event's latest report has no Trust Index, prints "no trust
+    scorecard for this event yet" — not an error.
   - A score can be unscored (not applicable, or insufficient data); it renders
     as "—", never as 0.
-  - Detail cards show fair value and bid/ask in cents.`,
+  - Detail cards show the last trade price in cents.`,
 
     events: `**${p}events** — Octagon event rollups (event ↔ outcome ladder)
 
