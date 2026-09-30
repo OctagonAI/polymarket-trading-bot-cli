@@ -111,7 +111,7 @@ Type help for commands, or just ask a question.
 
 > trust fed-decision-in-september-762
 
-  Trust Index — fed-decision-in-september-762
+  Octagon Trust Index — fed-decision-in-september-762
 
   ██████████████████░░░░░░░░░░░░   59  ● Caution
 
