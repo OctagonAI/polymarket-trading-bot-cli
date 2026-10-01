@@ -5,10 +5,12 @@ import {
   fetchOctagonEventsPage,
   resolveOctagonEvent,
   type OctagonEventEntry,
+  type OctagonEventMarket,
 } from '../scan/octagon-events-api.js';
 import { formatTable } from './scan-formatters.js';
 import { analysisPredatesCapture, formatAge, parseUtcTimestamp } from '../utils/time.js';
 import { contractLabels } from '../utils/contract-labels.js';
+import { fmtPrice } from './formatters.js';
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
@@ -152,6 +154,11 @@ function formatEventDetail(e: OctagonEventEntry): string {
     lines.push('');
     lines.push(`  ${e.key_takeaway}`);
   }
+  if (e.markets?.length) {
+    lines.push('');
+    lines.push(...formatMarketLadder(e.markets, e.event_ticker));
+    return lines.join('\n');
+  }
   const outcomes = e.outcome_probabilities ?? [];
   if (outcomes.length > 0) {
     lines.push('');
@@ -176,4 +183,42 @@ function formatEventDetail(e: OctagonEventEntry): string {
     ));
   }
   return lines.join('\n');
+}
+
+function fmtPct(v: number | null | undefined): string {
+  return v != null ? `${v.toFixed(1)}%` : '-';
+}
+
+/**
+ * The outcome ladder from markets[], which carries each market's quote and
+ * status from the same run. A determined market's price is pinned at 0 or 100,
+ * so it gets no edge and no quote: shown as one, a settled strike would read as
+ * full model/market agreement.
+ */
+function formatMarketLadder(markets: OctagonEventMarket[], eventTicker: string): string[] {
+  const showStatus = markets.some((m) => m.status !== 'active');
+  const contracts = contractLabels(markets.map((m) => m.market_ticker), eventTicker);
+  const rows: string[][] = markets.map((m, i) => {
+    const determined = m.status === 'determined';
+    const edge = !determined && m.model_probability != null && m.market_probability != null
+      ? m.model_probability - m.market_probability
+      : null;
+    const quote = determined || (m.yes_bid == null && m.yes_ask == null)
+      ? '-'
+      : `${fmtPrice(m.yes_bid)} / ${fmtPrice(m.yes_ask)}`;
+    const row = [
+      truncate(contracts[i], 40),
+      truncate(m.outcome_name ?? '-', 35),
+      fmtPct(m.model_probability),
+      fmtPct(m.market_probability),
+      edge != null ? `${edge >= 0 ? '+' : ''}${edge.toFixed(1)}pp` : '-',
+      quote,
+      fmtVol(m.volume_24h ?? m.volume),
+    ];
+    if (showStatus) row.push(m.status);
+    return row;
+  });
+  const headers = ['Market', 'Outcome', 'Model', 'Market', 'Edge', 'Bid / Ask', '24h Vol'];
+  if (showStatus) headers.push('Status');
+  return ['Sub-markets:', formatTable(headers, rows)];
 }

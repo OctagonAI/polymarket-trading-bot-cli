@@ -215,3 +215,55 @@ describe('Events command — snapshot time', () => {
     expect(out).toMatch(/undated-event .*│ - +│/);
   });
 });
+
+describe('Events command — markets[] ladder', () => {
+  const ticker = 'what-price-will-bitcoin-hit-before-2027';
+  const market = (slug: string, o: Partial<NonNullable<OctagonEventEntry['markets']>[number]>) => ({
+    market_ticker: `will-bitcoin-${slug}-before-2027`, outcome_name: slug,
+    model_probability: 40, market_probability: 35, volume_24h: 10_000,
+    yes_bid: 0.34, yes_ask: 0.36, no_bid: 0.64, no_ask: 0.66, status: 'active' as const,
+    ...o,
+  });
+  /** Modeled on the prod run where 7 of 37 strikes had settled while the rest traded on. */
+  function partiallyResolved(): OctagonEventEntry {
+    return slimEvent({
+      event_ticker: ticker,
+      name: 'What price will Bitcoin hit before 2027?',
+      markets: [
+        market('reach-150k', { model_probability: 40, market_probability: 35 }),
+        market('dip-to-85k', { model_probability: 100, market_probability: 100, yes_bid: 0.999, yes_ask: null, status: 'determined' }),
+        market('reach-250k', { model_probability: 4, market_probability: 3, yes_bid: null, yes_ask: 0.035 }),
+      ],
+    });
+  }
+
+  test('a determined outcome is marked, with no edge and no quote', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const out = formatEventsHuman({ kind: 'detail', event: partiallyResolved() });
+    expect(out).toContain('Status');
+    expect(out).toMatch(/│ dip-to-85k +│ dip-to-85k +│ 100\.0% +│ 100\.0% +│ - +│ - +│ 10\.0k +│ determined +│/);
+    expect(out).toMatch(/│ reach-150k +│ reach-150k +│ 40\.0% +│ 35\.0% +│ \+5\.0pp +│ 34¢ \/ 36¢ +│ 10\.0k +│ active +│/);
+  });
+
+  test('bid/ask render per outcome, a missing side as "-"', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const out = formatEventsHuman({ kind: 'detail', event: partiallyResolved() });
+    expect(out).toMatch(/│ reach-250k .*│ - \/ 3\.5¢ +│/);
+  });
+
+  test('the Status column appears only when some market is not active', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const out = formatEventsHuman({ kind: 'detail', event: slimEvent() });
+    expect(out).toContain('Bid / Ask');
+    expect(out).not.toContain('Status');
+    expect(out).toContain('54¢ / 56¢');
+  });
+
+  test('without markets[] the ladder renders from outcome_probabilities, as before', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const out = formatEventsHuman({ kind: 'detail', event: slimEvent({ markets: undefined }) });
+    expect(out).toContain('Sub-markets (outcome probabilities):');
+    expect(out).not.toContain('Bid / Ask');
+    expect(out).toContain('25 bps decrease');
+  });
+});
