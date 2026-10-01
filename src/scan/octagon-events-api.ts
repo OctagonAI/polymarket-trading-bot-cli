@@ -29,8 +29,10 @@ export const OCTAGON_VENUE = 'polymarket';
  * points; `expected_return` is a fraction.
  *
  * Almost everything is nullable: the list endpoint returns only the summary
- * columns, leaving key_takeaway/richtext/trader_trust_json null. Fetch the
- * detail endpoint (fetchOctagonEventDirect) when you need the report body.
+ * columns, leaving key_takeaway null. The detail endpoint
+ * (fetchOctagonEventDirect) is the event as of one run: metadata, headline
+ * numbers and per-market quotes. Report bodies and the Trust Index come from
+ * the Reports API (octagon-reports-api.ts).
  */
 export interface OctagonEventEntry {
   history_id: number;
@@ -74,20 +76,40 @@ export interface OctagonEventEntry {
     volume?: number | null;
     volume_24h?: number | null;
   }> | null;
-  current_state_summary_richtext?: string | null;
-  short_answer_richtext?: string | null;
-  executive_summary_richtext?: string | null;
   /** Set only when ?include=eligibility is requested. */
   eligible?: boolean | null;
   eligibility_status?: string | null;
   eligibility_reason?: string | null;
+  /** The venue's public page for the event. Detail endpoint only. */
+  event_url?: string | null;
   /**
-   * Trader Trust scorecard fields (added in calculation_version v1.0+).
-   * Null on reports generated before this shipped — callers must guard.
+   * One row per outcome_probabilities row (same order), with that market's quote
+   * from the same run. Detail endpoint only; supersedes outcome_probabilities.
    */
-  trader_trust_subtitle?: string | null;
-  /** Pre-rendered HTML; the CLI ignores this. The Trust Index comes from the Reports API. */
-  trader_trust_richtext?: string | null;
+  markets?: OctagonEventMarket[] | null;
+}
+
+/** Normalized across venues; a determined market's market_probability is pinned at 0 or 100. */
+export type OctagonMarketStatus = 'active' | 'closed' | 'determined' | 'terminated';
+
+/**
+ * A market on the event detail endpoint. Probabilities are percentages (0-100),
+ * as on outcome_probabilities; bid/ask are prices per $1 contract (0-1).
+ */
+export interface OctagonEventMarket {
+  market_ticker: string;
+  outcome_name?: string | null;
+  model_probability: number | null;
+  market_probability: number | null;
+  model_probability_source?: string | null;
+  evidence_grade?: string | null;
+  volume?: number | null;
+  volume_24h?: number | null;
+  yes_bid: number | null;
+  yes_ask: number | null;
+  no_bid: number | null;
+  no_ask: number | null;
+  status: OctagonMarketStatus;
 }
 
 const EVENTS_API_BASE = 'https://api.octagonai.co/v1/predictions';

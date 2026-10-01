@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { ParsedArgs } from '../parse-args.js';
+import type { OctagonEventEntry } from '../../scan/octagon-events-api.js';
 
 function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
   return {
@@ -74,5 +75,94 @@ describe('Events command', () => {
     expect(out).toMatch(/│ 3pt5 +│ 1st 5 Innings O\/U 3\.5 +│ - +│ - +│ - +│/);
     expect(out).not.toContain('f5-total');
     expect(out).not.toContain('NaN');
+  });
+});
+
+/** /predictions/events/{ref} after the slimming: no report prose or trust fields, plus event_url and markets[]. */
+function slimEvent(overrides: Partial<OctagonEventEntry> = {}): OctagonEventEntry {
+  return {
+    history_id: 41,
+    run_id: '1a9984cc-17b8-4d59-936b-ebaa0d0da5c5',
+    captured_at: '2026-09-23T17:53:00Z',
+    event_ticker: 'fed-decision-in-october',
+    venue: 'polymarket',
+    name: 'Fed decision in October?',
+    slug: 'fed-decision-in-october',
+    series_category: 'Economics',
+    meta_category: 'economics',
+    available_on_brokers: false,
+    mutually_exclusive: true,
+    analysis_last_updated: '2026-09-23T17:40:00Z',
+    confidence_score: 7,
+    model_probability: 62,
+    market_probability: 55,
+    edge_pp: 7,
+    expected_return: 0.12,
+    r_score: 1.4,
+    total_volume: 2_500_000,
+    total_open_interest: 0,
+    close_time: '2026-10-29T18:00:00Z',
+    key_takeaway: 'A 25bp cut is the base case; a hold needs a hot CPI print.',
+    event_url: 'https://polymarket.com/event/fed-decision-in-october',
+    outcome_probabilities: [
+      { market_ticker: 'fed-decreases-interest-rates-by-25-bps-after-october-2026-meeting', outcome_name: '25 bps decrease', model_probability: 62, market_probability: 55, volume_24h: 80_000 },
+      { market_ticker: 'no-change-in-fed-interest-rates-after-october-2026-meeting', outcome_name: 'No change', model_probability: 35, market_probability: 42, volume_24h: 60_000 },
+    ],
+    markets: [
+      {
+        market_ticker: 'fed-decreases-interest-rates-by-25-bps-after-october-2026-meeting', outcome_name: '25 bps decrease',
+        model_probability: 62, market_probability: 55, model_probability_source: 'model', evidence_grade: 'B',
+        volume: 1_500_000, volume_24h: 80_000, yes_bid: 0.54, yes_ask: 0.56, no_bid: 0.44, no_ask: 0.46, status: 'active',
+      },
+      {
+        market_ticker: 'no-change-in-fed-interest-rates-after-october-2026-meeting', outcome_name: 'No change',
+        model_probability: 35, market_probability: 42, model_probability_source: 'model', evidence_grade: 'B',
+        volume: 1_000_000, volume_24h: 60_000, yes_bid: 0.41, yes_ask: 0.43, no_bid: 0.57, no_ask: 0.59, status: 'active',
+      },
+    ],
+    ...overrides,
+  };
+}
+
+const DROPPED_FIELDS = /richtext|trader_trust|executive_summary|q[1-5]_|candlestick|analysis_version|analysis_owner/;
+
+describe('Events command — slimmed event detail', () => {
+  let originalFetch: typeof globalThis.fetch;
+  beforeEach(() => {
+    process.env.OCTAGON_API_KEY = 'sk_test';
+    originalFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    delete process.env.OCTAGON_API_KEY;
+  });
+
+  test('renders every detail line, including the takeaway', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const out = formatEventsHuman({ kind: 'detail', event: slimEvent() });
+    expect(out).toContain('Event fed-decision-in-october — Fed decision in October?');
+    expect(out).toContain('Category   Economics');
+    expect(out).toContain('Model      62.0%');
+    expect(out).toContain('Market     55.0%');
+    expect(out).toContain('Edge       +7.0pp  (confidence 7.0/10)');
+    expect(out).toContain('Volume     2.5M');
+    expect(out).toContain('Closes     2026-10-29T18:00:00Z');
+    expect(out).toContain('A 25bp cut is the base case; a hold needs a hot CPI print.');
+    expect(out).toContain('25 bps decrease');
+    expect(out).toContain('No change');
+  });
+
+  test('--json carries the response as served, with no dropped field', async () => {
+    globalThis.fetch = mock(async () => new Response(JSON.stringify(slimEvent()), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    })) as unknown as typeof fetch;
+    const { handleEvents } = await import('../events.js');
+    const resp = await handleEvents(makeArgs({ positionalArgs: ['fed-decision-in-october'] }));
+    expect(resp.ok).toBe(true);
+    if (!resp.ok || resp.data.kind !== 'detail') throw new Error();
+    const json = JSON.stringify(resp);
+    expect(json).not.toMatch(DROPPED_FIELDS);
+    expect(resp.data.event.event_url).toBe('https://polymarket.com/event/fed-decision-in-october');
+    expect(resp.data.event.markets).toHaveLength(2);
   });
 });
