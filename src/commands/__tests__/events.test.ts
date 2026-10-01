@@ -1,5 +1,6 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, setSystemTime } from 'bun:test';
 import type { ParsedArgs } from '../parse-args.js';
+import type { OctagonEventEntry } from '../../scan/octagon-events-api.js';
 
 function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
   return {
@@ -74,5 +75,195 @@ describe('Events command', () => {
     expect(out).toMatch(/│ 3pt5 +│ 1st 5 Innings O\/U 3\.5 +│ - +│ - +│ - +│/);
     expect(out).not.toContain('f5-total');
     expect(out).not.toContain('NaN');
+  });
+});
+
+/** /predictions/events/{ref} after the slimming: no report prose or trust fields, plus event_url and markets[]. */
+function slimEvent(overrides: Partial<OctagonEventEntry> = {}): OctagonEventEntry {
+  return {
+    history_id: 41,
+    run_id: '1a9984cc-17b8-4d59-936b-ebaa0d0da5c5',
+    captured_at: '2026-09-23T17:53:00Z',
+    event_ticker: 'fed-decision-in-october',
+    venue: 'polymarket',
+    name: 'Fed decision in October?',
+    slug: 'fed-decision-in-october',
+    series_category: 'Economics',
+    meta_category: 'economics',
+    available_on_brokers: false,
+    mutually_exclusive: true,
+    analysis_last_updated: '2026-09-23T17:40:00Z',
+    confidence_score: 7,
+    model_probability: 62,
+    market_probability: 55,
+    edge_pp: 7,
+    expected_return: 0.12,
+    r_score: 1.4,
+    total_volume: 2_500_000,
+    total_open_interest: 0,
+    close_time: '2026-10-29T18:00:00Z',
+    key_takeaway: 'A 25bp cut is the base case; a hold needs a hot CPI print.',
+    event_url: 'https://polymarket.com/event/fed-decision-in-october',
+    outcome_probabilities: [
+      { market_ticker: 'fed-decreases-interest-rates-by-25-bps-after-october-2026-meeting', outcome_name: '25 bps decrease', model_probability: 62, market_probability: 55, volume_24h: 80_000 },
+      { market_ticker: 'no-change-in-fed-interest-rates-after-october-2026-meeting', outcome_name: 'No change', model_probability: 35, market_probability: 42, volume_24h: 60_000 },
+    ],
+    markets: [
+      {
+        market_ticker: 'fed-decreases-interest-rates-by-25-bps-after-october-2026-meeting', outcome_name: '25 bps decrease',
+        model_probability: 62, market_probability: 55, model_probability_source: 'model', evidence_grade: 'B',
+        volume: 1_500_000, volume_24h: 80_000, yes_bid: 0.54, yes_ask: 0.56, no_bid: 0.44, no_ask: 0.46, status: 'active',
+      },
+      {
+        market_ticker: 'no-change-in-fed-interest-rates-after-october-2026-meeting', outcome_name: 'No change',
+        model_probability: 35, market_probability: 42, model_probability_source: 'model', evidence_grade: 'B',
+        volume: 1_000_000, volume_24h: 60_000, yes_bid: 0.41, yes_ask: 0.43, no_bid: 0.57, no_ask: 0.59, status: 'active',
+      },
+    ],
+    ...overrides,
+  };
+}
+
+const DROPPED_FIELDS = /richtext|trader_trust|executive_summary|q[1-5]_|candlestick|analysis_version|analysis_owner/;
+
+describe('Events command — slimmed event detail', () => {
+  let originalFetch: typeof globalThis.fetch;
+  beforeEach(() => {
+    process.env.OCTAGON_API_KEY = 'sk_test';
+    originalFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    delete process.env.OCTAGON_API_KEY;
+  });
+
+  test('renders every detail line, including the takeaway', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const out = formatEventsHuman({ kind: 'detail', event: slimEvent() });
+    expect(out).toContain('Event fed-decision-in-october — Fed decision in October?');
+    expect(out).toContain('Category   Economics');
+    expect(out).toContain('Model      62.0%');
+    expect(out).toContain('Market     55.0%');
+    expect(out).toContain('Edge       +7.0pp  (confidence 7.0/10)');
+    expect(out).toContain('Volume     2.5M');
+    expect(out).toContain('Closes     2026-10-29T18:00:00Z');
+    expect(out).toContain('A 25bp cut is the base case; a hold needs a hot CPI print.');
+    expect(out).toContain('25 bps decrease');
+    expect(out).toContain('No change');
+  });
+
+  test('--json carries the response as served, with no dropped field', async () => {
+    globalThis.fetch = mock(async () => new Response(JSON.stringify(slimEvent()), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    })) as unknown as typeof fetch;
+    const { handleEvents } = await import('../events.js');
+    const resp = await handleEvents(makeArgs({ positionalArgs: ['fed-decision-in-october'] }));
+    expect(resp.ok).toBe(true);
+    if (!resp.ok || resp.data.kind !== 'detail') throw new Error();
+    const json = JSON.stringify(resp);
+    expect(json).not.toMatch(DROPPED_FIELDS);
+    expect(resp.data.event.event_url).toBe('https://polymarket.com/event/fed-decision-in-october');
+    expect(resp.data.event.markets).toHaveLength(2);
+  });
+});
+
+describe('Events command — snapshot time', () => {
+  // A week after the fixtures' captured_at of 2026-09-23 17:53 UTC.
+  beforeEach(() => { setSystemTime(new Date('2026-09-30T17:53:00Z')); });
+  afterEach(() => { setSystemTime(); });
+
+  test('detail shows when the numbers were captured, right under the header', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const lines = formatEventsHuman({ kind: 'detail', event: slimEvent() }).split('\n');
+    expect(lines[0]).toBe('Event fed-decision-in-october — Fed decision in October?');
+    expect(lines[1]).toBe('  Snapshot   2026-09-23 17:53 UTC (7d ago)');
+  });
+
+  test('detail names the analysis date only when it predates the capture by over a day', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const carried = formatEventsHuman({ kind: 'detail', event: slimEvent({ analysis_last_updated: '2026-09-02T09:15:00Z' }) });
+    expect(carried).toContain('  Snapshot   2026-09-23 17:53 UTC (7d ago) · analysis from 2026-09-02');
+
+    const fresh = formatEventsHuman({ kind: 'detail', event: slimEvent({ analysis_last_updated: '2026-09-22T20:00:00Z' }) });
+    expect(fresh).not.toContain('analysis from');
+  });
+
+  test('a zone-less captured_at is read as UTC', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const out = formatEventsHuman({ kind: 'detail', event: slimEvent({ captured_at: '2026-09-23T17:53:00' }) });
+    expect(out).toContain('  Snapshot   2026-09-23 17:53 UTC (7d ago)');
+  });
+
+  test('an unparseable captured_at drops the line instead of crashing', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const out = formatEventsHuman({ kind: 'detail', event: slimEvent({ captured_at: 'not-a-date' }) });
+    expect(out).not.toContain('Snapshot');
+    expect(out).toContain('Model      62.0%');
+  });
+
+  test('list has a Captured column with the compact age', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const data = [
+      slimEvent({ event_ticker: 'fresh-event', captured_at: '2026-09-30T14:53:00Z' }),
+      slimEvent({ event_ticker: 'stale-event' }),
+      slimEvent({ event_ticker: 'undated-event', captured_at: '' }),
+    ];
+    const out = formatEventsHuman({ kind: 'list', data, total_returned: data.length });
+    expect(out).toMatch(/Captured/);
+    expect(out).toMatch(/fresh-event .*│ 3h +│/);
+    expect(out).toMatch(/stale-event .*│ 7d +│/);
+    expect(out).toMatch(/undated-event .*│ - +│/);
+  });
+});
+
+describe('Events command — markets[] ladder', () => {
+  const ticker = 'what-price-will-bitcoin-hit-before-2027';
+  const market = (slug: string, o: Partial<NonNullable<OctagonEventEntry['markets']>[number]>) => ({
+    market_ticker: `will-bitcoin-${slug}-before-2027`, outcome_name: slug,
+    model_probability: 40, market_probability: 35, volume_24h: 10_000,
+    yes_bid: 0.34, yes_ask: 0.36, no_bid: 0.64, no_ask: 0.66, status: 'active' as const,
+    ...o,
+  });
+  /** Modeled on the prod run where 7 of 37 strikes had settled while the rest traded on. */
+  function partiallyResolved(): OctagonEventEntry {
+    return slimEvent({
+      event_ticker: ticker,
+      name: 'What price will Bitcoin hit before 2027?',
+      markets: [
+        market('reach-150k', { model_probability: 40, market_probability: 35 }),
+        market('dip-to-85k', { model_probability: 100, market_probability: 100, yes_bid: 0.999, yes_ask: null, status: 'determined' }),
+        market('reach-250k', { model_probability: 4, market_probability: 3, yes_bid: null, yes_ask: 0.035 }),
+      ],
+    });
+  }
+
+  test('a determined outcome is marked, with no edge and no quote', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const out = formatEventsHuman({ kind: 'detail', event: partiallyResolved() });
+    expect(out).toContain('Status');
+    expect(out).toMatch(/│ dip-to-85k +│ dip-to-85k +│ 100\.0% +│ 100\.0% +│ - +│ - +│ 10\.0k +│ determined +│/);
+    expect(out).toMatch(/│ reach-150k +│ reach-150k +│ 40\.0% +│ 35\.0% +│ \+5\.0pp +│ 34¢ \/ 36¢ +│ 10\.0k +│ active +│/);
+  });
+
+  test('bid/ask render per outcome, a missing side as "-"', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const out = formatEventsHuman({ kind: 'detail', event: partiallyResolved() });
+    expect(out).toMatch(/│ reach-250k .*│ - \/ 3\.5¢ +│/);
+  });
+
+  test('the Status column appears only when some market is not active', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const out = formatEventsHuman({ kind: 'detail', event: slimEvent() });
+    expect(out).toContain('Bid / Ask');
+    expect(out).not.toContain('Status');
+    expect(out).toContain('54¢ / 56¢');
+  });
+
+  test('without markets[] the ladder renders from outcome_probabilities, as before', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const out = formatEventsHuman({ kind: 'detail', event: slimEvent({ markets: undefined }) });
+    expect(out).toContain('Sub-markets (outcome probabilities):');
+    expect(out).not.toContain('Bid / Ask');
+    expect(out).toContain('25 bps decrease');
   });
 });

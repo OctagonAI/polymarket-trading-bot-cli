@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, jest, test } from 'bun:test';
+import { settle } from '../../__tests__/fake-timers';
 import { callOctagon } from '../invoker';
 
 const realFetch = globalThis.fetch;
@@ -15,6 +16,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  jest.useRealTimers();
   globalThis.fetch = realFetch;
   if (realApiKey === undefined) delete process.env.OCTAGON_API_KEY;
   else process.env.OCTAGON_API_KEY = realApiKey;
@@ -34,9 +36,10 @@ test('refresh generates through the Reports API, not the agent', async () => {
     return json(200, { event_ticker: slug, venue: 'polymarket', name: null, requested_url: null, versions: [], markdown_report: null, run_id: null, outcome_probabilities_json: null });
   }) as typeof fetch;
 
-  // An /event/ URL resolves to the slug without a Gamma lookup. The invoker uses
-  // the default 30s poll interval, so this test waits one poll.
-  const raw = await callOctagon(`https://polymarket.com/event/${slug}`, 'refresh');
+  // An /event/ URL resolves to the slug without a Gamma lookup. Fake timers skip
+  // the invoker's default 30s poll interval.
+  jest.useFakeTimers();
+  const raw = await settle(callOctagon(`https://polymarket.com/event/${slug}`, 'refresh'));
   const parsed = JSON.parse(raw);
 
   expect(calls.some((c) => c.url.endsWith('/responses'))).toBe(false);
@@ -44,4 +47,4 @@ test('refresh generates through the Reports API, not the agent', async () => {
   // The pinned run is re-read by slug even though the POST reported another event_ticker.
   expect(calls.find((c) => c.url.includes('version=run-1'))?.url).toContain(`/polymarket/${slug}?`);
   expect(parsed.latest_report).toEqual({ markdown_report: '# Fresh', run_id: 'run-1' });
-}, 60_000);
+});
