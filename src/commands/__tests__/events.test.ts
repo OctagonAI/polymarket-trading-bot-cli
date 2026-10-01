@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, setSystemTime } from 'bun:test';
 import type { ParsedArgs } from '../parse-args.js';
 import type { OctagonEventEntry } from '../../scan/octagon-events-api.js';
 
@@ -164,5 +164,54 @@ describe('Events command — slimmed event detail', () => {
     expect(json).not.toMatch(DROPPED_FIELDS);
     expect(resp.data.event.event_url).toBe('https://polymarket.com/event/fed-decision-in-october');
     expect(resp.data.event.markets).toHaveLength(2);
+  });
+});
+
+describe('Events command — snapshot time', () => {
+  // A week after the fixtures' captured_at of 2026-09-23 17:53 UTC.
+  beforeEach(() => { setSystemTime(new Date('2026-09-30T17:53:00Z')); });
+  afterEach(() => { setSystemTime(); });
+
+  test('detail shows when the numbers were captured, right under the header', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const lines = formatEventsHuman({ kind: 'detail', event: slimEvent() }).split('\n');
+    expect(lines[0]).toBe('Event fed-decision-in-october — Fed decision in October?');
+    expect(lines[1]).toBe('  Snapshot   2026-09-23 17:53 UTC (7d ago)');
+  });
+
+  test('detail names the analysis date only when it predates the capture by over a day', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const carried = formatEventsHuman({ kind: 'detail', event: slimEvent({ analysis_last_updated: '2026-09-02T09:15:00Z' }) });
+    expect(carried).toContain('  Snapshot   2026-09-23 17:53 UTC (7d ago) · analysis from 2026-09-02');
+
+    const fresh = formatEventsHuman({ kind: 'detail', event: slimEvent({ analysis_last_updated: '2026-09-22T20:00:00Z' }) });
+    expect(fresh).not.toContain('analysis from');
+  });
+
+  test('a zone-less captured_at is read as UTC', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const out = formatEventsHuman({ kind: 'detail', event: slimEvent({ captured_at: '2026-09-23T17:53:00' }) });
+    expect(out).toContain('  Snapshot   2026-09-23 17:53 UTC (7d ago)');
+  });
+
+  test('an unparseable captured_at drops the line instead of crashing', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const out = formatEventsHuman({ kind: 'detail', event: slimEvent({ captured_at: 'not-a-date' }) });
+    expect(out).not.toContain('Snapshot');
+    expect(out).toContain('Model      62.0%');
+  });
+
+  test('list has a Captured column with the compact age', async () => {
+    const { formatEventsHuman } = await import('../events.js');
+    const data = [
+      slimEvent({ event_ticker: 'fresh-event', captured_at: '2026-09-30T14:53:00Z' }),
+      slimEvent({ event_ticker: 'stale-event' }),
+      slimEvent({ event_ticker: 'undated-event', captured_at: '' }),
+    ];
+    const out = formatEventsHuman({ kind: 'list', data, total_returned: data.length });
+    expect(out).toMatch(/Captured/);
+    expect(out).toMatch(/fresh-event .*│ 3h +│/);
+    expect(out).toMatch(/stale-event .*│ 7d +│/);
+    expect(out).toMatch(/undated-event .*│ - +│/);
   });
 });
